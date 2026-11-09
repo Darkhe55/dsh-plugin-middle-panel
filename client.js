@@ -354,6 +354,16 @@ window.__ModuleLoader__.load({
       '.dshcv-split{flex:0 0 9px;cursor:col-resize;position:relative;background:transparent}',
       '.dshcv-split::after{content:"";position:absolute;top:0;bottom:0;left:4px;width:1px;background:var(--dsw-alias-border-l1);transition:background-color .12s ease}',
       '.dshcv-split:hover::after{background:var(--dsw-alias-brand-primary)}',
+      // Enter/leave motion: the canvas half reveals while the conversation keeps
+      // its place, so opening the panel does not flash the transcript.
+      '@keyframes dshcv-reveal{from{opacity:0;transform:translateX(-10px)}to{opacity:1;transform:none}}',
+      '@keyframes dshcv-hide{from{opacity:1;transform:none}to{opacity:0;transform:translateX(-10px)}}',
+      '.dshcv-reveal{animation:dshcv-reveal .19s cubic-bezier(.2,0,0,1) both}',
+      '.dshcv-closing{animation:dshcv-hide .15s cubic-bezier(.4,0,1,1) both;pointer-events:none}',
+      // Width travel: applied only while opening or closing, so dragging the
+      // splitter stays immediate.
+      '.dshcv-animating{transition:flex-basis .2s cubic-bezier(.2,0,0,1)}',
+      '@media (prefers-reduced-motion: reduce){.dshcv-reveal,.dshcv-closing{animation:none}.dshcv-animating{transition:none}}',
       '.dshcv-docs{display:flex;align-items:center;gap:2px;padding:6px 10px;border-bottom:1px solid var(--dsw-alias-border-l1);overflow-x:auto}',
       '.dshcv-crumbs{display:flex;align-items:center;gap:2px;min-width:0;overflow-x:auto}',
       '.dshcv-row{display:flex;align-items:center;gap:8px;width:100%;height:28px;padding:0 10px;border:0;border-radius:7px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;text-align:left;cursor:pointer}',
@@ -1445,6 +1455,35 @@ window.__ModuleLoader__.load({
       });
       const [toast, setToast] = React.useState('');
       const [pickerOpen, setPickerOpen] = React.useState(false);
+      const [closing, setClosing] = React.useState(false);
+      const reducedMotion = () =>
+        Boolean(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+      const [revealed, setRevealed] = React.useState(reducedMotion);
+      const [animating, setAnimating] = React.useState(!reducedMotion());
+
+      React.useEffect(() => {
+        if (reducedMotion() || revealed) return undefined;
+        const frame = requestAnimationFrame(() => setRevealed(true));
+        const timer = setTimeout(() => setAnimating(false), 260);
+        return () => {
+          cancelAnimationFrame(frame);
+          clearTimeout(timer);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, []);
+
+      const closePanel = React.useRef(() => {});
+      closePanel.current = () => {
+        if (closing) return;
+        if (reducedMotion()) {
+          selectPanel(null);
+          return;
+        }
+        setAnimating(true);
+        setClosing(true);
+        setRevealed(false);
+        setTimeout(() => selectPanel(null), 210);
+      };
       const bodyRef = React.useRef(null);
       const convRef = React.useRef(null);
       const [convBox, setConvBox] = React.useState(null);
@@ -1634,14 +1673,23 @@ window.__ModuleLoader__.load({
           store.marks.length
             ? h('button', { type: 'button', className: 'dshcv-btn', 'data-quiet': '1', onClick: clearMarks }, '清空')
             : null,
-          h('button', { type: 'button', className: 'dshcv-btn', onClick: () => selectPanel(null) }, '回到对话'),
+          h('button', { type: 'button', className: 'dshcv-btn', onClick: () => closePanel.current() }, '回到对话'),
         ),
         h(
           'div',
           { className: 'dshcv-body', ref: bodyRef },
           h(
             'div',
-            { className: 'dshcv-pane', style: { flex: '0 0 ' + Math.round(ratio * 1000) / 10 + '%', minWidth: 240 } },
+            {
+              className:
+                'dshcv-pane dshcv-reveal' +
+                (closing ? ' dshcv-closing' : '') +
+                (animating ? ' dshcv-animating' : ''),
+              style: {
+                flex: '0 0 ' + (revealed ? Math.round(ratio * 1000) / 10 : 0) + '%',
+                minWidth: 0,
+              },
+            },
             store.docs.length
               ? h(
                   'div',
