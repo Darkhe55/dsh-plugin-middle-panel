@@ -17,8 +17,8 @@
         "zh": "画布面板"
       },
       "description": {
-        "en": "Turns the centre column into [canvas | conversation]: text selection, HTML element picking, image region and SVG layer marks, numbered and sent back to the chat.",
-        "zh": "把中栏变成 [画布 | 对话]：文本划选、HTML 元素选取、图片区域与 SVG 图层标注，按编号回传到对话。"
+        "en": "Turns the centre column into [canvas | conversation] with previews for html, markdown, images, SVG, PDF, docx/xlsx/pptx, csv, 3D meshes (stl/obj/ply/off/3mf/glb) and DXF, plus numbered annotations sent back to the chat.",
+        "zh": "把中栏变成 [画布 | 对话]：支持 html、markdown、图片、SVG、PDF、docx/xlsx/pptx、csv、三维网格（stl/obj/ply/off/3mf/glb）与 DXF 图纸预览，并支持按编号标注回传对话。"
       },
       "icon": "icon.svg",
       "author": "Darkhe55",
@@ -32,17 +32,21 @@
           "middle-panel",
           "annotation",
           "artifacts",
-          "html-picker"
+          "html-picker",
+          "3d",
+          "dxf",
+          "pdf",
+          "office"
         ]
       },
       "versions": [
         {
-          "version": "0.1.0",
-          "publishTimestamp": 1794228144,
+          "version": "0.2.0",
+          "publishTimestamp": 1794229289,
           "source": {
             "type": "git",
             "url": "https://github.com/Darkhe55/dsh-plugin-middle-panel",
-            "commit": "aaabd25b80c694b78fdbd40be205aead20cb6e5a"
+            "commit": "6707e376df0395cf67e542c3b41ad32e1c14a6a4"
           },
           "engines": {
             "dsh": ">=0.2.2-rc.1 <0.3.0"
