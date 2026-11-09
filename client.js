@@ -160,6 +160,9 @@ window.__ModuleLoader__.load({
       if (left.kind === 'text') return Boolean(left.lines && right.lines) && left.lines[0] === right.lines[0] && left.lines[1] === right.lines[1];
       if (left.kind === 'element' || left.kind === 'layer') return left.selector === right.selector;
       if (left.kind === 'paragraph') return left.paragraph === right.paragraph;
+      // A generic pick: page, cell, slide, triangle, layer or pixel, identified by
+      // its human-readable locator.
+      if (left.kind === 'spot') return left.label === right.label;
       if (left.kind === 'region') {
         const a = left.rect || [];
         const b = right.rect || [];
@@ -283,7 +286,9 @@ window.__ModuleLoader__.load({
               : '第 ' + mark.lines[0] + '-' + mark.lines[1] + ' 行'
             : mark.kind === 'paragraph'
               ? '第 ' + mark.paragraph + ' 段'
-              : mark.kind === 'element'
+              : mark.kind === 'spot'
+                ? mark.label || '选取'
+                : mark.kind === 'element'
               ? '元素 `' + mark.selector + '`'
               : mark.kind === 'layer'
                 ? '图层 `' + mark.selector + '`'
@@ -1336,7 +1341,9 @@ window.__ModuleLoader__.load({
                       ? '第 ' + mark.lines[0] + (mark.lines[1] !== mark.lines[0] ? '-' + mark.lines[1] : '') + ' 行'
                       : mark.kind === 'paragraph'
                         ? '第 ' + mark.paragraph + ' 段'
-                        : mark.kind === 'element'
+                        : mark.kind === 'spot'
+                          ? mark.label || '选取'
+                          : mark.kind === 'element'
                           ? mark.selector
                           : '区域'),
                 ),
@@ -2063,10 +2070,20 @@ window.__ModuleLoader__.load({
     };
 
     function DataTable(props) {
-      const { rows, caption } = props;
+      const { rows, caption, onPick } = props;
       const body = rows.slice(0, 200);
       const width = body.reduce((widest, row) => Math.max(widest, row.length), 0);
       const columns = Array.from({ length: width }, (_, index) => index);
+      const columnName = (index) => {
+        let name = '';
+        let value = index + 1;
+        while (value > 0) {
+          const remainder = (value - 1) % 26;
+          name = String.fromCharCode(65 + remainder) + name;
+          value = Math.floor((value - 1) / 26);
+        }
+        return name;
+      };
       return h(
         'div',
         { className: 'dshcv-tablewrap' },
@@ -2074,7 +2091,7 @@ window.__ModuleLoader__.load({
         h(
           'table',
           { className: 'dshcv-table' },
-          h('thead', null, h('tr', null, columns.map((column) => h('th', { key: 'h' + column }, String(column + 1))))),
+          h('thead', null, h('tr', null, columns.map((column) => h('th', { key: 'h' + column }, columnName(column))))),
           h(
             'tbody',
             null,
@@ -2083,7 +2100,16 @@ window.__ModuleLoader__.load({
                 'tr',
                 { key: 'r' + rowIndex },
                 columns.map((column) =>
-                  h('td', { key: 'c' + column, title: row[column] || '' }, row[column] || ''),
+                  h(
+                    'td',
+                    {
+                      key: 'c' + column,
+                      title: row[column] || '',
+                      style: onPick ? { cursor: 'pointer' } : undefined,
+                      onClick: onPick ? () => onPick(rowIndex, column, row[column] || '') : undefined,
+                    },
+                    row[column] || '',
+                  ),
                 ),
               ),
             ),
@@ -2172,14 +2198,34 @@ window.__ModuleLoader__.load({
         );
       }
       for (let index = 0; index < state.tables.length; index += 1) {
-        body.push(h(DataTable, { key: 't' + index, rows: state.tables[index].rows, caption: state.tables[index].name }));
+        const table = state.tables[index];
+        body.push(
+          h(DataTable, {
+            key: 't' + index,
+            rows: table.rows,
+            caption: table.name,
+            onPick: (rowIndex, column, value) =>
+              addMark({
+                kind: 'spot',
+                path: doc.path,
+                label: table.name + ' · ' + String.fromCharCode(65 + Math.min(25, column)) + (rowIndex + 1),
+                quote: String(value || '').slice(0, 200),
+              }),
+          }),
+        );
       }
       for (let index = 0; index < state.slides.length; index += 1) {
         const slide = state.slides[index];
         body.push(
           h(
             'div',
-            { key: 's' + index, className: 'dshcv-slide' },
+            {
+              key: 's' + index,
+              className: 'dshcv-slide dshcv-docp',
+              title: '点击标注这一页',
+              onClick: () =>
+                addMark({ kind: 'spot', path: doc.path, label: '第 ' + (index + 1) + ' 页', quote: (slide.title || slide.lines[0] || '').slice(0, 200) }),
+            },
             h('div', { className: 'dshcv-slidehead' }, '第 ' + (index + 1) + ' 页' + (slide.title ? ' · ' + slide.title : '')),
             slide.lines.map((line, lineIndex) => h('p', { key: 'l' + lineIndex }, line)),
           ),
@@ -2217,7 +2263,21 @@ window.__ModuleLoader__.load({
       }, [doc.path, sessionId]);
       if (state.status === 'failed') return h('div', { className: 'dshcv-empty' }, h('div', null, '无法读取表格'), h('div', null, state.error));
       if (state.status !== 'ready') return h('div', { className: 'dshcv-empty' }, h('div', null, '读取中…'));
-      return h('div', { className: 'dshcv-docwrap' }, h(DataTable, { rows: state.rows, caption: state.rows.length + ' 行' }));
+      return h(
+        'div',
+        { className: 'dshcv-docwrap' },
+        h(DataTable, {
+          rows: state.rows,
+          caption: state.rows.length + ' 行',
+          onPick: (rowIndex, column, value) =>
+            addMark({
+              kind: 'spot',
+              path: doc.path,
+              label: String.fromCharCode(65 + Math.min(25, column)) + (rowIndex + 1),
+              quote: String(value || '').slice(0, 200),
+            }),
+        }),
+      );
     }
 
     function PdfDoc(props) {
@@ -2257,6 +2317,20 @@ window.__ModuleLoader__.load({
       return h(
         'div',
         { style: { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' } },
+        h(
+          'div',
+          { className: 'dshcv-tools' },
+          h('span', { className: 'dshcv-msg' }, Math.round(state.size / 1024) + ' KB · 页码标记需要自渲染阅读器，当前阅读器无法拦截点击'),
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'dshcv-btn',
+              onClick: () => addMark({ kind: 'spot', path: doc.path, label: '整份 PDF', quote: '' }),
+            },
+            '标记整份文档',
+          ),
+        ),
         h('iframe', {
           title: 'canvas pdf preview',
           src: state.url,
@@ -2470,7 +2544,29 @@ window.__ModuleLoader__.load({
           'div',
           { style: { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' } },
           header,
-          h('div', { className: 'dshcv-canvaswrap' }, h('canvas', { ref: canvasRef, className: 'dshcv-bitmap' })),
+          h('div', { className: 'dshcv-canvaswrap' }, h('canvas', {
+            ref: canvasRef,
+            className: 'dshcv-bitmap',
+            style: { cursor: 'crosshair' },
+            onClick: (event) => {
+              const bitmap = state.bitmap;
+              if (!bitmap) return;
+              const rect = event.currentTarget.getBoundingClientRect();
+              const x = Math.round(((event.clientX - rect.left) / Math.max(1, rect.width)) * bitmap.width);
+              const y = Math.round(((event.clientY - rect.top) / Math.max(1, rect.height)) * bitmap.height);
+              if (x < 0 || y < 0 || x >= bitmap.width || y >= bitmap.height) return;
+              const at = (y * bitmap.width + x) * 4;
+              const red = bitmap.rgba[at];
+              const green = bitmap.rgba[at + 1];
+              const blue = bitmap.rgba[at + 2];
+              addMark({
+                kind: 'spot',
+                path: doc.path,
+                label: '像素 (' + x + ', ' + y + ')',
+                quote: 'rgb(' + red + ', ' + green + ', ' + blue + ')',
+              });
+            },
+          })),
         );
       }
       if (state.mode === 'pdf') {
@@ -2493,7 +2589,20 @@ window.__ModuleLoader__.load({
           ? h(
               'ul',
               { className: 'dshcv-outline' },
-              state.outline.slice(0, 400).map((item, index) => h('li', { key: index }, h('span', { className: 'dshcv-tcaption' }, item.path), ' ', item.label)),
+              state.outline.slice(0, 400).map((item, index) =>
+                h(
+                  'li',
+                  {
+                    key: index,
+                    style: { cursor: 'pointer' },
+                    title: '点击标注这一项',
+                    onClick: () => addMark({ kind: 'spot', path: doc.path, label: item.label, quote: item.path }),
+                  },
+                  h('span', { className: 'dshcv-tcaption' }, item.path),
+                  ' ',
+                  item.label,
+                ),
+              ),
             )
           : h('div', { className: 'dshcv-msg' }, '没有解析到图层或文本'),
       );
@@ -3027,6 +3136,9 @@ window.__ModuleLoader__.load({
       const meshRef = React.useRef(null);
       const viewRef = React.useRef({ yaw: 0.72, pitch: 0.42, distance: 3, pan: [0, 0, 0], center: [0, 0, 0], radius: 1 });
       const drawRef = React.useRef(() => {});
+      const pickRef = React.useRef(() => null);
+      // A click that ends a drag must not drop a mark on the model.
+      const dragMovedRef = React.useRef(false);
 
       React.useEffect(() => {
         if (!sessionId) return undefined;
@@ -3332,6 +3444,68 @@ window.__ModuleLoader__.load({
         };
         drawRef.current = render;
 
+        // Click picking: build a ray through the clicked pixel and take the
+        // nearest triangle hit, so a model can be annotated like any other file.
+        pickRef.current = (clientX, clientY) => {
+          const soup = meshRef.current;
+          if (!soup) return null;
+          const rect = canvas.getBoundingClientRect();
+          const ndcX = ((clientX - rect.left) / Math.max(1, rect.width)) * 2 - 1;
+          const ndcY = 1 - ((clientY - rect.top) / Math.max(1, rect.height)) * 2;
+          const view = viewRef.current;
+          const basis = cameraBasis(view);
+          const tanHalf = Math.tan(Math.PI / 8);
+          const aspect = rect.width / Math.max(1, rect.height);
+          const dir = [
+            basis.forward[0] + basis.right[0] * ndcX * tanHalf * aspect + basis.up[0] * ndcY * tanHalf,
+            basis.forward[1] + basis.right[1] * ndcX * tanHalf * aspect + basis.up[1] * ndcY * tanHalf,
+            basis.forward[2] + basis.right[2] * ndcX * tanHalf * aspect + basis.up[2] * ndcY * tanHalf,
+          ];
+          const length = Math.hypot(dir[0], dir[1], dir[2]) || 1;
+          dir[0] /= length;
+          dir[1] /= length;
+          dir[2] /= length;
+          const pan = view.pan || [0, 0, 0];
+          const target = [view.center[0] + pan[0], view.center[1] + pan[1], view.center[2] + pan[2]];
+          const origin = [
+            target[0] + view.distance * Math.cos(view.pitch) * Math.sin(view.yaw),
+            target[1] + view.distance * Math.sin(view.pitch),
+            target[2] + view.distance * Math.cos(view.pitch) * Math.cos(view.yaw),
+          ];
+          let best = Infinity;
+          let bestTriangle = -1;
+          let bestPoint = null;
+          for (let at = 0; at + 8 < soup.length; at += 9) {
+            const ax = soup[at], ay = soup[at + 1], az = soup[at + 2];
+            const bx = soup[at + 3], by = soup[at + 4], bz = soup[at + 5];
+            const cx = soup[at + 6], cy = soup[at + 7], cz = soup[at + 8];
+            const e1x = bx - ax, e1y = by - ay, e1z = bz - az;
+            const e2x = cx - ax, e2y = cy - ay, e2z = cz - az;
+            const px = dir[1] * e2z - dir[2] * e2y;
+            const py = dir[2] * e2x - dir[0] * e2z;
+            const pz = dir[0] * e2y - dir[1] * e2x;
+            const det = e1x * px + e1y * py + e1z * pz;
+            if (Math.abs(det) < 1e-9) continue;
+            const inv = 1 / det;
+            const tx = origin[0] - ax, ty = origin[1] - ay, tz = origin[2] - az;
+            const u = (tx * px + ty * py + tz * pz) * inv;
+            if (u < 0 || u > 1) continue;
+            const qx = ty * e1z - tz * e1y;
+            const qy = tz * e1x - tx * e1z;
+            const qz = tx * e1y - ty * e1x;
+            const v = (dir[0] * qx + dir[1] * qy + dir[2] * qz) * inv;
+            if (v < 0 || u + v > 1) continue;
+            const distance = (e2x * qx + e2y * qy + e2z * qz) * inv;
+            if (distance > 1e-6 && distance < best) {
+              best = distance;
+              bestTriangle = at / 9;
+              bestPoint = [origin[0] + dir[0] * distance, origin[1] + dir[1] * distance, origin[2] + dir[2] * distance];
+            }
+          }
+          if (bestTriangle < 0) return null;
+          return { triangle: bestTriangle, point: bestPoint };
+        };
+
         // Pan moves the target along the camera's screen axes, not world X/Y.
         const cameraBasis = (view) => {
           const dir = [
@@ -3348,7 +3522,7 @@ window.__ModuleLoader__.load({
             right[2] * forward[0] - right[0] * forward[2],
             right[0] * forward[1] - right[1] * forward[0],
           ];
-          return { right, up };
+          return { right, up, forward };
         };
         const panBy = (view, rightAmount, upAmount) => {
           const basis = cameraBasis(view);
@@ -3365,6 +3539,7 @@ window.__ModuleLoader__.load({
           dragging = event.button === 0 && !event.shiftKey ? 1 : 2;
           lastX = event.clientX;
           lastY = event.clientY;
+          dragMovedRef.current = false;
           canvas.setPointerCapture(event.pointerId);
         };
         const onMove = (event) => {
@@ -3374,6 +3549,7 @@ window.__ModuleLoader__.load({
           const deltaY = event.clientY - lastY;
           lastX = event.clientX;
           lastY = event.clientY;
+          if (Math.abs(deltaX) + Math.abs(deltaY) > 2) dragMovedRef.current = true;
           if (dragging === 2) {
             const scale = view.distance * 0.0016;
             panBy(view, -deltaX * scale, deltaY * scale);
@@ -3535,7 +3711,21 @@ window.__ModuleLoader__.load({
           h('button', { type: 'button', className: 'dshcv-btn', onClick: exportObj }, '导出 OBJ'),
           notice ? h('span', { className: 'dshcv-msg' }, notice) : null,
         ),
-        h('div', { className: 'dshcv-3dwrap' }, h('canvas', { ref: canvasRef, className: 'dshcv-canvas3d' })),
+        h('div', { className: 'dshcv-3dwrap' }, h('canvas', {
+          ref: canvasRef,
+          className: 'dshcv-canvas3d',
+          onClick: (event) => {
+            if (dragMovedRef.current) return;
+            const hit = pickRef.current(event.clientX, event.clientY);
+            if (!hit) return;
+            addMark({
+              kind: 'spot',
+              path: doc.path,
+              label: '三角形 #' + hit.triangle,
+              quote: hit.point.map((value) => value.toFixed(3)).join(', '),
+            });
+          },
+        })),
         h('div', { className: 'dshcv-tools' }, h('span', { className: 'dshcv-msg' }, '左键旋转 · 右键/Shift 拖动平移 · 滚轮缩放 · 双击居中 · 1-5 前/后/右/左/顶 · 6 底 · 7 等轴测 · F 复位')),
       );
     }
@@ -3729,6 +3919,36 @@ window.__ModuleLoader__.load({
 
       const fit = () => setZoom({ scale: 1, panX: 0, panY: 0 });
 
+      const renderShape = (shape, index) => {
+        if (shape.kind === 'line') {
+          return h('line', { key: index, x1: shape.a[0], y1: -shape.a[1], x2: shape.b[0], y2: -shape.b[1] });
+        }
+        if (shape.kind === 'polyline') {
+          const points = shape.points.map(([x, y]) => x + ',' + -y).join(' ');
+          return shape.closed ? h('polygon', { key: index, points }) : h('polyline', { key: index, points });
+        }
+        if (shape.kind === 'circle') {
+          return h('circle', { key: index, cx: shape.center[0], cy: -shape.center[1], r: shape.radius });
+        }
+        if (shape.kind === 'arc') {
+          const sweep = (((shape.end - shape.start) % 360) + 360) % 360 || 360;
+          const startRad = (shape.start * Math.PI) / 180;
+          const endRad = ((shape.start + sweep) * Math.PI) / 180;
+          const x1 = shape.center[0] + shape.radius * Math.cos(startRad);
+          const y1 = -(shape.center[1] + shape.radius * Math.sin(startRad));
+          const x2 = shape.center[0] + shape.radius * Math.cos(endRad);
+          const y2 = -(shape.center[1] + shape.radius * Math.sin(endRad));
+          return h('path', {
+            key: index,
+            d: 'M ' + x1 + ' ' + y1 + ' A ' + shape.radius + ' ' + shape.radius + ' 0 ' + (sweep > 180 ? 1 : 0) + ' 0 ' + x2 + ' ' + y2,
+          });
+        }
+        if (shape.kind === 'text') {
+          return h('text', { key: index, x: shape.at[0], y: -shape.at[1], fontSize: Math.max(shape.height, 1) }, shape.label);
+        }
+        return h('circle', { key: index, cx: shape.at[0], cy: -shape.at[1], r: 0.6 });
+      };
+
       // Pan and zoom work in drawing units so the cursor stays over its point.
       const toUnits = (pixels, along, box) => (pixels * (along === 'x' ? extents.width : extents.height)) / Math.max(1, box.width || box.height);
 
@@ -3831,35 +4051,23 @@ window.__ModuleLoader__.load({
           h(
             'svg',
             { viewBox: viewBox.join(' '), preserveAspectRatio: 'xMidYMid meet' },
-            visible.map((shape, index) => {
-              if (shape.kind === 'line') {
-                return h('line', { key: index, x1: shape.a[0], y1: -shape.a[1], x2: shape.b[0], y2: -shape.b[1] });
-              }
-              if (shape.kind === 'polyline') {
-                const points = shape.points.map(([x, y]) => x + ',' + -y).join(' ');
-                return shape.closed ? h('polygon', { key: index, points }) : h('polyline', { key: index, points });
-              }
-              if (shape.kind === 'circle') {
-                return h('circle', { key: index, cx: shape.center[0], cy: -shape.center[1], r: shape.radius });
-              }
-              if (shape.kind === 'arc') {
-                const sweep = (((shape.end - shape.start) % 360) + 360) % 360 || 360;
-                const startRad = (shape.start * Math.PI) / 180;
-                const endRad = ((shape.start + sweep) * Math.PI) / 180;
-                const x1 = shape.center[0] + shape.radius * Math.cos(startRad);
-                const y1 = -(shape.center[1] + shape.radius * Math.sin(startRad));
-                const x2 = shape.center[0] + shape.radius * Math.cos(endRad);
-                const y2 = -(shape.center[1] + shape.radius * Math.sin(endRad));
-                return h('path', {
+            visible.map((shape, index) =>
+              h(
+                'g',
+                {
                   key: index,
-                  d: 'M ' + x1 + ' ' + y1 + ' A ' + shape.radius + ' ' + shape.radius + ' 0 ' + (sweep > 180 ? 1 : 0) + ' 0 ' + x2 + ' ' + y2,
-                });
-              }
-              if (shape.kind === 'text') {
-                return h('text', { key: index, x: shape.at[0], y: -shape.at[1], fontSize: Math.max(shape.height, 1) }, shape.label);
-              }
-              return h('circle', { key: index, cx: shape.at[0], cy: -shape.at[1], r: 0.6 });
-            }),
+                  style: { cursor: 'pointer' },
+                  onClick: () =>
+                    addMark({
+                      kind: 'spot',
+                      path: doc.path,
+                      label: (shape.layer || '0') + ' · ' + String(shape.kind).toUpperCase(),
+                      quote: shape.label || '',
+                    }),
+                },
+                renderShape(shape, index),
+              ),
+            ),
           ),
         ),
         h('div', { className: 'dshcv-tools' }, h('span', { className: 'dshcv-msg' }, '拖动平移 · 滚轮朝光标缩放 · 双击适应窗口')),
