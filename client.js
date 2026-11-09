@@ -842,17 +842,49 @@ window.__ModuleLoader__.load({
     const LIMITS = { model: 64, design: 64, office: 32, pdf: 256, html: 16, sheet: 32, text: 8 };
     const MB = 1024 * 1024;
 
-    const readFileSize = async (sessionId, path, signal) => {
+    const readFileInfo = async (sessionId, path, signal) => {
       if (!sessionId) return null;
       try {
         const query = new URLSearchParams({ sessionId, path });
         const response = await fetch(fileUrl() + '?' + query.toString(), { signal });
         if (!response.ok) return null;
         const body = await response.json();
-        return body && typeof body.size === 'number' ? body.size : null;
+        if (!body || typeof body.size !== 'number') return null;
+        return { size: body.size, mtimeMs: Number(body.mtimeMs) || 0 };
       } catch {
         return null;
       }
+    };
+
+    const readFileSize = async (sessionId, path, signal) => {
+      const info = await readFileInfo(sessionId, path, signal);
+      return info ? info.size : null;
+    };
+
+    // Parsed meshes are expensive and tab switching unmounts the viewer, so a
+    // byte-budgeted LRU keeps a few around instead of re-reading from disk.
+    const MESH_CACHE_BYTES = 256 * MB;
+    const meshCache = new Map();
+    let meshCacheBytes = 0;
+    const meshCacheKey = (sessionId, path, info) => sessionId + '|' + path + '|' + (info ? info.mtimeMs + ':' + info.size : '0');
+    const meshCacheGet = (key) => meshCache.get(key) || null;
+    const meshCacheSet = (key, value) => {
+      const size = value.positions.byteLength + (value.colors ? value.colors.byteLength : 0);
+      if (size > MESH_CACHE_BYTES) return;
+      while (meshCacheBytes + size > MESH_CACHE_BYTES && meshCache.size) {
+        const oldestKey = meshCache.keys().next().value;
+        const oldest = meshCache.get(oldestKey);
+        meshCacheBytes -= oldest.size || 0;
+        meshCache.delete(oldestKey);
+      }
+      meshCache.set(key, Object.assign({ size }, value));
+      meshCacheBytes += size;
+    };
+    const releaseMesh = (key) => {
+      const cached = meshCache.get(key);
+      if (!cached) return;
+      meshCacheBytes -= cached.size || 0;
+      meshCache.delete(key);
     };
 
     const readFileRange = async (sessionId, path, offset, length, signal) => {
@@ -1742,6 +1774,16 @@ window.__ModuleLoader__.load({
       );
     }
 
+    // Long parses yield to the event loop so the UI keeps painting, a cancel can
+    // take effect, and progress can be reported.
+    const yieldFrame = () => new Promise((resolve) => setTimeout(resolve, 0));
+    const checkAbort = (options) => {
+      if (options && options.signal && options.signal.aborted) throw new Error('已取消');
+    };
+    const reportProgress = (options, fraction) => {
+      if (options && typeof options.onProgress === 'function') options.onProgress(Math.max(0, Math.min(1, fraction)));
+    };
+
     // ---------------- office documents: read the container, show the content ----------------
     // OOXML files are zip containers. Chromium ships DecompressionStream, so the
     // archive opens without a dependency and the XML is read with DOMParser.
@@ -2113,7 +2155,7 @@ window.__ModuleLoader__.load({
       return out;
     };
 
-    const parsePsd = (bytes) => {
+    const parsePsd = async (bytes, options) => {
       const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
       if (bytes.length < 26 || view.getUint32(0, false) !== 0x38425053) throw new Error('不是有效的 PSD 文件');
       const channels = view.getUint16(12, false);
@@ -2149,6 +2191,11 @@ window.__ModuleLoader__.load({
             const count = counts[channel * height + row];
             data.set(unpackBits(bytes, cursor, width), row * width);
             cursor += count;
+            if (row % 512 === 511) {
+              checkAbort(options);
+              reportProgress(options, (channel * height + row) / (channels * height));
+              await yieldFrame();
+            }
           }
           planes.push(data);
         }
@@ -2224,7 +2271,7 @@ window.__ModuleLoader__.load({
           .then(async (bytes) => {
             if (cancelled || !bytes) return;
             if (extension === 'psd') {
-              const bitmap = parsePsd(bytes);
+              const bitmap = await parsePsd(bytes, { signal: controller.signal });
               if (cancelled) return;
               setState({
                 status: 'ready',
@@ -2329,7 +2376,7 @@ window.__ModuleLoader__.load({
     };
     const PLY_BYTES = { char: 1, int8: 1, uchar: 1, uint8: 1, short: 2, int16: 2, ushort: 2, uint16: 2, int: 4, int32: 4, uint: 4, uint32: 4, float: 4, float32: 4, double: 8, float64: 8 };
 
-    const parsePly = (bytes) => {
+    const parsePly = async (bytes, options) => {
       const decoder = new TextDecoder('utf-8', { fatal: false });
       const stamp = new TextEncoder().encode('end_header');
       let headerStop = -1;
@@ -2380,6 +2427,8 @@ window.__ModuleLoader__.load({
       if (binary) {
         const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
         let cursor = dataStart;
+        const total = elements.reduce((sum, element) => sum + element.count, 0) || 1;
+        let processed = 0;
         const readScalar = (type) => {
           const key = String(type || '').toLowerCase();
           const reader = PLY_SCALAR[key];
@@ -2408,11 +2457,19 @@ window.__ModuleLoader__.load({
               const face = record.vertex_indices || record.vertex_index || [];
               for (let item = 1; item + 1 < face.length; item += 1) indices.push(face[0], face[item], face[item + 1]);
             }
+            processed += 1;
+            if (processed % 20000 === 0) {
+              checkAbort(options);
+              reportProgress(options, processed / total);
+              await yieldFrame();
+            }
           }
         }
       } else {
         const rows = decoder.decode(bytes.subarray(dataStart)).split(/\r?\n/);
         let cursor = 0;
+        const total = elements.reduce((sum, element) => sum + element.count, 0) || 1;
+        let processed = 0;
         for (const element of elements) {
           for (let index = 0; index < element.count; index += 1) {
             const tokens = (rows[cursor] || '').trim().split(/\s+/).map(Number);
@@ -2428,6 +2485,12 @@ window.__ModuleLoader__.load({
             } else if (element.name === 'face') {
               const count = tokens[0] || 0;
               for (let item = 1; item + 2 <= count; item += 1) indices.push(tokens[item] || 0, tokens[item + 1] || 0, tokens[item + 2] || 0);
+            }
+            processed += 1;
+            if (processed % 20000 === 0) {
+              checkAbort(options);
+              reportProgress(options, processed / total);
+              await yieldFrame();
             }
           }
         }
@@ -2551,10 +2614,10 @@ window.__ModuleLoader__.load({
       return { positions: new Float32Array(out), colors: null };
     };
 
-    const loadMesh = async (bytes, extension) => {
-      if (extension === 'stl') return { positions: parseStl(bytes), colors: null };
+    const loadMesh = async (bytes, extension, options) => {
+      if (extension === 'stl') return { positions: await parseStl(bytes, options), colors: null };
       if (extension === 'obj') return { positions: parseObj(new TextDecoder('utf-8', { fatal: false }).decode(bytes)), colors: null };
-      if (extension === 'ply') return parsePly(bytes);
+      if (extension === 'ply') return await parsePly(bytes, options);
       if (['off', 'noff', 'coff', 'cnoff'].includes(extension)) return parseOff(bytes);
       if (extension === '3mf') return parse3mf(bytes);
       if (extension === 'dae') return parseCollada(bytes);
@@ -2562,16 +2625,22 @@ window.__ModuleLoader__.load({
     };
 
     // ---------------- 3d models: triangle soup in, WebGL out ----------------
-    const parseStl = (bytes) => {
+    const parseStl = async (bytes, options) => {
       if (bytes.length >= 84) {
         const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
         const declared = view.getUint32(80, true);
         if (declared > 0 && 84 + declared * 50 === bytes.length) {
           const positions = new Float32Array(declared * 9);
           let at = 84 + 12;
+          const chunk = 50000;
           for (let index = 0; index < declared; index += 1) {
             for (let corner = 0; corner < 9; corner += 1) positions[index * 9 + corner] = view.getFloat32(at + corner * 4, true);
             at += 50;
+            if (index % chunk === chunk - 1) {
+              checkAbort(options);
+              reportProgress(options, index / declared);
+              await yieldFrame();
+            }
           }
           return positions;
         }
@@ -2580,7 +2649,16 @@ window.__ModuleLoader__.load({
       const found = [];
       const pattern = /vertex\s+(-?[\d.eE+-]+)\s+(-?[\d.eE+-]+)\s+(-?[\d.eE+-]+)/g;
       let match;
-      while ((match = pattern.exec(text))) found.push(Number(match[1]), Number(match[2]), Number(match[3]));
+      let seen = 0;
+      while ((match = pattern.exec(text))) {
+        found.push(Number(match[1]), Number(match[2]), Number(match[3]));
+        seen += 1;
+        if (seen % 100000 === 0) {
+          checkAbort(options);
+          reportProgress(options, match.index / Math.max(1, text.length));
+          await yieldFrame();
+        }
+      }
       return new Float32Array(found);
     };
 
@@ -2807,6 +2885,7 @@ window.__ModuleLoader__.load({
       const [state, setState] = React.useState({ status: 'idle', error: '', info: '', stats: null });
       const [options, setOptions] = React.useState({ wireframe: false, fog: true, axes: true });
       const [notice, setNotice] = React.useState('');
+      const [progress, setProgress] = React.useState(0);
       const canvasRef = React.useRef(null);
       const rootRef = React.useRef(null);
       const meshRef = React.useRef(null);
@@ -2818,18 +2897,15 @@ window.__ModuleLoader__.load({
         const controller = new AbortController();
         let cancelled = false;
         setState({ status: 'loading', error: '', info: '', stats: null });
+        setProgress(0);
         const match = /\.([a-z0-9]+)$/i.exec(doc.path);
         const extension = match ? match[1].toLowerCase() : '';
-        readBytesFile(sessionId, doc.path, controller.signal)
-          .then(async (bytes) => {
-            if (cancelled || !bytes) return;
-            const mesh = await loadMesh(bytes, extension);
-            const positions = mesh && mesh.positions;
-            if (!positions || positions.length < 9) {
-              throw new Error(mesh && mesh.points ? '这是点云数据，三维面片查看器暂不显示' : '没有解析到三角形，可能格式不受支持或模型为空');
-            }
-            meshRef.current = positions;
-            let minX = Infinity;
+        const apply = (positions, mesh) => {
+          if (!positions || positions.length < 9) {
+            throw new Error(mesh && mesh.points ? '这是点云数据，三维面片查看器暂不显示' : '没有解析到三角形，可能格式不受支持或模型为空');
+          }
+          meshRef.current = positions;
+          let minX = Infinity;
             let minY = Infinity;
             let minZ = Infinity;
             let maxX = -Infinity;
@@ -2846,26 +2922,45 @@ window.__ModuleLoader__.load({
               if (z < minZ) minZ = z;
               if (z > maxZ) maxZ = z;
             }
-            const size = [maxX - minX, maxY - minY, maxZ - minZ];
-            const radius = Math.max(size[0], size[1], size[2], 1e-6) / 2;
-            viewRef.current.center = [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2];
-            viewRef.current.radius = radius;
-            viewRef.current.distance = radius / Math.tan(Math.PI / 8) + radius;
-            if (cancelled) return;
-            setState({
-              status: 'ready',
-              error: '',
-              info: (positions.length / 9).toLocaleString() + ' 个三角形',
-              stats: {
-                triangles: positions.length / 9,
-                vertices: positions.length / 3,
-                size,
-              },
-            });
-          })
-          .catch((error) => {
-            if (!cancelled) setState({ status: 'failed', error: errText(error), info: '', stats: null });
+          const size = [maxX - minX, maxY - minY, maxZ - minZ];
+          const radius = Math.max(size[0], size[1], size[2], 1e-6) / 2;
+          viewRef.current.center = [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2];
+          viewRef.current.radius = radius;
+          viewRef.current.distance = radius / Math.tan(Math.PI / 8) + radius;
+          if (cancelled) return;
+          setState({
+            status: 'ready',
+            error: '',
+            info: (positions.length / 9).toLocaleString() + ' 个三角形',
+            stats: {
+              triangles: positions.length / 9,
+              vertices: positions.length / 3,
+              size,
+            },
           });
+        };
+
+        const run = async () => {
+          const info = await readFileInfo(sessionId, doc.path, controller.signal);
+          const key = meshCacheKey(sessionId, doc.path, info);
+          const cached = meshCacheGet(key);
+          if (cached) {
+            apply(cached.positions, null);
+            return;
+          }
+          const bytes = await readBytesFile(sessionId, doc.path, controller.signal);
+          if (cancelled || !bytes) return;
+          const mesh = await loadMesh(bytes, extension, {
+            signal: controller.signal,
+            onProgress: (fraction) => setProgress(fraction),
+          });
+          if (cancelled) return;
+          meshCacheSet(key, { positions: mesh.positions, colors: mesh.colors });
+          apply(mesh.positions, mesh);
+        };
+        run().catch((error) => {
+          if (!cancelled) setState({ status: 'failed', error: errText(error), info: '', stats: null });
+        });
         return () => {
           cancelled = true;
           controller.abort();
@@ -3159,6 +3254,7 @@ window.__ModuleLoader__.load({
           'div',
           { className: 'dshcv-tools' },
           h('span', { className: 'dshcv-msg' }, state.status === 'ready' ? state.info : '解析模型…'),
+          state.status === 'loading' && progress > 0 ? h('span', { className: 'dshcv-msg' }, Math.round(progress * 100) + '%') : null,
           stats
             ? h(
                 'span',
