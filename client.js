@@ -140,7 +140,7 @@ window.__ModuleLoader__.load({
       if (['md', 'markdown'].includes(ext)) return 'markdown';
       if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif'].includes(ext)) return 'image';
       if (ext === 'pdf') return 'pdf';
-      if (['stl', 'obj', 'glb', 'gltf'].includes(ext)) return 'model';
+      if (['stl', 'obj', 'glb', 'gltf', 'ply', 'off', 'noff', 'coff', 'cnoff', '3mf', 'dae'].includes(ext)) return 'model';
       if (ext === 'dxf') return 'cad';
       if (['psd', 'ai', 'sketch', 'xd', 'fig', 'eps', 'afdesign'].includes(ext)) return 'design';
       if (['step', 'stp', 'iges', 'igs', 'dwg', 'fbx', '3ds', 'blend', 'skp', 'sldprt', 'ipt'].includes(ext)) return 'unsupported';
@@ -2243,6 +2243,251 @@ window.__ModuleLoader__.load({
       );
     }
 
+    // ---- PLY (ascii + binary little endian), OFF family, 3MF and Collada ----
+    const PLY_SCALAR = {
+      char: (view, at) => view.getInt8(at), int8: (view, at) => view.getInt8(at),
+      uchar: (view, at) => view.getUint8(at), uint8: (view, at) => view.getUint8(at),
+      short: (view, at) => view.getInt16(at, true), int16: (view, at) => view.getInt16(at, true),
+      ushort: (view, at) => view.getUint16(at, true), uint16: (view, at) => view.getUint16(at, true),
+      int: (view, at) => view.getInt32(at, true), int32: (view, at) => view.getInt32(at, true),
+      uint: (view, at) => view.getUint32(at, true), uint32: (view, at) => view.getUint32(at, true),
+      float: (view, at) => view.getFloat32(at, true), float32: (view, at) => view.getFloat32(at, true),
+      double: (view, at) => view.getFloat64(at, true), float64: (view, at) => view.getFloat64(at, true),
+    };
+    const PLY_BYTES = { char: 1, int8: 1, uchar: 1, uint8: 1, short: 2, int16: 2, ushort: 2, uint16: 2, int: 4, int32: 4, uint: 4, uint32: 4, float: 4, float32: 4, double: 8, float64: 8 };
+
+    const parsePly = (bytes) => {
+      const decoder = new TextDecoder('utf-8', { fatal: false });
+      const stamp = new TextEncoder().encode('end_header');
+      let headerStop = -1;
+      for (let index = 0; index + stamp.length <= bytes.length; index += 1) {
+        let match = true;
+        for (let offset = 0; offset < stamp.length; offset += 1) {
+          if (bytes[index + offset] !== stamp[offset]) {
+            match = false;
+            break;
+          }
+        }
+        if (match) {
+          headerStop = index;
+          break;
+        }
+      }
+      if (headerStop < 0) throw new Error('PLY 头部缺失（找不到 end_header）');
+      const head = decoder.decode(bytes.subarray(0, headerStop));
+      const headerLines = head.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+      const formatLine = headerLines.find((line) => /^format\b/i.test(line)) || '';
+      if (!formatLine) throw new Error('PLY 缺少 format 行');
+      const format = formatLine;
+      const binary = /binary_little_endian/i.test(format);
+      if (/binary_big_endian/i.test(format)) throw new Error('暂不支持大端 PLY');
+      if (!binary && !/ascii/i.test(format)) throw new Error('未知的 PLY 编码：' + format);
+
+      const elements = [];
+      let current = null;
+      for (const line of headerLines.slice(1)) {
+        const parts = line.split(/\s+/);
+        if (parts[0] === 'element') {
+          current = { name: parts[1], count: Number(parts[2]) || 0, properties: [] };
+          elements.push(current);
+        } else if (parts[0] === 'property' && current) {
+          if (parts[1] === 'list') current.properties.push({ list: true, countType: parts[2], itemType: parts[3], name: parts[4] });
+          else current.properties.push({ list: false, type: parts[1], name: parts[2] });
+        }
+      }
+
+      let dataStart = headerStop;
+      while (dataStart < bytes.length && bytes[dataStart] !== 0x0a) dataStart += 1;
+      dataStart += 1;
+
+      const positions = [];
+      const colors = [];
+      const indices = [];
+
+      if (binary) {
+        const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        let cursor = dataStart;
+        const readScalar = (type) => {
+          const key = String(type || '').toLowerCase();
+          const reader = PLY_SCALAR[key];
+          if (!reader) throw new Error('未知的 PLY 属性类型：' + type);
+          const value = reader(view, cursor);
+          cursor += PLY_BYTES[key];
+          return value;
+        };
+        for (const element of elements) {
+          for (let index = 0; index < element.count; index += 1) {
+            const record = {};
+            for (const property of element.properties) {
+              if (property.list) {
+                const count = readScalar(property.countType);
+                const items = [];
+                for (let item = 0; item < count; item += 1) items.push(readScalar(property.itemType));
+                record[property.name] = items;
+              } else {
+                record[property.name] = readScalar(property.type);
+              }
+            }
+            if (element.name === 'vertex') {
+              positions.push(record.x || 0, record.y || 0, record.z || 0);
+              if (record.red !== undefined) colors.push((record.red || 0) / 255, (record.green || 0) / 255, (record.blue || 0) / 255);
+            } else if (element.name === 'face') {
+              const face = record.vertex_indices || record.vertex_index || [];
+              for (let item = 1; item + 1 < face.length; item += 1) indices.push(face[0], face[item], face[item + 1]);
+            }
+          }
+        }
+      } else {
+        const rows = decoder.decode(bytes.subarray(dataStart)).split(/\r?\n/);
+        let cursor = 0;
+        for (const element of elements) {
+          for (let index = 0; index < element.count; index += 1) {
+            const tokens = (rows[cursor] || '').trim().split(/\s+/).map(Number);
+            cursor += 1;
+            if (element.name === 'vertex') {
+              positions.push(tokens[0] || 0, tokens[1] || 0, tokens[2] || 0);
+              let offset = 3;
+              for (const property of element.properties) {
+                if (property.list) continue;
+                if (property.name === 'red') colors.push(((tokens[offset] || 0) / 255), ((tokens[offset + 1] || 0) / 255), ((tokens[offset + 2] || 0) / 255));
+                offset += 1;
+              }
+            } else if (element.name === 'face') {
+              const count = tokens[0] || 0;
+              for (let item = 1; item + 2 <= count; item += 1) indices.push(tokens[item] || 0, tokens[item + 1] || 0, tokens[item + 2] || 0);
+            }
+          }
+        }
+      }
+
+      if (indices.length) {
+        const soup = new Float32Array((indices.length / 3) * 9);
+        for (let index = 0; index < indices.length; index += 1) {
+          const base = indices[index] * 3;
+          soup[index * 3] = positions[base] || 0;
+          soup[index * 3 + 1] = positions[base + 1] || 0;
+          soup[index * 3 + 2] = positions[base + 2] || 0;
+        }
+        return { positions: soup, colors: colors.length ? new Float32Array(colors) : null, points: false };
+      }
+      return { positions: new Float32Array(positions), colors: colors.length ? new Float32Array(colors) : null, points: true };
+    };
+
+    const parseOff = (bytes) => {
+      const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+      const lines = text.split(/\r?\n/);
+      let cursor = 0;
+      while (cursor < lines.length && !/^\s*(?:[NC]*OFF)\b/i.test(lines[cursor])) cursor += 1;
+      if (cursor >= lines.length) throw new Error('OFF 头部缺失');
+      const flavour = ((lines[cursor].match(/([NC]*)OFF/i) || ['', ''])[1] || '').toUpperCase();
+      cursor += 1;
+      const nextNumbers = () => {
+        while (cursor < lines.length && !lines[cursor].trim()) cursor += 1;
+        const values = (lines[cursor] || '').trim().split(/\s+/).map(Number);
+        cursor += 1;
+        return values;
+      };
+      const counts = nextNumbers();
+      const vertexCount = counts[0] || 0;
+      const faceCount = counts[1] || 0;
+      const positions = [];
+      const colors = [];
+      for (let index = 0; index < vertexCount; index += 1) {
+        const values = nextNumbers();
+        positions.push(values[0] || 0, values[1] || 0, values[2] || 0);
+        if (flavour.includes('C')) {
+          let offset = 3;
+          if (flavour.includes('N')) offset += 3;
+          const red = values[offset] || 0;
+          const green = values[offset + 1] || 0;
+          const blue = values[offset + 2] || 0;
+          const alpha = values[offset + 3] === undefined ? 1 : values[offset + 3] / 255 || 1;
+          colors.push(Math.min(1, red / 255 / alpha), Math.min(1, green / 255 / alpha), Math.min(1, blue / 255 / alpha));
+        }
+      }
+      const soup = [];
+      for (let face = 0; face < faceCount; face += 1) {
+        const values = nextNumbers();
+        const count = values[0] || 0;
+        for (let item = 1; item + 2 <= count; item += 1) {
+          for (const corner of [values[1], values[item + 1], values[item + 2]]) {
+            soup.push(positions[corner * 3] || 0, positions[corner * 3 + 1] || 0, positions[corner * 3 + 2] || 0);
+          }
+        }
+      }
+      return { positions: new Float32Array(soup), colors: colors.length ? new Float32Array(colors) : null, points: false };
+    };
+    const parse3mf = async (bytes) => {
+      const zip = await openZip(bytes);
+      const modelEntry = zip.entries.find((entry) => /3D\/.*\.model$/i.test(entry.name)) || zip.entries.find((entry) => /\.model$/i.test(entry.name));
+      if (!modelEntry) throw new Error('3MF 里没有找到 .model 文件');
+      const xml = parseXml(new TextDecoder('utf-8', { fatal: false }).decode(await zip.read(modelEntry)));
+      const vertices = Array.from(xml.getElementsByTagName('vertex')).map((node) => [
+        Number(node.getAttribute('x')) || 0,
+        Number(node.getAttribute('y')) || 0,
+        Number(node.getAttribute('z')) || 0,
+      ]);
+      const out = [];
+      for (const triangle of Array.from(xml.getElementsByTagName('triangle'))) {
+        for (const attribute of ['v1', 'v2', 'v3']) {
+          const index = Number(triangle.getAttribute(attribute)) || 0;
+          const vertex = vertices[index] || [0, 0, 0];
+          out.push(vertex[0], vertex[1], vertex[2]);
+        }
+      }
+      return { positions: new Float32Array(out), colors: null };
+    };
+
+    const parseCollada = (bytes) => {
+      const xml = parseXml(new TextDecoder('utf-8', { fatal: false }).decode(bytes));
+      const arrays = new Map();
+      for (const node of Array.from(xml.getElementsByTagName('float_array'))) {
+        const id = node.getAttribute('id');
+        if (!id) continue;
+        arrays.set(
+          id,
+          (node.textContent || '')
+            .trim()
+            .split(/\s+/)
+            .map((value) => Number(value) || 0),
+        );
+      }
+      const out = [];
+      for (const triangles of Array.from(xml.getElementsByTagName('triangles'))) {
+        const inputs = Array.from(triangles.getElementsByTagName('input'));
+        const vertex = inputs.find((input) => (input.getAttribute('semantic') || '').toUpperCase() === 'VERTEX');
+        if (!vertex) continue;
+        const source = vertex.getAttribute('source') || '';
+        const values = arrays.get(source.replace(/^#/, ''));
+        if (!values) continue;
+        const stride = Number(vertex.getAttribute('offset')) || 0;
+        const step = Math.max(1, inputs.length);
+        const p = triangles.getElementsByTagName('p')[0];
+        if (!p) continue;
+        const raw = (p.textContent || '')
+          .trim()
+          .split(/\s+/)
+          .map((value) => Number(value) || 0);
+        for (let index = 0; index + step * 3 <= raw.length; index += step * 3) {
+          for (const corner of [0, 1, 2]) {
+            const vertexIndex = raw[index + corner * step + stride];
+            out.push(values[vertexIndex * 3] || 0, values[vertexIndex * 3 + 1] || 0, values[vertexIndex * 3 + 2] || 0);
+          }
+        }
+      }
+      return { positions: new Float32Array(out), colors: null };
+    };
+
+    const loadMesh = async (bytes, extension) => {
+      if (extension === 'stl') return { positions: parseStl(bytes), colors: null };
+      if (extension === 'obj') return { positions: parseObj(new TextDecoder('utf-8', { fatal: false }).decode(bytes)), colors: null };
+      if (extension === 'ply') return parsePly(bytes);
+      if (['off', 'noff', 'coff', 'cnoff'].includes(extension)) return parseOff(bytes);
+      if (extension === '3mf') return parse3mf(bytes);
+      if (extension === 'dae') return parseCollada(bytes);
+      return { positions: parseGltf(bytes), colors: null };
+    };
+
     // ---------------- 3d models: triangle soup in, WebGL out ----------------
     const parseStl = (bytes) => {
       if (bytes.length >= 84) {
@@ -2486,27 +2731,30 @@ window.__ModuleLoader__.load({
 
     function ModelDoc(props) {
       const { doc, sessionId } = props;
-      const [state, setState] = React.useState({ status: 'idle', error: '', info: '' });
+      const [state, setState] = React.useState({ status: 'idle', error: '', info: '', stats: null });
+      const [options, setOptions] = React.useState({ wireframe: false, fog: true, axes: true });
+      const [notice, setNotice] = React.useState('');
       const canvasRef = React.useRef(null);
+      const rootRef = React.useRef(null);
       const meshRef = React.useRef(null);
-      const viewRef = React.useRef({ yaw: 0.7, pitch: 0.5, distance: 3, panX: 0, panY: 0 });
-      const [wireframe, setWireframe] = React.useState(false);
+      const viewRef = React.useRef({ yaw: 0.72, pitch: 0.42, distance: 3, panX: 0, panY: 0, center: [0, 0, 0], radius: 1 });
+      const drawRef = React.useRef(() => {});
 
       React.useEffect(() => {
         if (!sessionId) return undefined;
         const controller = new AbortController();
         let cancelled = false;
-        setState({ status: 'loading', error: '', info: '' });
+        setState({ status: 'loading', error: '', info: '', stats: null });
         const match = /\.([a-z0-9]+)$/i.exec(doc.path);
         const extension = match ? match[1].toLowerCase() : '';
         readBytesFile(sessionId, doc.path, controller.signal)
-          .then((bytes) => {
+          .then(async (bytes) => {
             if (cancelled || !bytes) return;
-            let positions;
-            if (extension === 'stl') positions = parseStl(bytes);
-            else if (extension === 'obj') positions = parseObj(new TextDecoder('utf-8', { fatal: false }).decode(bytes));
-            else positions = parseGltf(bytes);
-            if (!positions || positions.length < 9) throw new Error('没有解析到三角形，可能格式不受支持或模型为空');
+            const mesh = await loadMesh(bytes, extension);
+            const positions = mesh && mesh.positions;
+            if (!positions || positions.length < 9) {
+              throw new Error(mesh && mesh.points ? '这是点云数据，三维面片查看器暂不显示' : '没有解析到三角形，可能格式不受支持或模型为空');
+            }
             meshRef.current = positions;
             let minX = Infinity;
             let minY = Infinity;
@@ -2515,26 +2763,35 @@ window.__ModuleLoader__.load({
             let maxY = -Infinity;
             let maxZ = -Infinity;
             for (let index = 0; index < positions.length; index += 3) {
-              minX = Math.min(minX, positions[index]);
-              maxX = Math.max(maxX, positions[index]);
-              minY = Math.min(minY, positions[index + 1]);
-              maxY = Math.max(maxY, positions[index + 1]);
-              minZ = Math.min(minZ, positions[index + 2]);
-              maxZ = Math.max(maxZ, positions[index + 2]);
+              const x = positions[index];
+              const y = positions[index + 1];
+              const z = positions[index + 2];
+              if (x < minX) minX = x;
+              if (x > maxX) maxX = x;
+              if (y < minY) minY = y;
+              if (y > maxY) maxY = y;
+              if (z < minZ) minZ = z;
+              if (z > maxZ) maxZ = z;
             }
-            viewRef.current.distance = 2.6 * Math.max(maxX - minX, maxY - minY, maxZ - minZ, 1e-6);
+            const size = [maxX - minX, maxY - minY, maxZ - minZ];
+            const radius = Math.max(size[0], size[1], size[2], 1e-6) / 2;
             viewRef.current.center = [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2];
+            viewRef.current.radius = radius;
+            viewRef.current.distance = radius / Math.tan(Math.PI / 8) + radius;
+            if (cancelled) return;
             setState({
               status: 'ready',
               error: '',
-              info:
-                (positions.length / 9).toLocaleString() +
-                ' 个三角形 · 尺寸 ' +
-                [maxX - minX, maxY - minY, maxZ - minZ].map((value) => value.toFixed(2)).join(' × '),
+              info: (positions.length / 9).toLocaleString() + ' 个三角形',
+              stats: {
+                triangles: positions.length / 9,
+                vertices: positions.length / 3,
+                size,
+              },
             });
           })
           .catch((error) => {
-            if (!cancelled) setState({ status: 'failed', error: errText(error), info: '' });
+            if (!cancelled) setState({ status: 'failed', error: errText(error), info: '', stats: null });
           });
         return () => {
           cancelled = true;
@@ -2552,41 +2809,85 @@ window.__ModuleLoader__.load({
           setState((previous) => Object.assign({}, previous, { status: 'failed', error: '当前环境不支持 WebGL' }));
           return undefined;
         }
-        const vertexShader = gl.createShader(gl.VERTEX_SHADER);
-        gl.shaderSource(
-          vertexShader,
-          'attribute vec3 aPosition;attribute vec3 aNormal;uniform mat4 uMvp;uniform mat4 uModel;varying vec3 vNormal;' +
-            'void main(){gl_Position=uMvp*vec4(aPosition,1.0);vNormal=mat3(uModel)*aNormal;}',
-        );
-        gl.compileShader(vertexShader);
-        const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
-        gl.shaderSource(
-          fragmentShader,
-          'precision mediump float;varying vec3 vNormal;uniform float uWire;' +
-            'void main(){vec3 n=normalize(vNormal);float light=0.35+0.65*abs(dot(n,normalize(vec3(0.4,0.7,0.6))));' +
-            'vec3 base=uWire>0.5?vec3(0.35,0.52,0.85):vec3(0.62,0.72,0.92);gl_FragColor=vec4(base*light,1.0);}',
-        );
-        gl.compileShader(fragmentShader);
-        const program = gl.createProgram();
-        gl.attachShader(program, vertexShader);
-        gl.attachShader(program, fragmentShader);
-        gl.linkProgram(program);
-        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-          setState((previous) => Object.assign({}, previous, { status: 'failed', error: '着色器编译失败' }));
-          return undefined;
-        }
-        const data = withNormals(positions);
-        const buffer = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-        gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
-        const aPosition = gl.getAttribLocation(program, 'aPosition');
-        const aNormal = gl.getAttribLocation(program, 'aNormal');
-        const uMvp = gl.getUniformLocation(program, 'uMvp');
-        const uModel = gl.getUniformLocation(program, 'uModel');
-        const uWire = gl.getUniformLocation(program, 'uWire');
-        const count = data.length / 6;
 
-        const draw = () => {
+        const compile = (type, source) => {
+          const shader = gl.createShader(type);
+          gl.shaderSource(shader, source);
+          gl.compileShader(shader);
+          if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(shader) || '着色器编译失败');
+          return shader;
+        };
+        const link = (vertexSource, fragmentSource) => {
+          const program = gl.createProgram();
+          gl.attachShader(program, compile(gl.VERTEX_SHADER, vertexSource));
+          gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fragmentSource));
+          gl.linkProgram(program);
+          if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program) || '程序链接失败');
+          return program;
+        };
+
+        // Blinn-Phong: a key light, a dimmer back fill, and optional distance fog.
+        const solid = link(
+          'attribute vec3 aPosition;attribute vec3 aNormal;uniform mat4 uMvp;uniform mat4 uView;uniform mat4 uModel;' +
+            'varying vec3 vNormal;varying vec3 vEye;varying float vDepth;' +
+            'void main(){vec4 world=uModel*vec4(aPosition,1.0);vec4 eye=uView*world;vNormal=normalize(mat3(uModel)*aNormal);' +
+            'vEye=normalize(-eye.xyz);vDepth=length(eye.xyz);gl_Position=uMvp*vec4(aPosition,1.0);}',
+          'precision mediump float;varying vec3 vNormal;varying vec3 vEye;varying float vDepth;' +
+            'uniform vec3 uColor;uniform float uFog;uniform float uFar;' +
+            'void main(){vec3 n=normalize(vNormal);if(!gl_FrontFacing)n=-n;' +
+            'vec3 key=normalize(vec3(0.45,0.72,0.55));vec3 fill=normalize(vec3(-0.55,-0.25,-0.6));' +
+            'float keyDiff=max(dot(n,key),0.0);float fillDiff=max(dot(n,fill),0.0)*0.35;' +
+            'vec3 halfKey=normalize(key+vEye);float spec=pow(max(dot(n,halfKey),0.0),48.0)*0.35;' +
+            'vec3 base=uColor*(0.18+0.82*keyDiff+fillDiff)+vec3(spec);' +
+            'float fog=uFog>0.5?clamp((vDepth-uFar*0.55)/(uFar*0.75),0.0,0.85):0.0;' +
+            'gl_FragColor=vec4(mix(base,vec3(0.09,0.11,0.14),fog),1.0);}',
+        );
+        const lines = link(
+          'attribute vec3 aPosition;uniform mat4 uMvp;void main(){gl_Position=uMvp*vec4(aPosition,1.0);}',
+          'precision mediump float;uniform vec3 uColor;void main(){gl_FragColor=vec4(uColor,1.0);}',
+        );
+
+        const data = withNormals(positions);
+        const solidBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, solidBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+        const solidCount = data.length / 6;
+
+        const edgeIndices = new Uint32Array((solidCount / 3) * 6);
+        for (let triangle = 0; triangle < solidCount / 3; triangle += 1) {
+          const base = triangle * 3;
+          const at = triangle * 6;
+          edgeIndices[at] = base;
+          edgeIndices[at + 1] = base + 1;
+          edgeIndices[at + 2] = base + 1;
+          edgeIndices[at + 3] = base + 2;
+          edgeIndices[at + 4] = base + 2;
+          edgeIndices[at + 5] = base;
+        }
+        const lineBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, lineBuffer);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, edgeIndices, gl.STATIC_DRAW);
+        const indexExt = gl.getExtension('OES_element_index_uint');
+        void indexExt;
+
+        const uniforms = {
+          solid: {
+            mvp: gl.getUniformLocation(solid, 'uMvp'),
+            view: gl.getUniformLocation(solid, 'uView'),
+            model: gl.getUniformLocation(solid, 'uModel'),
+            color: gl.getUniformLocation(solid, 'uColor'),
+            fog: gl.getUniformLocation(solid, 'uFog'),
+            far: gl.getUniformLocation(solid, 'uFar'),
+          },
+          lines: { mvp: gl.getUniformLocation(lines, 'uMvp'), color: gl.getUniformLocation(lines, 'uColor') },
+        };
+        const attributes = {
+          solid: { position: gl.getAttribLocation(solid, 'aPosition'), normal: gl.getAttribLocation(solid, 'aNormal') },
+          lines: { position: gl.getAttribLocation(lines, 'aPosition') },
+        };
+        const identity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+
+        const render = () => {
           const ratio = window.devicePixelRatio || 1;
           const width = canvas.clientWidth || 1;
           const height = canvas.clientHeight || 1;
@@ -2598,34 +2899,74 @@ window.__ModuleLoader__.load({
           gl.clearColor(0, 0, 0, 0);
           gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
           gl.enable(gl.DEPTH_TEST);
-          gl.useProgram(program);
-          gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-          gl.enableVertexAttribArray(aPosition);
-          gl.vertexAttribPointer(aPosition, 3, gl.FLOAT, false, 24, 0);
-          gl.enableVertexAttribArray(aNormal);
-          gl.vertexAttribPointer(aNormal, 3, gl.FLOAT, false, 24, 12);
+          gl.enable(gl.CULL_FACE);
+          gl.cullFace(gl.BACK);
           const view = viewRef.current;
-          const center = view.center || [0, 0, 0];
+          const center = view.center;
           const distance = view.distance;
           const eye = [
-            center[0] + distance * Math.cos(view.pitch) * Math.sin(view.yaw) + view.panX,
-            center[1] + distance * Math.sin(view.pitch) + view.panY,
+            center[0] + view.panX + distance * Math.cos(view.pitch) * Math.sin(view.yaw),
+            center[1] + view.panY + distance * Math.sin(view.pitch),
             center[2] + distance * Math.cos(view.pitch) * Math.cos(view.yaw),
           ];
-          const projection = perspective(Math.PI / 4, width / height, distance / 200, distance * 20);
-          const camera = lookAt(eye, center, [0, 1, 0]);
+          const projection = perspective(Math.PI / 4, width / height, distance / 500, distance * 40);
+          const camera = lookAt(eye, [center[0] + view.panX, center[1] + view.panY, center[2]], [0, 1, 0]);
           const mvp = multiplyMatrix(new Float32Array(projection), camera);
-          gl.uniformMatrix4fv(uMvp, false, mvp);
-          gl.uniformMatrix4fv(uModel, false, new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]));
-          gl.uniform1f(uWire, wireframe ? 1 : 0);
-          gl.drawArrays(gl.TRIANGLES, 0, count);
-        };
 
-        let dragging = false;
+          if (!options.wireframe) {
+            gl.useProgram(solid);
+            gl.bindBuffer(gl.ARRAY_BUFFER, solidBuffer);
+            gl.enableVertexAttribArray(attributes.solid.position);
+            gl.vertexAttribPointer(attributes.solid.position, 3, gl.FLOAT, false, 24, 0);
+            gl.enableVertexAttribArray(attributes.solid.normal);
+            gl.vertexAttribPointer(attributes.solid.normal, 3, gl.FLOAT, false, 24, 12);
+            gl.uniformMatrix4fv(uniforms.solid.mvp, false, mvp);
+            gl.uniformMatrix4fv(uniforms.solid.view, false, camera);
+            gl.uniformMatrix4fv(uniforms.solid.model, false, identity);
+            gl.uniform3f(uniforms.solid.color, 0.62, 0.72, 0.9);
+            gl.uniform1f(uniforms.solid.fog, options.fog ? 1 : 0);
+            gl.uniform1f(uniforms.solid.far, distance);
+            gl.drawArrays(gl.TRIANGLES, 0, solidCount);
+          }
+
+          gl.useProgram(lines);
+          gl.bindBuffer(gl.ARRAY_BUFFER, solidBuffer);
+          gl.enableVertexAttribArray(attributes.lines.position);
+          gl.vertexAttribPointer(attributes.lines.position, 3, gl.FLOAT, false, 24, 0);
+          gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, lineBuffer);
+          gl.uniformMatrix4fv(uniforms.lines.mvp, false, mvp);
+          gl.uniform3f(uniforms.lines.color, options.wireframe ? 0.72 : 0.28, options.wireframe ? 0.82 : 0.34, 1.0);
+          gl.drawElements(gl.LINES, edgeIndices.length, gl.UNSIGNED_INT, 0);
+
+          if (options.axes) {
+            const origin = new Float32Array([center[0], center[1], center[2]]);
+            const size = view.radius * 1.35;
+            const axes = new Float32Array([
+              origin[0], origin[1], origin[2], origin[0] + size, origin[1], origin[2],
+              origin[0], origin[1], origin[2], origin[0], origin[1] + size, origin[2],
+              origin[0], origin[1], origin[2], origin[0], origin[1], origin[2] + size,
+            ]);
+            const axisBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, axisBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, axes, gl.STREAM_DRAW);
+            gl.enableVertexAttribArray(attributes.lines.position);
+            gl.vertexAttribPointer(attributes.lines.position, 3, gl.FLOAT, false, 12, 0);
+            gl.uniform3f(uniforms.lines.color, 0.9, 0.42, 0.42);
+            gl.drawArrays(gl.LINES, 0, 2);
+            gl.uniform3f(uniforms.lines.color, 0.42, 0.85, 0.5);
+            gl.drawArrays(gl.LINES, 2, 2);
+            gl.uniform3f(uniforms.lines.color, 0.42, 0.62, 0.95);
+            gl.drawArrays(gl.LINES, 4, 2);
+            gl.deleteBuffer(axisBuffer);
+          }
+        };
+        drawRef.current = render;
+
+        let dragging = 0;
         let lastX = 0;
         let lastY = 0;
         const onDown = (event) => {
-          dragging = true;
+          dragging = event.button === 0 && !event.shiftKey ? 1 : 2;
           lastX = event.clientX;
           lastY = event.clientY;
           canvas.setPointerCapture(event.pointerId);
@@ -2637,52 +2978,126 @@ window.__ModuleLoader__.load({
           const deltaY = event.clientY - lastY;
           lastX = event.clientX;
           lastY = event.clientY;
-          if (event.shiftKey) {
-            view.panX -= deltaX * view.distance * 0.002;
-            view.panY += deltaY * view.distance * 0.002;
+          if (dragging === 2) {
+            const scale = view.distance * 0.0016;
+            view.panX -= deltaX * scale;
+            view.panY += deltaY * scale;
           } else {
             view.yaw -= deltaX * 0.01;
-            view.pitch = Math.max(-1.45, Math.min(1.45, view.pitch + deltaY * 0.01));
+            view.pitch = Math.max(-1.5, Math.min(1.5, view.pitch + deltaY * 0.01));
           }
-          draw();
+          render();
         };
         const onUp = () => {
-          dragging = false;
+          dragging = 0;
         };
         const onWheel = (event) => {
           event.preventDefault();
           const view = viewRef.current;
-          view.distance = Math.max(0.01, Math.min(1e7, view.distance * (1 + Math.sign(event.deltaY) * 0.12)));
-          draw();
+          view.distance = Math.max(view.radius * 0.05, Math.min(view.radius * 400, view.distance * (1 + Math.sign(event.deltaY) * 0.12)));
+          render();
         };
+        const onContext = (event) => event.preventDefault();
+
         canvas.addEventListener('pointerdown', onDown);
         canvas.addEventListener('pointermove', onMove);
         canvas.addEventListener('pointerup', onUp);
+        canvas.addEventListener('pointercancel', onUp);
         canvas.addEventListener('wheel', onWheel, { passive: false });
-        const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(() => draw()) : null;
+        canvas.addEventListener('contextmenu', onContext);
+        const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(() => render()) : null;
         if (observer) observer.observe(canvas);
-        draw();
+        render();
         return () => {
           canvas.removeEventListener('pointerdown', onDown);
           canvas.removeEventListener('pointermove', onMove);
           canvas.removeEventListener('pointerup', onUp);
+          canvas.removeEventListener('pointercancel', onUp);
           canvas.removeEventListener('wheel', onWheel);
+          canvas.removeEventListener('contextmenu', onContext);
           if (observer) observer.disconnect();
+          gl.deleteBuffer(solidBuffer);
+          gl.deleteBuffer(lineBuffer);
         };
-      }, [state.status, wireframe, doc.path]);
+      }, [state.status, options, doc.path]);
+
+      // F resets the camera, Shift+F frames the model again.
+      React.useEffect(() => {
+        const onKey = (event) => {
+          if (!ownsKeyboard(event, rootRef.current)) return;
+          if (event.key !== 'f' && event.key !== 'F') return;
+          event.preventDefault();
+          const view = viewRef.current;
+          view.panX = 0;
+          view.panY = 0;
+          if (event.shiftKey) {
+            view.yaw = 0.72;
+            view.pitch = 0.42;
+          }
+          view.distance = view.radius / Math.tan(Math.PI / 8) + view.radius;
+          drawRef.current();
+        };
+        window.addEventListener('keydown', onKey, true);
+        return () => window.removeEventListener('keydown', onKey, true);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, []);
+
+      const exportObj = () => {
+        const positions = meshRef.current;
+        if (!positions) return;
+        const lines = ['# exported from canvas panel', '# ' + doc.path];
+        const lookup = new Map();
+        const indices = [];
+        for (let index = 0; index < positions.length; index += 3) {
+          const key = positions[index].toFixed(5) + ',' + positions[index + 1].toFixed(5) + ',' + positions[index + 2].toFixed(5);
+          let target = lookup.get(key);
+          if (target === undefined) {
+            target = lookup.size + 1;
+            lookup.set(key, target);
+            lines.push('v ' + positions[index].toFixed(6) + ' ' + positions[index + 1].toFixed(6) + ' ' + positions[index + 2].toFixed(6));
+          }
+          indices.push(target);
+        }
+        for (let index = 0; index + 2 < indices.length; index += 3) {
+          lines.push('f ' + indices[index] + ' ' + indices[index + 1] + ' ' + indices[index + 2]);
+        }
+        setNotice('正在导出…');
+        fetch(saveUrl(), {
+          method: 'POST',
+          mode: 'cors',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ sessionId: store.sessionId, path: doc.path.replace(/(\.[^.]+)?$/, '.export.obj'), content: lines.join('\n') }),
+        })
+          .then(() => setNotice('已导出 .export.obj'))
+          .catch(() => setNotice('导出失败（文件过大或不在工作目录）'));
+        setTimeout(() => setNotice(''), 2600);
+      };
 
       if (state.status === 'failed') return h('div', { className: 'dshcv-empty' }, h('div', null, '无法预览该模型'), h('div', null, state.error));
+      const stats = state.stats;
+      const toggle = (key) => setOptions((previous) => Object.assign({}, previous, { [key]: !previous[key] }));
       return h(
         'div',
-        { style: { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' } },
+        { ref: rootRef, style: { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' } },
         h(
           'div',
           { className: 'dshcv-tools' },
           h('span', { className: 'dshcv-msg' }, state.status === 'ready' ? state.info : '解析模型…'),
-          h('span', { className: 'dshcv-msg' }, '拖动旋转 · Shift+拖动平移 · 滚轮缩放'),
-          h('button', { type: 'button', className: 'dshcv-btn', onClick: () => setWireframe((value) => !value) }, wireframe ? '实体' : '线框'),
+          stats
+            ? h(
+                'span',
+                { className: 'dshcv-msg' },
+                '尺寸 ' + stats.size.map((value) => value.toFixed(2)).join(' × ') + ' · 顶点 ' + stats.vertices.toLocaleString(),
+              )
+            : null,
+          h('button', { type: 'button', className: 'dshcv-btn', 'data-primary': options.wireframe ? '1' : '0', onClick: () => toggle('wireframe') }, '线框'),
+          h('button', { type: 'button', className: 'dshcv-btn', 'data-primary': options.fog ? '1' : '0', onClick: () => toggle('fog') }, '雾'),
+          h('button', { type: 'button', className: 'dshcv-btn', 'data-primary': options.axes ? '1' : '0', onClick: () => toggle('axes') }, '坐标轴'),
+          h('button', { type: 'button', className: 'dshcv-btn', onClick: exportObj }, '导出 OBJ'),
+          notice ? h('span', { className: 'dshcv-msg' }, notice) : null,
         ),
-        h('canvas', { ref: canvasRef, className: 'dshcv-canvas3d' }),
+        h('div', { className: 'dshcv-canvaswrap', style: { padding: 0 } }, h('canvas', { ref: canvasRef, className: 'dshcv-canvas3d' })),
+        h('div', { className: 'dshcv-tools' }, h('span', { className: 'dshcv-msg' }, '左键旋转 · 右键/Shift 拖动平移 · 滚轮缩放 · F 复位取景')),
       );
     }
 
