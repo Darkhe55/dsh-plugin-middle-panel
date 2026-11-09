@@ -1515,9 +1515,13 @@ window.__ModuleLoader__.load({
       'var r=el.getBoundingClientRect();var text=(el.innerText||el.textContent||"").trim().slice(0,240);',
       'parent.postMessage({source:"dshcv-picker",selector:sel(el),tag:el.tagName.toLowerCase(),text:text,rect:[Math.round(r.left),Math.round(r.top),Math.round(r.width),Math.round(r.height)]},"*");},true);',
       'document.addEventListener("keydown",function(e){var t=e.target;if(t&&(t.isContentEditable||/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||"")))return;var step=e.shiftKey?100:16;',
-      'if(e.code==="Space"){e.preventDefault();paused?resumeAll():pauseAll();}',
-      'else if(e.key==="ArrowLeft"){e.preventDefault();pauseAll();var t2=anims();var c=0;for(var i=0;i<t2.length;i++){try{c=Math.max(c,Number(t2[i].currentTime)||0);}catch(x){}}seek(c-step);}',
-      'else if(e.key==="ArrowRight"){e.preventDefault();pauseAll();var u=anims();var d=0;for(var i=0;i<u.length;i++){try{d=Math.max(d,Number(u[i].currentTime)||0);}catch(x){}}seek(d+step);}',
+      // Alt + A/S/D: one left hand, no browser or IME collisions (Space toggles
+      // IMEs, scrolls the page and is claimed by most embedded players).
+      'if(e.altKey&&(e.key==="s"||e.key==="S")){e.preventDefault();paused?resumeAll():pauseAll();}',
+      'else if(e.altKey&&(e.key==="a"||e.key==="A")){e.preventDefault();pauseAll();var t2=anims();var c=0;for(var i=0;i<t2.length;i++){try{c=Math.max(c,Number(t2[i].currentTime)||0);}catch(x){}}seek(c-step);}',
+      'else if(e.altKey&&(e.key==="d"||e.key==="D")){e.preventDefault();pauseAll();var u=anims();var d=0;for(var i=0;i<u.length;i++){try{d=Math.max(d,Number(u[i].currentTime)||0);}catch(x){}}seek(d+step);}',
+      'else if(e.key==="ArrowLeft"){e.preventDefault();pauseAll();var t3=anims();var c3=0;for(var i=0;i<t3.length;i++){try{c3=Math.max(c3,Number(t3[i].currentTime)||0);}catch(x){}}seek(c3-step);}',
+      'else if(e.key==="ArrowRight"){e.preventDefault();pauseAll();var u3=anims();var d3=0;for(var i=0;i<u3.length;i++){try{d3=Math.max(d3,Number(u3[i].currentTime)||0);}catch(x){}}seek(d3+step);}',
       'else if(e.key==="p"||e.key==="P"){paused?resumeAll():pauseAll();}},true);',
       'window.addEventListener("message",function(e){var d=e.data;if(!d||d.source!=="dshcv-cmd")return;',
       'if(d.cmd==="pause")pauseAll();else if(d.cmd==="resume")resumeAll();else if(d.cmd==="seek")seek(d.time);',
@@ -1567,7 +1571,7 @@ window.__ModuleLoader__.load({
         { className: 'dshcv-tools' },
         h(
           'button',
-          { type: 'button', className: 'dshcv-btn', title: '暂停 / 继续（空格）', onClick: anim.paused ? onResume : onPause },
+          { type: 'button', className: 'dshcv-btn', title: '暂停 / 继续（Alt+S）', onClick: anim.paused ? onResume : onPause },
           anim.paused ? '继续' : '暂停',
         ),
         anim.paused
@@ -1583,7 +1587,7 @@ window.__ModuleLoader__.load({
           : null,
         h(
           'span',
-          { className: 'dshcv-msg', title: anim.paused ? '定格中：悬停任意元素 0.5 秒，其余元素淡化' : '空格暂停 / 继续' },
+          { className: 'dshcv-msg', title: anim.paused ? '定格中：悬停任意元素 0.5 秒，其余元素淡化' : 'Alt+S 暂停 / 继续' },
           anim.paused
             ? Math.round(current) + ' ms / ' + Math.round(span) + ' ms' + (anim.raf ? ' · JS 帧 ' + anim.raf : '')
             : anim.count || anim.raf
@@ -1641,7 +1645,7 @@ window.__ModuleLoader__.load({
         const onKey = (event) => {
           if (!ownsKeyboard(event, rootRef.current)) return;
           if (document.activeElement === frameRef.current) return;
-          if (event.code === 'Space') {
+          if (event.altKey && (event.key === 's' || event.key === 'S')) {
             event.preventDefault();
             const next = !pausedRef.current;
             pausedRef.current = next;
@@ -1881,7 +1885,7 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         const onKey = (event) => {
           if (!ownsKeyboard(event, rootRef.current)) return;
-          if (event.code === 'Space') {
+          if (event.altKey && (event.key === 's' || event.key === 'S')) {
             event.preventDefault();
             if (animRef.current && animRef.current.paused) resume();
             else pause();
@@ -4836,7 +4840,7 @@ window.__ModuleLoader__.load({
                       h(
                         'span',
                         { className: 'dshcv-tags' },
-                        ['空格 暂停/继续', 'Ctrl+F 搜索', 'Ctrl+Tab 切换标签', '? 全部键位'].map((tag) =>
+                        ['Alt+S 暂停/继续', 'Alt+A/D 逐帧', 'Ctrl+F 搜索', '? 全部键位'].map((tag) =>
                           h('span', { key: tag, className: 'dshcv-tag' }, tag),
                         ),
                       ),
@@ -4886,8 +4890,9 @@ window.__ModuleLoader__.load({
               { className: 'dshcv-help' },
               h('div', { style: { fontWeight: 600, marginBottom: 4 } }, '快捷键'),
               ...[
-                ['空格', '暂停 / 继续（鼠标停在面板上即可）'],
-                ['← →', '逐帧步进（Shift 为 100ms）'],
+                ['Alt+S', '暂停 / 继续（单手，悬停面板即可）'],
+                ['Alt+A / Alt+D', '后退 / 前进一帧（Shift 为 100ms）'],
+                ['← →', '逐帧步进（备用，Shift 为 100ms）'],
                 ['F', '复位取景（Shift+F 也复位视角）'],
                 ['1-7', '前 / 后 / 右 / 左 / 顶 / 底 / 等轴测'],
                 ['Ctrl+Tab', '切换标签（加 Shift 反向）'],

@@ -58,8 +58,8 @@
 
 ## 检视能力
 
-- **定格聚光**：`空格` 暂停后画面定格，此时鼠标在同一元素上停 0.5 秒，其余元素淡到 45%，被悬停元素及其子树保持清晰；移开或换元素立即恢复，过渡 `180ms cubic-bezier(.33,0,.2,1)`。播放状态下不做任何淡化，页面按自己的交互跑。
-- **动画冻结 + 时间轴**：`暂停 / 继续`（空格）、时间轴滑轨、`±1 帧`（16ms，Shift 100ms）。HTML 走 `document.getAnimations()`（CSS 动画 / 过渡 / WAAPI）+ SVG SMIL，并接管 `requestAnimationFrame` 让 JS 帧循环也能停住、`+` 可逐帧推进。
+- **定格聚光**：`Alt+S` 暂停后画面定格，此时鼠标在同一元素上停 0.5 秒，其余元素淡到 45%，被悬停元素及其子树保持清晰；移开或换元素立即恢复，过渡 `180ms cubic-bezier(.33,0,.2,1)`。播放状态下不做任何淡化，页面按自己的交互跑。
+- **动画冻结 + 时间轴**：`暂停 / 继续`（Alt+S，单手）、时间轴滑轨、`±1 帧`（16ms，Shift 100ms）。HTML 走 `document.getAnimations()`（CSS 动画 / 过渡 / WAAPI）+ SVG SMIL，并接管 `requestAnimationFrame` 让 JS 帧循环也能停住、`+` 可逐帧推进。
 - **快捷键归属**：只有鼠标悬停在面板上、或焦点在面板内时才响应；在会话输入框、任意 `input/textarea/select/contenteditable` 或输入法组合期间一律不拦截。
 - **SVG 内联渲染**：不再用 `<img>`，因此可悬停聚光、点元素生成图层标注、暂停/拖动 SMIL 时间线。插入前剥掉 `<script>`、`on*` 事件与 `javascript:` 链接。
 
