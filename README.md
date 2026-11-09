@@ -56,6 +56,21 @@
 
 已知边界：JS 帧无法回退（`requestAnimationFrame` 没有历史）；页面若在启动时缓存了原生 `requestAnimationFrame` 引用则不吃接管；时间轴范围取运行中动画的最长有限 `endTime`，无限循环动画用随播放时间增长的窗口。
 
+## 文件格式支持
+
+| 类型 | 格式 | 渲染方式 |
+|---|---|---|
+| 网页 | `.html` `.htm` | 沙箱 iframe（注入元素选取与动效控制） |
+| 文档 | `.md` `.txt` | Markdown 渲染 / 纯文本，可编辑保存 |
+| 图片 | `.png` `.jpg` `.webp` `.gif` `.bmp` `.ico` `.avif` | 位图缩放 + 框选区域标注 |
+| 矢量 | `.svg` | 内联渲染，可悬停聚光、点选图层、暂停 SMIL |
+| PDF | `.pdf` | 运行时内置阅读器（不可用时提示路径与大小） |
+| Office | `.docx` `.xlsx` `.pptx` | 解 OOXML：段落 / 表格（≤3 表 × 300 行）/ 分页文本 |
+| 表格 | `.csv` `.tsv` | 自解析渲染表格（支持引号内逗号换行） |
+| 三维 | `.stl` `.obj` `.glb` `.gltf` | WebGL 三角面渲染，拖动旋转 / Shift 平移 / 滚轮缩放，可切线框 |
+| 图纸 | `.dxf` | 解析 LINE/CIRCLE/ARC/LWPOLYLINE/TEXT/POINT 渲染 SVG，可缩放 |
+| 其他 | `.doc` `.xls` `.ppt` `.step` `.iges` `.dwg` `.fbx` 等 | 明确提示需转换的格式（不显示二进制乱码） |
+
 ## 最近的变化
 
 - 面板头部 **打开**：工作区文件浏览（进目录、点文件即开），空状态也有「打开文件…」。

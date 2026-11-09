@@ -140,6 +140,9 @@ window.__ModuleLoader__.load({
       if (['md', 'markdown'].includes(ext)) return 'markdown';
       if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif'].includes(ext)) return 'image';
       if (ext === 'pdf') return 'pdf';
+      if (['stl', 'obj', 'glb', 'gltf'].includes(ext)) return 'model';
+      if (ext === 'dxf') return 'cad';
+      if (['step', 'stp', 'iges', 'igs', 'dwg', 'fbx', '3ds', 'blend', 'skp', 'sldprt', 'ipt'].includes(ext)) return 'unsupported';
       if (['docx', 'xlsx', 'pptx', 'doc', 'xls', 'ppt', 'odt', 'ods', 'odp'].includes(ext)) return 'office';
       if (['csv', 'tsv'].includes(ext)) return 'sheet';
       return 'text';
@@ -396,6 +399,13 @@ window.__ModuleLoader__.load({
       '.dshcv-slide{border:1px solid var(--dsw-alias-border-l1);border-radius:10px;padding:10px 14px;margin:0 0 12px;max-width:760px}',
       '.dshcv-slidehead{font-size:11px;color:var(--dsw-alias-label-secondary);margin:0 0 6px}',
       '.dshcv-slide p{margin:0 0 4px;font-size:13px}',
+      '.dshcv-canvas3d{flex:1 1 auto;min-height:0;width:100%;display:block;background:var(--dsw-alias-bg-layer-1);cursor:grab;touch-action:none}',
+      '.dshcv-canvas3d:active{cursor:grabbing}',
+      '.dshcv-cadwrap{flex:1 1 auto;min-height:0;overflow:hidden;background:var(--dsw-alias-bg-base)}',
+      '.dshcv-cadwrap svg{width:100%;height:100%;display:block}',
+      '.dshcv-cadwrap svg line,.dshcv-cadwrap svg polyline,.dshcv-cadwrap svg polygon,.dshcv-cadwrap svg circle,.dshcv-cadwrap svg path{fill:none;stroke:var(--dsw-alias-label-primary);stroke-width:.6;vector-effect:non-scaling-stroke}',
+      '.dshcv-cadwrap svg polygon{fill:color-mix(in srgb,var(--dsw-alias-brand-primary) 12%,transparent)}',
+      '.dshcv-cadwrap svg text{fill:var(--dsw-alias-label-secondary);stroke:none}',
       '.dshcv-md{font-size:13px;line-height:1.7;padding:12px 16px;overflow-wrap:anywhere}',
       '.dshcv-md>:first-child{margin-top:0}',
       '.dshcv-md h1{font-size:19px;margin:16px 0 8px}',
@@ -2001,6 +2011,654 @@ window.__ModuleLoader__.load({
       );
     }
 
+    // ---------------- 3d models: triangle soup in, WebGL out ----------------
+    const parseStl = (bytes) => {
+      if (bytes.length >= 84) {
+        const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        const declared = view.getUint32(80, true);
+        if (declared > 0 && 84 + declared * 50 === bytes.length) {
+          const positions = new Float32Array(declared * 9);
+          let at = 84 + 12;
+          for (let index = 0; index < declared; index += 1) {
+            for (let corner = 0; corner < 9; corner += 1) positions[index * 9 + corner] = view.getFloat32(at + corner * 4, true);
+            at += 50;
+          }
+          return positions;
+        }
+      }
+      const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+      const found = [];
+      const pattern = /vertex\s+(-?[\d.eE+-]+)\s+(-?[\d.eE+-]+)\s+(-?[\d.eE+-]+)/g;
+      let match;
+      while ((match = pattern.exec(text))) found.push(Number(match[1]), Number(match[2]), Number(match[3]));
+      return new Float32Array(found);
+    };
+
+    const parseObj = (text) => {
+      const vertices = [];
+      const triangles = [];
+      for (const rawLine of String(text || '').split('\n')) {
+        const line = rawLine.trim();
+        if (!line) continue;
+        if (line.startsWith('v ')) {
+          const parts = line.split(/\s+/);
+          vertices.push(Number(parts[1]) || 0, Number(parts[2]) || 0, Number(parts[3]) || 0);
+        } else if (line.startsWith('f ')) {
+          const indices = line
+            .split(/\s+/)
+            .slice(1)
+            .map((token) => parseInt(token.split('/')[0], 10))
+            .filter((index) => Number.isFinite(index) && index !== 0);
+          for (let index = 1; index + 1 < indices.length; index += 1) {
+            for (const corner of [indices[0], indices[index], indices[index + 1]]) {
+              const base = (corner < 0 ? vertices.length / 3 + corner : corner - 1) * 3;
+              triangles.push(vertices[base] || 0, vertices[base + 1] || 0, vertices[base + 2] || 0);
+            }
+          }
+        }
+      }
+      return new Float32Array(triangles);
+    };
+
+    const quatToMatrix = (x, y, z, w) => {
+      const m = new Float64Array(16);
+      const xx = x * x;
+      const yy = y * y;
+      const zz = z * z;
+      m[0] = 1 - 2 * (yy + zz);
+      m[1] = 2 * (x * y + z * w);
+      m[2] = 2 * (x * z - y * w);
+      m[4] = 2 * (x * y - z * w);
+      m[5] = 1 - 2 * (xx + zz);
+      m[6] = 2 * (y * z + x * w);
+      m[8] = 2 * (x * z + y * w);
+      m[9] = 2 * (y * z - x * w);
+      m[10] = 1 - 2 * (xx + yy);
+      m[15] = 1;
+      return m;
+    };
+
+    const multiplyMatrix = (left, right) => {
+      const out = new Float64Array(16);
+      for (let row = 0; row < 4; row += 1) {
+        for (let column = 0; column < 4; column += 1) {
+          let sum = 0;
+          for (let index = 0; index < 4; index += 1) sum += left[index * 4 + row] * right[column * 4 + index];
+          out[column * 4 + row] = sum;
+        }
+      }
+      return out;
+    };
+
+    const nodeMatrix = (node) => {
+      if (Array.isArray(node.matrix) && node.matrix.length === 16) return Float64Array.from(node.matrix);
+      let matrix = new Float64Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+      if (node.rotation) matrix = quatToMatrix(node.rotation[0], node.rotation[1], node.rotation[2], node.rotation[3]);
+      if (node.scale) {
+        const scale = new Float64Array([node.scale[0], 0, 0, 0, 0, node.scale[1], 0, 0, 0, 0, node.scale[2], 0, 0, 0, 0, 1]);
+        matrix = multiplyMatrix(matrix, scale);
+      }
+      if (node.translation) {
+        const translate = new Float64Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, node.translation[0], node.translation[1], node.translation[2], 1]);
+        matrix = multiplyMatrix(translate, matrix);
+      }
+      return matrix;
+    };
+
+    const parseGltf = (bytes) => {
+      let json = null;
+      let binary = null;
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      if (bytes.length > 12 && view.getUint32(0, true) === 0x46546c67) {
+        const length = view.getUint32(8, true);
+        let offset = 12;
+        while (offset < Math.min(length, bytes.length)) {
+          const chunkLength = view.getUint32(offset, true);
+          const chunkType = view.getUint32(offset + 4, true);
+          const start = offset + 8;
+          if (chunkType === 0x4e4f534a) json = JSON.parse(new TextDecoder().decode(bytes.subarray(start, start + chunkLength)));
+          if (chunkType === 0x004e4942) binary = bytes.subarray(start, start + chunkLength);
+          offset = start + chunkLength;
+        }
+      } else {
+        json = JSON.parse(new TextDecoder().decode(bytes));
+        const uri = json.buffers && json.buffers[0] && json.buffers[0].uri;
+        if (uri && uri.startsWith('data:')) {
+          const base64 = uri.slice(uri.indexOf(',') + 1);
+          const raw = atob(base64);
+          binary = new Uint8Array(raw.length);
+          for (let index = 0; index < raw.length; index += 1) binary[index] = raw.charCodeAt(index);
+        }
+      }
+      if (!json || !binary) throw new Error('需要 .glb（或内嵌 data URI 的 .gltf）；外部 .bin 无法读取');
+      const readAccessor = (accessorIndex) => {
+        const accessor = json.accessors[accessorIndex];
+        const bufferView = json.bufferViews[accessor.bufferView];
+        const components = accessor.type === 'VEC3' ? 3 : accessor.type === 'VEC2' ? 2 : 1;
+        const offset = (bufferView.byteOffset || 0) + (accessor.byteOffset || 0);
+        const stride = bufferView.byteStride || components * 4;
+        const count = accessor.count;
+        const out = new Float32Array(count * components);
+        const data = new DataView(binary.buffer, binary.byteOffset, binary.byteLength);
+        for (let index = 0; index < count; index += 1) {
+          for (let part = 0; part < components; part += 1) {
+            out[index * components + part] = data.getFloat32(offset + index * stride + part * 4, true);
+          }
+        }
+        return out;
+      };
+      const triangles = [];
+      const visit = (nodeIndex, parent) => {
+        const node = json.nodes[nodeIndex];
+        if (!node) return;
+        const matrix = multiplyMatrix(parent, nodeMatrix(node));
+        if (typeof node.mesh === 'number') {
+          const mesh = json.meshes[node.mesh];
+          for (const primitive of mesh.primitives || []) {
+            if (primitive.mode !== undefined && primitive.mode !== 4) continue;
+            const attributes = primitive.attributes || {};
+            if (attributes.POSITION === undefined) continue;
+            const points = readAccessor(attributes.POSITION);
+            const indices = primitive.indices !== undefined ? readAccessor(primitive.indices) : null;
+            const order = indices || points.map((_, index) => index);
+            const stride = 3;
+            for (let index = 0; index < order.length; index += 1) {
+              const source = order[index] * stride;
+              const x = points[source] || 0;
+              const y = points[source + 1] || 0;
+              const z = points[source + 2] || 0;
+              triangles.push(
+                matrix[0] * x + matrix[4] * y + matrix[8] * z + matrix[12],
+                matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13],
+                matrix[2] * x + matrix[6] * y + matrix[10] * z + matrix[14],
+              );
+            }
+          }
+        }
+        for (const child of node.children || []) visit(child, matrix);
+      };
+      const identity = new Float64Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+      const scene = json.scenes && json.scenes[json.scene || 0];
+      for (const nodeIndex of (scene && scene.nodes) || []) visit(nodeIndex, identity);
+      return new Float32Array(triangles);
+    };
+
+    const withNormals = (positions) => {
+      const count = Math.floor(positions.length / 9);
+      const out = new Float32Array(count * 18);
+      for (let index = 0; index < count; index += 1) {
+        const at = index * 9;
+        const ax = positions[at];
+        const ay = positions[at + 1];
+        const az = positions[at + 2];
+        const bx = positions[at + 3];
+        const by = positions[at + 4];
+        const bz = positions[at + 5];
+        const cx = positions[at + 6];
+        const cy = positions[at + 7];
+        const cz = positions[at + 8];
+        const ux = bx - ax;
+        const uy = by - ay;
+        const uz = bz - az;
+        const vx = cx - ax;
+        const vy = cy - ay;
+        const vz = cz - az;
+        let nx = uy * vz - uz * vy;
+        let ny = uz * vx - ux * vz;
+        let nz = ux * vy - uy * vx;
+        const length = Math.hypot(nx, ny, nz) || 1;
+        nx /= length;
+        ny /= length;
+        nz /= length;
+        for (let corner = 0; corner < 3; corner += 1) {
+          const from = at + corner * 3;
+          const to = index * 18 + corner * 6;
+          out[to] = positions[from];
+          out[to + 1] = positions[from + 1];
+          out[to + 2] = positions[from + 2];
+          out[to + 3] = nx;
+          out[to + 4] = ny;
+          out[to + 5] = nz;
+        }
+      }
+      return out;
+    };
+
+    const perspective = (fieldOfView, aspect, near, far) => {
+      const f = 1 / Math.tan(fieldOfView / 2);
+      return new Float32Array([f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) / (near - far), -1, 0, 0, (2 * far * near) / (near - far), 0]);
+    };
+
+    const lookAt = (eye, target, up) => {
+      const z = [eye[0] - target[0], eye[1] - target[1], eye[2] - target[2]];
+      const zl = Math.hypot(z[0], z[1], z[2]) || 1;
+      z[0] /= zl;
+      z[1] /= zl;
+      z[2] /= zl;
+      const x = [up[1] * z[2] - up[2] * z[1], up[2] * z[0] - up[0] * z[2], up[0] * z[1] - up[1] * z[0]];
+      const xl = Math.hypot(x[0], x[1], x[2]) || 1;
+      x[0] /= xl;
+      x[1] /= xl;
+      x[2] /= xl;
+      const y = [z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0]];
+      return new Float32Array([
+        x[0], y[0], z[0], 0,
+        x[1], y[1], z[1], 0,
+        x[2], y[2], z[2], 0,
+        -(x[0] * eye[0] + x[1] * eye[1] + x[2] * eye[2]),
+        -(y[0] * eye[0] + y[1] * eye[1] + y[2] * eye[2]),
+        -(z[0] * eye[0] + z[1] * eye[1] + z[2] * eye[2]),
+        1,
+      ]);
+    };
+
+    function ModelDoc(props) {
+      const { doc, sessionId } = props;
+      const [state, setState] = React.useState({ status: 'idle', error: '', info: '' });
+      const canvasRef = React.useRef(null);
+      const meshRef = React.useRef(null);
+      const viewRef = React.useRef({ yaw: 0.7, pitch: 0.5, distance: 3, panX: 0, panY: 0 });
+      const [wireframe, setWireframe] = React.useState(false);
+
+      React.useEffect(() => {
+        if (!sessionId) return undefined;
+        const controller = new AbortController();
+        let cancelled = false;
+        setState({ status: 'loading', error: '', info: '' });
+        const match = /\.([a-z0-9]+)$/i.exec(doc.path);
+        const extension = match ? match[1].toLowerCase() : '';
+        readBytesFile(sessionId, doc.path, controller.signal)
+          .then((bytes) => {
+            if (cancelled || !bytes) return;
+            let positions;
+            if (extension === 'stl') positions = parseStl(bytes);
+            else if (extension === 'obj') positions = parseObj(new TextDecoder('utf-8', { fatal: false }).decode(bytes));
+            else positions = parseGltf(bytes);
+            if (!positions || positions.length < 9) throw new Error('没有解析到三角形，可能格式不受支持或模型为空');
+            meshRef.current = positions;
+            let minX = Infinity;
+            let minY = Infinity;
+            let minZ = Infinity;
+            let maxX = -Infinity;
+            let maxY = -Infinity;
+            let maxZ = -Infinity;
+            for (let index = 0; index < positions.length; index += 3) {
+              minX = Math.min(minX, positions[index]);
+              maxX = Math.max(maxX, positions[index]);
+              minY = Math.min(minY, positions[index + 1]);
+              maxY = Math.max(maxY, positions[index + 1]);
+              minZ = Math.min(minZ, positions[index + 2]);
+              maxZ = Math.max(maxZ, positions[index + 2]);
+            }
+            viewRef.current.distance = 2.6 * Math.max(maxX - minX, maxY - minY, maxZ - minZ, 1e-6);
+            viewRef.current.center = [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2];
+            setState({
+              status: 'ready',
+              error: '',
+              info:
+                (positions.length / 9).toLocaleString() +
+                ' 个三角形 · 尺寸 ' +
+                [maxX - minX, maxY - minY, maxZ - minZ].map((value) => value.toFixed(2)).join(' × '),
+            });
+          })
+          .catch((error) => {
+            if (!cancelled) setState({ status: 'failed', error: errText(error), info: '' });
+          });
+        return () => {
+          cancelled = true;
+          controller.abort();
+        };
+      }, [doc.path, sessionId]);
+
+      React.useEffect(() => {
+        if (state.status !== 'ready') return undefined;
+        const canvas = canvasRef.current;
+        const positions = meshRef.current;
+        if (!canvas || !positions) return undefined;
+        const gl = canvas.getContext('webgl', { antialias: true, alpha: true });
+        if (!gl) {
+          setState((previous) => Object.assign({}, previous, { status: 'failed', error: '当前环境不支持 WebGL' }));
+          return undefined;
+        }
+        const vertexShader = gl.createShader(gl.VERTEX_SHADER);
+        gl.shaderSource(
+          vertexShader,
+          'attribute vec3 aPosition;attribute vec3 aNormal;uniform mat4 uMvp;uniform mat4 uModel;varying vec3 vNormal;' +
+            'void main(){gl_Position=uMvp*vec4(aPosition,1.0);vNormal=mat3(uModel)*aNormal;}',
+        );
+        gl.compileShader(vertexShader);
+        const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+        gl.shaderSource(
+          fragmentShader,
+          'precision mediump float;varying vec3 vNormal;uniform float uWire;' +
+            'void main(){vec3 n=normalize(vNormal);float light=0.35+0.65*abs(dot(n,normalize(vec3(0.4,0.7,0.6))));' +
+            'vec3 base=uWire>0.5?vec3(0.35,0.52,0.85):vec3(0.62,0.72,0.92);gl_FragColor=vec4(base*light,1.0);}',
+        );
+        gl.compileShader(fragmentShader);
+        const program = gl.createProgram();
+        gl.attachShader(program, vertexShader);
+        gl.attachShader(program, fragmentShader);
+        gl.linkProgram(program);
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+          setState((previous) => Object.assign({}, previous, { status: 'failed', error: '着色器编译失败' }));
+          return undefined;
+        }
+        const data = withNormals(positions);
+        const buffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+        gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+        const aPosition = gl.getAttribLocation(program, 'aPosition');
+        const aNormal = gl.getAttribLocation(program, 'aNormal');
+        const uMvp = gl.getUniformLocation(program, 'uMvp');
+        const uModel = gl.getUniformLocation(program, 'uModel');
+        const uWire = gl.getUniformLocation(program, 'uWire');
+        const count = data.length / 6;
+
+        const draw = () => {
+          const ratio = window.devicePixelRatio || 1;
+          const width = canvas.clientWidth || 1;
+          const height = canvas.clientHeight || 1;
+          if (canvas.width !== Math.round(width * ratio) || canvas.height !== Math.round(height * ratio)) {
+            canvas.width = Math.round(width * ratio);
+            canvas.height = Math.round(height * ratio);
+          }
+          gl.viewport(0, 0, canvas.width, canvas.height);
+          gl.clearColor(0, 0, 0, 0);
+          gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+          gl.enable(gl.DEPTH_TEST);
+          gl.useProgram(program);
+          gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+          gl.enableVertexAttribArray(aPosition);
+          gl.vertexAttribPointer(aPosition, 3, gl.FLOAT, false, 24, 0);
+          gl.enableVertexAttribArray(aNormal);
+          gl.vertexAttribPointer(aNormal, 3, gl.FLOAT, false, 24, 12);
+          const view = viewRef.current;
+          const center = view.center || [0, 0, 0];
+          const distance = view.distance;
+          const eye = [
+            center[0] + distance * Math.cos(view.pitch) * Math.sin(view.yaw) + view.panX,
+            center[1] + distance * Math.sin(view.pitch) + view.panY,
+            center[2] + distance * Math.cos(view.pitch) * Math.cos(view.yaw),
+          ];
+          const projection = perspective(Math.PI / 4, width / height, distance / 200, distance * 20);
+          const camera = lookAt(eye, center, [0, 1, 0]);
+          const mvp = multiplyMatrix(new Float32Array(projection), camera);
+          gl.uniformMatrix4fv(uMvp, false, mvp);
+          gl.uniformMatrix4fv(uModel, false, new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]));
+          gl.uniform1f(uWire, wireframe ? 1 : 0);
+          gl.drawArrays(gl.TRIANGLES, 0, count);
+        };
+
+        let dragging = false;
+        let lastX = 0;
+        let lastY = 0;
+        const onDown = (event) => {
+          dragging = true;
+          lastX = event.clientX;
+          lastY = event.clientY;
+          canvas.setPointerCapture(event.pointerId);
+        };
+        const onMove = (event) => {
+          if (!dragging) return;
+          const view = viewRef.current;
+          const deltaX = event.clientX - lastX;
+          const deltaY = event.clientY - lastY;
+          lastX = event.clientX;
+          lastY = event.clientY;
+          if (event.shiftKey) {
+            view.panX -= deltaX * view.distance * 0.002;
+            view.panY += deltaY * view.distance * 0.002;
+          } else {
+            view.yaw -= deltaX * 0.01;
+            view.pitch = Math.max(-1.45, Math.min(1.45, view.pitch + deltaY * 0.01));
+          }
+          draw();
+        };
+        const onUp = () => {
+          dragging = false;
+        };
+        const onWheel = (event) => {
+          event.preventDefault();
+          const view = viewRef.current;
+          view.distance = Math.max(0.01, Math.min(1e7, view.distance * (1 + Math.sign(event.deltaY) * 0.12)));
+          draw();
+        };
+        canvas.addEventListener('pointerdown', onDown);
+        canvas.addEventListener('pointermove', onMove);
+        canvas.addEventListener('pointerup', onUp);
+        canvas.addEventListener('wheel', onWheel, { passive: false });
+        const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(() => draw()) : null;
+        if (observer) observer.observe(canvas);
+        draw();
+        return () => {
+          canvas.removeEventListener('pointerdown', onDown);
+          canvas.removeEventListener('pointermove', onMove);
+          canvas.removeEventListener('pointerup', onUp);
+          canvas.removeEventListener('wheel', onWheel);
+          if (observer) observer.disconnect();
+        };
+      }, [state.status, wireframe, doc.path]);
+
+      if (state.status === 'failed') return h('div', { className: 'dshcv-empty' }, h('div', null, '无法预览该模型'), h('div', null, state.error));
+      return h(
+        'div',
+        { style: { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' } },
+        h(
+          'div',
+          { className: 'dshcv-tools' },
+          h('span', { className: 'dshcv-msg' }, state.status === 'ready' ? state.info : '解析模型…'),
+          h('span', { className: 'dshcv-msg' }, '拖动旋转 · Shift+拖动平移 · 滚轮缩放'),
+          h('button', { type: 'button', className: 'dshcv-btn', onClick: () => setWireframe((value) => !value) }, wireframe ? '实体' : '线框'),
+        ),
+        h('canvas', { ref: canvasRef, className: 'dshcv-canvas3d' }),
+      );
+    }
+
+    // ---------------- cad drawings: dxf entities in, svg out ----------------
+    const parseDxf = (text) => {
+      const lines = String(text || '').split(/\r\n|\r|\n/);
+      const pairs = [];
+      for (let index = 0; index + 1 < lines.length; index += 2) {
+        pairs.push([lines[index].trim(), lines[index + 1]]);
+      }
+      const entities = [];
+      let inEntities = false;
+      let current = null;
+      for (const [code, rawValue] of pairs) {
+        const value = String(rawValue || '').trim();
+        if (code === '0') {
+          if (current && current.type) entities.push(current);
+          current = value === 'ENTITIES' ? null : { type: value, values: [] };
+          inEntities = value === 'ENTITIES';
+          if (value === 'ENDSEC') {
+            inEntities = false;
+            current = null;
+          }
+          continue;
+        }
+        if (current && value !== '') current.values.push([code, rawValue]);
+      }
+      if (current && current.type) entities.push(current);
+      return entities.filter((entity) => ['LINE', 'LWPOLYLINE', 'POLYLINE', 'CIRCLE', 'ARC', 'TEXT', 'MTEXT', 'POINT', 'SOLID'].includes(entity.type));
+    };
+
+    const dxfToShapes = (entities) => {
+      const shapes = [];
+      const numbers = (entity) => entity.values.filter(([code]) => code === '10' || code === '20' || code === '11' || code === '21' || code === '40' || code === '50' || code === '51' || code === '42');
+      const first = (entity, code) => {
+        const hit = entity.values.find(([candidate]) => candidate === code);
+        return hit ? Number(hit[1]) : 0;
+      };
+      for (const entity of entities) {
+        if (entity.type === 'LINE') {
+          shapes.push({ kind: 'line', a: [first(entity, '10'), first(entity, '20')], b: [first(entity, '11'), first(entity, '21')] });
+        } else if (entity.type === 'CIRCLE' || entity.type === 'ARC') {
+          const center = [first(entity, '10'), first(entity, '20')];
+          const radius = first(entity, '40');
+          if (entity.type === 'CIRCLE') {
+            shapes.push({ kind: 'circle', center, radius });
+          } else {
+            shapes.push({ kind: 'arc', center, radius, start: first(entity, '50'), end: first(entity, '51') });
+          }
+        } else if (entity.type === 'LWPOLYLINE') {
+          const points = [];
+          let pendingX = null;
+          for (const [code, raw] of entity.values) {
+            if (code === '10') pendingX = Number(raw);
+            else if (code === '20' && pendingX !== null) {
+              points.push([pendingX, Number(raw)]);
+              pendingX = null;
+            }
+          }
+          if (points.length) shapes.push({ kind: 'polyline', points, closed: (first(entity, '70') & 1) === 1 });
+        } else if (entity.type === 'TEXT' || entity.type === 'MTEXT') {
+          const label = entity.values
+            .filter(([code]) => code === '1' || code === '3')
+            .map(([, raw]) => raw)
+            .join(' ')
+            .trim();
+          if (label) shapes.push({ kind: 'text', at: [first(entity, '10'), first(entity, '20')], label, height: first(entity, '40') || 2.5 });
+        } else if (entity.type === 'POINT') {
+          shapes.push({ kind: 'point', at: [first(entity, '10'), first(entity, '20')] });
+        }
+        void numbers;
+      }
+      return shapes;
+    };
+
+    function CadDoc(props) {
+      const { doc, sessionId } = props;
+      const [state, setState] = React.useState({ status: 'idle', error: '', shapes: [], info: '' });
+      const [zoom, setZoom] = React.useState({ scale: 1, x: 0, y: 0 });
+
+      React.useEffect(() => {
+        if (!sessionId) return undefined;
+        const controller = new AbortController();
+        let cancelled = false;
+        readTextPages(sessionId, doc.path, controller.signal)
+          .then((page) => {
+            if (cancelled) return;
+            const entities = parseDxf(page.text);
+            const shapes = dxfToShapes(entities);
+            setState({
+              status: 'ready',
+              error: '',
+              shapes,
+              info: entities.length + ' 个实体 · ' + shapes.length + ' 个可绘制元素',
+            });
+          })
+          .catch((error) => {
+            if (!cancelled) setState({ status: 'failed', error: errText(error), shapes: [], info: '' });
+          });
+        return () => {
+          cancelled = true;
+          controller.abort();
+        };
+      }, [doc.path, sessionId]);
+
+      if (state.status === 'failed') return h('div', { className: 'dshcv-empty' }, h('div', null, '无法读取该图纸'), h('div', null, state.error));
+      if (state.status !== 'ready') return h('div', { className: 'dshcv-empty' }, h('div', null, '解析图纸…'));
+
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      const visit = (x, y) => {
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+        minX = Math.min(minX, x);
+        maxX = Math.max(maxX, x);
+        minY = Math.min(minY, y);
+        maxY = Math.max(maxY, y);
+      };
+      for (const shape of state.shapes) {
+        if (shape.points) for (const [x, y] of shape.points) visit(x, y);
+        if (shape.a) visit(shape.a[0], shape.a[1]);
+        if (shape.b) visit(shape.b[0], shape.b[1]);
+        if (shape.center) {
+          visit(shape.center[0] - shape.radius, shape.center[1] - shape.radius);
+          visit(shape.center[0] + shape.radius, shape.center[1] + shape.radius);
+        }
+        if (shape.at) visit(shape.at[0], shape.at[1]);
+      }
+      if (!Number.isFinite(minX)) {
+        minX = 0;
+        minY = 0;
+        maxX = 1;
+        maxY = 1;
+      }
+      const pad = Math.max((maxX - minX) * 0.05, (maxY - minY) * 0.05, 1);
+      const width = Math.max(maxX - minX + pad * 2, 1);
+      const height = Math.max(maxY - minY + pad * 2, 1);
+      const viewBox = [minX - pad, -maxY - pad, width, height];
+      const scale = zoom.scale;
+      const box = [viewBox[0] + zoom.x, viewBox[1] + zoom.y, viewBox[2] / scale, viewBox[3] / scale];
+      return h(
+        'div',
+        { style: { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' } },
+        h(
+          'div',
+          { className: 'dshcv-tools' },
+          h('span', { className: 'dshcv-msg' }, state.info),
+          h('button', { type: 'button', className: 'dshcv-btn', onClick: () => setZoom({ scale: 1, x: 0, y: 0 }) }, '适应窗口'),
+          h('button', { type: 'button', className: 'dshcv-btn', onClick: () => setZoom((value) => Object.assign({}, value, { scale: value.scale * 1.4 })) }, '放大'),
+          h('button', { type: 'button', className: 'dshcv-btn', onClick: () => setZoom((value) => Object.assign({}, value, { scale: Math.max(0.2, value.scale / 1.4) })) }, '缩小'),
+        ),
+        h(
+          'div',
+          { className: 'dshcv-cadwrap' },
+          h(
+            'svg',
+            { viewBox: box.join(' '), preserveAspectRatio: 'xMidYMid meet' },
+            state.shapes.map((shape, index) => {
+              if (shape.kind === 'line') {
+                return h('line', { key: index, x1: shape.a[0], y1: -shape.a[1], x2: shape.b[0], y2: -shape.b[1] });
+              }
+              if (shape.kind === 'polyline') {
+                const points = shape.points.map(([x, y]) => x + ',' + -y).join(' ');
+                return shape.closed
+                  ? h('polygon', { key: index, points })
+                  : h('polyline', { key: index, points });
+              }
+              if (shape.kind === 'circle') {
+                return h('circle', { key: index, cx: shape.center[0], cy: -shape.center[1], r: shape.radius });
+              }
+              if (shape.kind === 'arc') {
+                const sweep = ((shape.end - shape.start) % 360 + 360) % 360 || 360;
+                const startRad = (shape.start * Math.PI) / 180;
+                const endRad = ((shape.start + sweep) * Math.PI) / 180;
+                const x1 = shape.center[0] + shape.radius * Math.cos(startRad);
+                const y1 = -(shape.center[1] + shape.radius * Math.sin(startRad));
+                const x2 = shape.center[0] + shape.radius * Math.cos(endRad);
+                const y2 = -(shape.center[1] + shape.radius * Math.sin(endRad));
+                return h('path', {
+                  key: index,
+                  d:
+                    'M ' + x1 + ' ' + y1 + ' A ' + shape.radius + ' ' + shape.radius + ' 0 ' + (sweep > 180 ? 1 : 0) + ' 0 ' + x2 + ' ' + y2,
+                });
+              }
+              if (shape.kind === 'text') {
+                return h('text', { key: index, x: shape.at[0], y: -shape.at[1], fontSize: Math.max(shape.height, 1) }, shape.label);
+              }
+              return h('circle', { key: index, cx: shape.at[0], cy: -shape.at[1], r: 0.6 });
+            }),
+          ),
+        ),
+      );
+    }
+
+    function UnsupportedDoc(props) {
+      const { doc } = props;
+      const match = /\.([a-z0-9]+)$/i.exec(doc.path);
+      const extension = match ? match[1].toUpperCase() : '该';
+      return h(
+        'div',
+        { className: 'dshcv-empty' },
+        h('div', null, extension + ' 需要专业内核，暂不支持预览'),
+        h('div', null, '可导出为 .glb / .obj / .stl（三维）或 .dxf（二维图纸）后在面板中查看：'),
+        h('code', null, doc.path),
+      );
+    }
+
     // ---------------- image viewer with region / layer picking ----------------
     function ImageDoc(props) {
       const { doc, sessionId } = props;
@@ -2497,7 +3155,13 @@ window.__ModuleLoader__.load({
                       : h(ImageDoc, { key: active.id + '-image', doc: active, sessionId: store.sessionId })
                     : active.view === 'pdf'
                       ? h(PdfDoc, { key: active.id + '-pdf', doc: active, sessionId: store.sessionId })
-                      : active.view === 'office'
+                      : active.view === 'model'
+                        ? h(ModelDoc, { key: active.id + '-model', doc: active, sessionId: store.sessionId })
+                        : active.view === 'cad'
+                          ? h(CadDoc, { key: active.id + '-cad', doc: active, sessionId: store.sessionId })
+                          : active.view === 'unsupported'
+                            ? h(UnsupportedDoc, { key: active.id + '-unsupported', doc: active })
+                            : active.view === 'office'
                         ? h(OfficeDoc, { key: active.id + '-office', doc: active, sessionId: store.sessionId })
                         : active.view === 'sheet'
                           ? h(SheetDoc, { key: active.id + '-sheet', doc: active, sessionId: store.sessionId })
