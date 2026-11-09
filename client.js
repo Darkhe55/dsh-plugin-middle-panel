@@ -372,6 +372,13 @@ window.__ModuleLoader__.load({
       '.dshcv-scroll{flex:1 1 auto;min-height:0;overflow:auto}',
       '.dshcv-tools{display:flex;align-items:center;gap:4px;min-height:34px;padding:0 8px;border-bottom:1px solid var(--dsw-alias-border-l1)}',
       '.dshcv-msg{font-size:11px;color:var(--dsw-alias-label-secondary);white-space:nowrap}',
+      '.dshcv-range{flex:0 0 150px;min-width:80px;accent-color:var(--dsw-alias-brand-primary)}',
+      '.dshcv-svg{flex:1 1 auto;min-height:0;overflow:auto;display:flex;align-items:flex-start;justify-content:center;padding:12px}',
+      '.dshcv-svg>svg{max-width:100%;height:auto}',
+      '.dshcv-svg[data-dshcv-spotlight] *{opacity:.45 !important;transition:opacity .18s cubic-bezier(.33,0,.2,1) !important}',
+      '.dshcv-svg[data-dshcv-spotlight] [data-dshcv-path]{opacity:1 !important}',
+      '.dshcv-svg[data-dshcv-spotlight] [data-dshcv-focus],.dshcv-svg[data-dshcv-spotlight] [data-dshcv-focus] *{opacity:1 !important}',
+      '@media (prefers-reduced-motion: reduce){.dshcv-svg[data-dshcv-spotlight] *{transition:none !important}}',
       '.dshcv-editor{flex:1 1 auto;min-height:0;width:100%;box-sizing:border-box;border:0;outline:none;resize:none;padding:10px 12px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;tab-size:2}',
       '.dshcv-md{font-size:13px;line-height:1.7;padding:12px 16px;overflow-wrap:anywhere}',
       '.dshcv-md>:first-child{margin-top:0}',
@@ -1142,9 +1149,11 @@ window.__ModuleLoader__.load({
     };
 
     // ---------------- html viewer with element picking ----------------
+    // Injected into the preview document: element picking, the 0.5s dwell
+    // spotlight, and animation freeze/scrub control (CSS, WAAPI and SMIL).
     const PICKER_SCRIPT = [
       '(function(){',
-      'var box=null;',
+      'var box=null,dwellEl=null,dwellTimer=null,spotEl=null,paused=false,armed=false;',
       'function overlay(){if(box)return box;box=document.createElement("div");',
       'box.style.cssText="position:fixed;pointer-events:none;z-index:2147483647;border:2px solid #2f6feb;background:rgba(47,111,235,.12);border-radius:2px;display:none";',
       'document.documentElement.appendChild(box);return box;}',
@@ -1155,24 +1164,135 @@ window.__ModuleLoader__.load({
       'var parent=node.parentElement;',
       'if(parent){var same=[];var kids=parent.children;for(var i=0;i<kids.length;i++){if(kids[i].tagName===node.tagName)same.push(kids[i]);}if(same.length>1)p+=":nth-of-type("+(same.indexOf(node)+1)+")";}',
       'parts.unshift(p);node=node.parentElement;depth++;}return parts.join(" > ");}',
-      'document.addEventListener("mousemove",function(e){var el=e.target;if(!el||el.nodeType!==1)return;var b=overlay();var r=el.getBoundingClientRect();',
-      'b.style.display="block";b.style.left=r.left+"px";b.style.top=r.top+"px";b.style.width=r.width+"px";b.style.height=r.height+"px";},true);',
+      // dwell spotlight
+      'function clearSpot(){var marks=document.querySelectorAll("[data-dshcv-focus],[data-dshcv-path]");for(var i=0;i<marks.length;i++){marks[i].removeAttribute("data-dshcv-focus");marks[i].removeAttribute("data-dshcv-path");}spotEl=null;document.documentElement.removeAttribute("data-dshcv-spotlight");}',
+      'function markSpot(el){clearSpot();var node=el,first=true,guard=0;',
+      'while(node&&node.nodeType===1&&node!==document.documentElement&&guard<64){node.setAttribute(first?"data-dshcv-focus":"data-dshcv-path","");first=false;node=node.parentElement;guard++;}',
+      'document.documentElement.setAttribute("data-dshcv-spotlight","");spotEl=el;}',
+      // animation control
+      'function anims(){try{return document.getAnimations?document.getAnimations():[];}catch(e){return [];}}',
+      'function svgRoots(){return document.querySelectorAll("svg");}',
+      'function pauseAll(){var list=anims();for(var i=0;i<list.length;i++){try{list[i].pause();}catch(e){}}',
+      'var roots=svgRoots();for(var j=0;j<roots.length;j++){try{roots[j].pauseAnimations&&roots[j].pauseAnimations();}catch(e){}}paused=true;report();}',
+      'function resumeAll(){var list=anims();for(var i=0;i<list.length;i++){try{list[i].play();}catch(e){}}',
+      'var roots=svgRoots();for(var j=0;j<roots.length;j++){try{roots[j].unpauseAnimations&&roots[j].unpauseAnimations();}catch(e){}}paused=false;report();}',
+      'function seek(ms){var at=Math.max(0,Number(ms)||0);var list=anims();',
+      'for(var i=0;i<list.length;i++){try{var a=list[i],end=1e9;var t=a.effect&&a.effect.getComputedTiming?a.effect.getComputedTiming():null;if(t&&t.endTime)end=t.endTime;a.currentTime=Math.min(at,end);}catch(e){}}',
+      'var roots=svgRoots();for(var j=0;j<roots.length;j++){try{roots[j].setCurrentTime&&roots[j].setCurrentTime(at/1000);}catch(e){}}report();}',
+      'function report(){var list=anims(),duration=0,current=0;',
+      'for(var i=0;i<list.length;i++){try{var a=list[i];var t=a.effect&&a.effect.getComputedTiming?a.effect.getComputedTiming():null;',
+      'var end=t&&t.endTime?t.endTime:0;if(end>duration)duration=end;var c=Number(a.currentTime)||0;if(c>current)current=c;}catch(e){}}',
+      'parent.postMessage({source:"dshcv-anim",state:{paused:paused,armed:armed,duration:Math.round(duration),current:Math.round(current),count:list.length}},"*");}',
+      // pointer behaviour
+      'document.addEventListener("mousemove",function(e){var el=e.target;if(!el||el.nodeType!==1)return;',
+      'var b=overlay();var r=el.getBoundingClientRect();b.style.display="block";b.style.left=r.left+"px";b.style.top=r.top+"px";b.style.width=r.width+"px";b.style.height=r.height+"px";',
+      'if(el!==dwellEl){dwellEl=el;clearSpot();clearTimeout(dwellTimer);dwellTimer=setTimeout(function(){if(dwellEl===el)markSpot(el);},500);}},true);',
+      'document.addEventListener("mouseleave",function(){dwellEl=null;clearTimeout(dwellTimer);clearSpot();},true);',
       'document.addEventListener("click",function(e){var el=e.target;if(!el||el.nodeType!==1)return;e.preventDefault();e.stopPropagation();',
       'var r=el.getBoundingClientRect();var text=(el.innerText||el.textContent||"").trim().slice(0,240);',
       'parent.postMessage({source:"dshcv-picker",selector:sel(el),tag:el.tagName.toLowerCase(),text:text,rect:[Math.round(r.left),Math.round(r.top),Math.round(r.width),Math.round(r.height)]},"*");},true);',
+      // capture the next interaction: hover/press styles apply, then time stops
+      'document.addEventListener("pointerdown",function(){if(!armed)return;armed=false;setTimeout(pauseAll,40);},true);',
+      'document.addEventListener("mouseover",function(){if(!armed)return;armed=false;setTimeout(pauseAll,80);},true);',
+      'document.addEventListener("keydown",function(e){var step=e.shiftKey?100:16;',
+      'if(e.code==="Space"){e.preventDefault();paused?resumeAll():pauseAll();}',
+      'else if(e.key==="ArrowLeft"){e.preventDefault();pauseAll();var t=anims();var c=0;for(var i=0;i<t.length;i++){try{c=Math.max(c,Number(t[i].currentTime)||0);}catch(x){}}seek(c-step);}',
+      'else if(e.key==="ArrowRight"){e.preventDefault();pauseAll();var u=anims();var d=0;for(var i=0;i<u.length;i++){try{d=Math.max(d,Number(u[i].currentTime)||0);}catch(x){}}seek(d+step);}',
+      'else if(e.key==="p"||e.key==="P"){paused?resumeAll():pauseAll();}},true);',
+      'window.addEventListener("message",function(e){var d=e.data;if(!d||d.source!=="dshcv-cmd")return;',
+      'if(d.cmd==="pause")pauseAll();else if(d.cmd==="resume")resumeAll();else if(d.cmd==="seek")seek(d.time);',
+      'else if(d.cmd==="arm"){armed=!!d.on;report();}else if(d.cmd==="state")report();},false);',
+      'setTimeout(report,300);',
       '})();',
     ].join('\n');
 
+    const SPOTLIGHT_CSS = [
+      'html[data-dshcv-spotlight] *{opacity:.45 !important;transition:opacity .18s cubic-bezier(.33,0,.2,1) !important}',
+      'html[data-dshcv-spotlight] [data-dshcv-path]{opacity:1 !important}',
+      'html[data-dshcv-spotlight] [data-dshcv-focus],html[data-dshcv-spotlight] [data-dshcv-focus] *{opacity:1 !important}',
+      '@media (prefers-reduced-motion: reduce){html[data-dshcv-spotlight] *{transition:none !important}}',
+    ].join('\n');
+
     const injectPicker = (html) => {
+      const style = '<style data-dshcv-spotlight>' + SPOTLIGHT_CSS + '</style>';
       const tag = '<scr' + 'ipt>' + PICKER_SCRIPT + '</scr' + 'ipt>';
-      if (/<\/body>/i.test(html)) return html.replace(/<\/body>/i, tag + '</body>');
-      return html + tag;
+      let next = /<\/head>/i.test(html) ? html.replace(/<\/head>/i, style + '</head>') : style + html;
+      if (/<\/body>/i.test(next)) return next.replace(/<\/body>/i, tag + '</body>');
+      return next + tag;
     };
+
+    // Shared animation transport bar: pause, capture the next interaction,
+    // scrub the timeline, and step single frames.
+    function AnimBar(props) {
+      const { anim, onPause, onResume, onSeek, onStep, onArm } = props;
+      const max = Math.max(1000, anim.duration || 0);
+      return h(
+        'div',
+        { className: 'dshcv-tools' },
+        h(
+          'button',
+          { type: 'button', className: 'dshcv-btn', onClick: anim.paused ? onResume : onPause },
+          anim.paused ? '继续' : '暂停',
+        ),
+        h(
+          'button',
+          {
+            type: 'button',
+            className: 'dshcv-btn',
+            'data-primary': anim.armed ? '1' : '0',
+            title: '点一下这个，再在预览里悬停或点击：交互态会立刻定格在当前帧',
+            onClick: () => onArm(!anim.armed),
+          },
+          anim.armed ? '抓帧就绪' : '抓帧',
+        ),
+        anim.paused
+          ? h('input', {
+              type: 'range',
+              className: 'dshcv-range',
+              min: 0,
+              max,
+              step: 16,
+              value: Math.min(Math.max(0, anim.current || 0), max),
+              onChange: (event) => onSeek(Number(event.target.value)),
+            })
+          : null,
+        h(
+          'span',
+          { className: 'dshcv-msg' },
+          anim.paused
+            ? Math.round(anim.current || 0) + ' ms / ' + Math.round(max) + ' ms'
+            : anim.count
+              ? anim.count + ' 个动画'
+              : '无动画',
+        ),
+        anim.paused
+          ? h(
+              'button',
+              { type: 'button', className: 'dshcv-btn', 'data-icon': '1', title: '后退一帧', onClick: () => onStep(-16) },
+              '−',
+            )
+          : null,
+        anim.paused
+          ? h(
+              'button',
+              { type: 'button', className: 'dshcv-btn', 'data-icon': '1', title: '前进一帧', onClick: () => onStep(16) },
+              '+',
+            )
+          : null,
+      );
+    }
 
     function HtmlDoc(props) {
       const { doc, sessionId } = props;
       const [state, setState] = React.useState({ status: 'idle', url: '', error: '' });
+      const [anim, setAnim] = React.useState({ paused: false, armed: false, duration: 0, current: 0, count: 0 });
       const frameRef = React.useRef(null);
+
+      const post = (cmd, extra) => {
+        const frame = frameRef.current;
+        if (!frame || !frame.contentWindow) return;
+        frame.contentWindow.postMessage(Object.assign({ source: 'dshcv-cmd', cmd }, extra || {}), '*');
+      };
 
       React.useEffect(() => {
         if (!sessionId) {
@@ -1187,19 +1307,16 @@ window.__ModuleLoader__.load({
           .then(async (page) => {
             let html = page.text;
             if (!html) {
-              devlog('html-empty-text', ['trying bytes']);
               const bytes = await readBytesFile(sessionId, doc.path, controller.signal);
               if (bytes) html = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
             }
             if (cancelled) return;
             objectUrl = URL.createObjectURL(new Blob([injectPicker(html)], { type: 'text/html' }));
             setState({ status: 'ready', url: objectUrl, error: '' });
-            devlog('html-ready', ['path=' + doc.path, 'chars=' + html.length]);
           })
           .catch((error) => {
             if (cancelled) return;
             setState({ status: 'failed', url: '', error: errText(error) });
-            devlog('html-failed', [errText(error)]);
           });
         return () => {
           cancelled = true;
@@ -1213,7 +1330,9 @@ window.__ModuleLoader__.load({
           const frame = frameRef.current;
           if (!frame || event.source !== frame.contentWindow) return;
           const data = event.data;
-          if (!data || data.source !== 'dshcv-picker') return;
+          if (!data) return;
+          if (data.source === 'dshcv-anim' && data.state) setAnim(data.state);
+          if (data.source !== 'dshcv-picker') return;
           addMark({
             kind: 'element',
             path: doc.path,
@@ -1232,17 +1351,202 @@ window.__ModuleLoader__.load({
       if (state.status !== 'ready') {
         return h('div', { className: 'dshcv-empty' }, h('div', null, state.status === 'loading' ? '渲染中…' : state.error || '……'));
       }
-      return h('div', { style: { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' } },
-        h('div', { style: { padding: '6px 12px', fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, '点选页面元素即可生成编号标注'),
+      return h(
+        'div',
+        { style: { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' } },
+        h(AnimBar, {
+          anim,
+          onPause: () => post('pause'),
+          onResume: () => post('resume'),
+          onSeek: (time) => post('seek', { time }),
+          onStep: (delta) => post('seek', { time: Math.max(0, (anim.current || 0) + delta) }),
+          onArm: (on) => post('arm', { on }),
+        }),
         h('iframe', {
           ref: frameRef,
           src: state.url,
           title: 'canvas html preview',
           sandbox: 'allow-scripts',
+          onLoad: () => post('state'),
           style: { flex: '1 1 auto', minHeight: 0, width: '100%', border: '0', background: '#fff' },
         }),
       );
     }
+
+    // ---------------- svg viewer (inline, so elements can be inspected) ----------------
+    const sanitizeSvg = (text) => {
+      const parsed = new DOMParser().parseFromString(String(text || ''), 'image/svg+xml');
+      if (!parsed || !parsed.documentElement || parsed.querySelector('parsererror')) return null;
+      const root = parsed.documentElement;
+      for (const node of Array.from(root.querySelectorAll('script'))) node.remove();
+      const walk = (node) => {
+        for (const attribute of Array.from(node.attributes || [])) {
+          const name = attribute.name.toLowerCase();
+          const value = String(attribute.value || '').trim().toLowerCase();
+          if (name.startsWith('on') || ((name === 'href' || name === 'xlink:href') && value.startsWith('javascript:'))) {
+            node.removeAttribute(attribute.name);
+          }
+        }
+        for (const child of Array.from(node.children || [])) walk(child);
+      };
+      walk(root);
+      return root.outerHTML;
+    };
+
+    function SvgDoc(props) {
+      const { doc, sessionId } = props;
+      const [state, setState] = React.useState({ status: 'idle', markup: '', error: '' });
+      const [anim, setAnim] = React.useState({ paused: false, armed: false, duration: 0, current: 0, count: 0 });
+      const hostRef = React.useRef(null);
+      const dwellRef = React.useRef({ element: null, timer: null });
+      const armedRef = React.useRef(false);
+
+      React.useEffect(() => {
+        if (!sessionId) {
+          setState({ status: 'idle', markup: '', error: '等待会话…' });
+          return undefined;
+        }
+        const controller = new AbortController();
+        let cancelled = false;
+        readTextPages(sessionId, doc.path, controller.signal)
+          .then(async (page) => {
+            let text = page.text;
+            if (!text) {
+              const bytes = await readBytesFile(sessionId, doc.path, controller.signal);
+              if (bytes) text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+            }
+            const markup = sanitizeSvg(text);
+            if (cancelled) return;
+            if (!markup) {
+              setState({ status: 'failed', markup: '', error: '无法解析 SVG' });
+              return;
+            }
+            setState({ status: 'ready', markup, error: '' });
+          })
+          .catch((error) => {
+            if (cancelled) return;
+            setState({ status: 'failed', markup: '', error: errText(error) });
+          });
+        return () => {
+          cancelled = true;
+          controller.abort();
+        };
+      }, [doc.path, sessionId]);
+
+      const svg = () => hostRef.current && hostRef.current.querySelector('svg');
+      const sync = () => {
+        const root = svg();
+        const paused = root && typeof root.animationsPaused === 'function' ? root.animationsPaused() : false;
+        const current = root && typeof root.getCurrentTime === 'function' ? Math.round(root.getCurrentTime() * 1000) : 0;
+        setAnim((previous) => Object.assign({}, previous, { paused, current, count: root ? 1 : 0 }));
+      };
+      const pause = () => {
+        const root = svg();
+        if (root && root.pauseAnimations) root.pauseAnimations();
+        sync();
+      };
+      const resume = () => {
+        const root = svg();
+        if (root && root.unpauseAnimations) root.unpauseAnimations();
+        sync();
+      };
+      const seek = (time) => {
+        const root = svg();
+        if (root && root.setCurrentTime) root.setCurrentTime(Math.max(0, time) / 1000);
+        sync();
+      };
+
+      const clearSpot = () => {
+        const host = hostRef.current;
+        if (!host) return;
+        for (const node of Array.from(host.querySelectorAll('[data-dshcv-focus],[data-dshcv-path]'))) {
+          node.removeAttribute('data-dshcv-focus');
+          node.removeAttribute('data-dshcv-path');
+        }
+        host.removeAttribute('data-dshcv-spotlight');
+      };
+      const markSpot = (element) => {
+        clearSpot();
+        let node = element;
+        let first = true;
+        let guard = 0;
+        while (node && node.nodeType === 1 && node !== hostRef.current && guard < 64) {
+          node.setAttribute(first ? 'data-dshcv-focus' : 'data-dshcv-path', '');
+          first = false;
+          node = node.parentElement;
+          guard += 1;
+        }
+        if (hostRef.current) hostRef.current.setAttribute('data-dshcv-spotlight', '');
+      };
+      const onHover = (event) => {
+        const target = event.target;
+        if (!target || target.nodeType !== 1) return;
+        const dwell = dwellRef.current;
+        if (dwell.element === target) return;
+        dwell.element = target;
+        clearSpot();
+        clearTimeout(dwell.timer);
+        dwell.timer = setTimeout(() => {
+          if (dwellRef.current.element === target) markSpot(target);
+        }, 500);
+      };
+      const onLeave = () => {
+        dwellRef.current.element = null;
+        clearTimeout(dwellRef.current.timer);
+        clearSpot();
+      };
+      const onClick = (event) => {
+        const target = event.target;
+        if (!target || target.nodeType !== 1) return;
+        if (armedRef.current) {
+          armedRef.current = false;
+          setAnim((previous) => Object.assign({}, previous, { armed: false }));
+          setTimeout(pause, 40);
+          return;
+        }
+        const id = target.getAttribute && target.getAttribute('id');
+        const tag = target.tagName ? target.tagName.toLowerCase() : 'node';
+        if (!id && tag === 'svg') return;
+        addMark({ kind: 'layer', path: doc.path, selector: id ? '#' + id : tag, quote: tag });
+      };
+
+      React.useEffect(() => {
+        if (state.status === 'ready') sync();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [state.status, state.markup]);
+
+      if (state.status === 'failed') {
+        return h('div', { className: 'dshcv-empty' }, h('div', null, '无法预览该 SVG'), h('div', null, state.error));
+      }
+      if (state.status !== 'ready') {
+        return h('div', { className: 'dshcv-empty' }, h('div', null, state.status === 'loading' ? '解析中…' : '……'));
+      }
+      return h(
+        'div',
+        { style: { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' } },
+        h(AnimBar, {
+          anim,
+          onPause: pause,
+          onResume: resume,
+          onSeek: seek,
+          onStep: (delta) => seek((anim.current || 0) + delta),
+          onArm: (on) => {
+            armedRef.current = on;
+            setAnim((previous) => Object.assign({}, previous, { armed: on }));
+          },
+        }),
+        h('div', {
+          ref: hostRef,
+          className: 'dshcv-svg',
+          onMouseOver: onHover,
+          onMouseLeave: onLeave,
+          onClick,
+          dangerouslySetInnerHTML: { __html: state.markup },
+        }),
+      );
+    }
+
+    // ---------------- image viewer with region / layer picking ----------------
 
     // ---------------- image viewer with region / layer picking ----------------
     function ImageDoc(props) {
@@ -1735,7 +2039,9 @@ window.__ModuleLoader__.load({
                 ? active.view === 'html'
                   ? h(HtmlDoc, { key: active.id + '-html', doc: active, sessionId: store.sessionId })
                   : active.view === 'image'
-                    ? h(ImageDoc, { key: active.id + '-image', doc: active, sessionId: store.sessionId })
+                    ? /\.svg$/i.test(active.path)
+                      ? h(SvgDoc, { key: active.id + '-svg', doc: active, sessionId: store.sessionId })
+                      : h(ImageDoc, { key: active.id + '-image', doc: active, sessionId: store.sessionId })
                     : h(TextDoc, { key: active.id + '-text', doc: active, sessionId: store.sessionId })
                 : h(
                     'div',
