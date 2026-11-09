@@ -1,0 +1,54 @@
+{
+  "format": 1,
+  "title": {
+    "en": "Darkhe55's DSH plugins",
+    "zh": "Darkhe55 的 DSH 插件"
+  },
+  "description": {
+    "en": "Small, opinionated plugins for the DeepSeek Harness Web GUI.",
+    "zh": "给 DeepSeek Harness Web GUI 用的小而专的插件。"
+  },
+  "metadata": {},
+  "plugins": [
+    {
+      "name": "dsh-plugin-middle-panel",
+      "title": {
+        "en": "Middle panel",
+        "zh": "画布面板"
+      },
+      "description": {
+        "en": "Turns the centre column into [canvas | conversation]: text selection, HTML element picking, image region and SVG layer marks, numbered and sent back to the chat.",
+        "zh": "把中栏变成 [画布 | 对话]：文本划选、HTML 元素选取、图片区域与 SVG 图层标注，按编号回传到对话。"
+      },
+      "icon": "icon.svg",
+      "author": "Darkhe55",
+      "homepage": "https://github.com/Darkhe55/dsh-plugin-middle-panel",
+      "repository": {
+        "url": "https://github.com/Darkhe55/dsh-plugin-middle-panel"
+      },
+      "metadata": {
+        "keywords": [
+          "canvas",
+          "middle-panel",
+          "annotation",
+          "artifacts",
+          "html-picker"
+        ]
+      },
+      "versions": [
+        {
+          "version": "0.1.0",
+          "publishTimestamp": 1794214500,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/Darkhe55/dsh-plugin-middle-panel",
+            "commit": "587193466f20974bda0b9b2dacbabfa6c7e9128f"
+          },
+          "engines": {
+            "dsh": ">=0.2.2-rc.1 <0.3.0"
+          }
+        }
+      ]
+    }
+  ]
+}
