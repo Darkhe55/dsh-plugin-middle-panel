@@ -3315,6 +3315,15 @@ window.__ModuleLoader__.load({
           setState((previous) => Object.assign({}, previous, { status: 'failed', error: '当前环境不支持 WebGL' }));
           return undefined;
         }
+        // Vertex array state lives on the context, not on the program, and this
+        // effect is rebuilt on every option change. Start from a clean slate so a
+        // stale array cannot point at a buffer the previous run deleted.
+        try {
+          const maxAttributes = gl.getParameter(gl.MAX_VERTEX_ATTRIBS) || 8;
+          for (let index = 0; index < maxAttributes; index += 1) gl.disableVertexAttribArray(index);
+        } catch {
+          /* best effort */
+        }
 
         const compile = (type, source) => {
           const shader = gl.createShader(type);
@@ -3450,6 +3459,10 @@ window.__ModuleLoader__.load({
             gl.uniform1f(uniforms.solid.far, distance);
             gl.uniform1f(uniforms.solid.normals, options.normals ? 1 : 0);
             gl.drawArrays(gl.TRIANGLES, 0, solidCount);
+            // Leave the normal array off: an enabled array whose buffer is later
+            // deleted makes every following draw fail with INVALID_OPERATION, which
+            // is what blanked the wireframe once faces were switched off.
+            if (attributes.solid.normal >= 0) gl.disableVertexAttribArray(attributes.solid.normal);
           }
 
           if (options.edges) {
@@ -3472,6 +3485,9 @@ window.__ModuleLoader__.load({
           }
 
           if (options.axes) {
+            // Bind the line program explicitly: with edges off it is not current,
+            // and setting its uniforms while another program runs is INVALID_OPERATION.
+            gl.useProgram(lines);
             const origin = new Float32Array([target[0], target[1], target[2]]);
             const size = view.radius * 1.35;
             const axes = new Float32Array([
@@ -3656,6 +3672,9 @@ window.__ModuleLoader__.load({
           canvas.removeEventListener('dblclick', onDoubleClick);
           canvas.removeEventListener('contextmenu', onContext);
           if (observer) observer.disconnect();
+          if (attributes.solid.normal >= 0) gl.disableVertexAttribArray(attributes.solid.normal);
+          if (attributes.solid.position >= 0) gl.disableVertexAttribArray(attributes.solid.position);
+          if (attributes.lines.position >= 0) gl.disableVertexAttribArray(attributes.lines.position);
           gl.deleteBuffer(solidBuffer);
           gl.deleteBuffer(lineBuffer);
           gl.deleteBuffer(axisBuffer);
