@@ -1227,7 +1227,9 @@ window.__ModuleLoader__.load({
       'var b=overlay();var r=el.getBoundingClientRect();b.style.display="block";b.style.left=r.left+"px";b.style.top=r.top+"px";b.style.width=r.width+"px";b.style.height=r.height+"px";',
       'if(el!==dwellEl){dwellEl=el;clearSpot();clearTimeout(dwellTimer);dwellTimer=setTimeout(function(){if(dwellEl===el)markSpot(el);},500);}},true);',
       'document.addEventListener("mouseleave",function(){dwellEl=null;clearTimeout(dwellTimer);clearSpot();hideBox();},true);',
-      'document.addEventListener("click",function(e){var el=e.target;if(!el||el.nodeType!==1)return;e.preventDefault();e.stopPropagation();',
+      // Playing: clicks belong to the document (its handlers, its animations).
+      // Paused: they pick the element and create a numbered mark instead.
+      'document.addEventListener("click",function(e){var el=e.target;if(!el||el.nodeType!==1)return;if(!paused)return;e.preventDefault();e.stopPropagation();',
       'var r=el.getBoundingClientRect();var text=(el.innerText||el.textContent||"").trim().slice(0,240);',
       'parent.postMessage({source:"dshcv-picker",selector:sel(el),tag:el.tagName.toLowerCase(),text:text,rect:[Math.round(r.left),Math.round(r.top),Math.round(r.width),Math.round(r.height)]},"*");},true);',
       'document.addEventListener("keydown",function(e){var t=e.target;if(t&&(t.isContentEditable||/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||"")))return;var step=e.shiftKey?100:16;',
@@ -1585,6 +1587,9 @@ window.__ModuleLoader__.load({
       const onClick = (event) => {
         const target = event.target;
         if (!target || target.nodeType !== 1) return;
+        // Only a frozen frame turns clicks into layer marks; while playing the
+        // SVG keeps its own behaviour.
+        if (!(animRef.current && animRef.current.paused)) return;
         const id = target.getAttribute && target.getAttribute('id');
         const tag = target.tagName ? target.tagName.toLowerCase() : 'node';
         if (!id && tag === 'svg') return;
