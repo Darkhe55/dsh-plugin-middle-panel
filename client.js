@@ -159,6 +159,7 @@ window.__ModuleLoader__.load({
       if (left.kind !== right.kind || !sameFile(left.path, right.path)) return false;
       if (left.kind === 'text') return Boolean(left.lines && right.lines) && left.lines[0] === right.lines[0] && left.lines[1] === right.lines[1];
       if (left.kind === 'element' || left.kind === 'layer') return left.selector === right.selector;
+      if (left.kind === 'paragraph') return left.paragraph === right.paragraph;
       if (left.kind === 'region') {
         const a = left.rect || [];
         const b = right.rect || [];
@@ -280,7 +281,9 @@ window.__ModuleLoader__.load({
             ? mark.lines && mark.lines[0] === mark.lines[1]
               ? '第 ' + mark.lines[0] + ' 行'
               : '第 ' + mark.lines[0] + '-' + mark.lines[1] + ' 行'
-            : mark.kind === 'element'
+            : mark.kind === 'paragraph'
+              ? '第 ' + mark.paragraph + ' 段'
+              : mark.kind === 'element'
               ? '元素 `' + mark.selector + '`'
               : mark.kind === 'layer'
                 ? '图层 `' + mark.selector + '`'
@@ -414,6 +417,8 @@ window.__ModuleLoader__.load({
       '.dshcv-docwrap{flex:1 1 auto;min-height:0;overflow:auto;padding:12px 16px 24px}',
       '.dshcv-doc{font-size:13px;line-height:1.75;max-width:760px}',
       '.dshcv-doc p{margin:0 0 6px;white-space:pre-wrap;overflow-wrap:anywhere}',
+      '.dshcv-docp{cursor:pointer;border-radius:4px;padding:2px 4px;margin-left:-4px}',
+      '.dshcv-docp:hover{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 10%,transparent)}',
       '.dshcv-docblank{height:6px;margin:0}',
       '.dshcv-tablewrap{margin:10px 0 18px}',
       '.dshcv-tcaption{font-size:11px;color:var(--dsw-alias-label-secondary);margin:0 0 6px}',
@@ -1324,9 +1329,11 @@ window.__ModuleLoader__.load({
                     ' · ' +
                     (mark.kind === 'text'
                       ? '第 ' + mark.lines[0] + (mark.lines[1] !== mark.lines[0] ? '-' + mark.lines[1] : '') + ' 行'
-                      : mark.kind === 'element'
-                        ? mark.selector
-                        : '区域'),
+                      : mark.kind === 'paragraph'
+                        ? '第 ' + mark.paragraph + ' 段'
+                        : mark.kind === 'element'
+                          ? mark.selector
+                          : '区域'),
                 ),
                 mark.quote ? h('div', { className: 'dshcv-quote' }, mark.quote.split('\n').slice(0, 3).join('\n')) : null,
                 h('input', {
@@ -2143,7 +2150,18 @@ window.__ModuleLoader__.load({
             'div',
             { className: 'dshcv-doc' },
             state.paragraphs.map((line, index) =>
-              h('p', { key: 'p' + index, className: line.trim() ? '' : 'dshcv-docblank' }, line || '\u00a0'),
+              h(
+                'p',
+                {
+                  key: 'p' + index,
+                  className: line.trim() ? 'dshcv-docp' : 'dshcv-docblank',
+                  title: line.trim() ? '点击标注这一段' : undefined,
+                  onClick: line.trim()
+                    ? () => addMark({ kind: 'paragraph', path: doc.path, paragraph: index + 1, quote: line.trim().slice(0, 240) })
+                    : undefined,
+                },
+                line || '\u00a0',
+              ),
             ),
           ),
         );
@@ -3013,10 +3031,12 @@ window.__ModuleLoader__.load({
         setProgress(0);
         const match = /\.([a-z0-9]+)$/i.exec(doc.path);
         const extension = match ? match[1].toLowerCase() : '';
-        const apply = (positions, mesh) => {
-          if (!positions || positions.length < 9) {
+        const apply = (rawPositions, mesh) => {
+          if (!rawPositions || rawPositions.length < 9) {
             throw new Error(mesh && mesh.points ? '这是点云数据，三维面片查看器暂不显示' : '没有解析到三角形，可能格式不受支持或模型为空');
           }
+          const reduced = decimateMesh(rawPositions, MAX_PREVIEW_TRIANGLES);
+          const positions = reduced.positions;
           meshRef.current = positions;
           let minX = Infinity;
             let minY = Infinity;
@@ -3088,7 +3108,10 @@ window.__ModuleLoader__.load({
           setState({
             status: 'ready',
             error: '',
-            info: (positions.length / 9).toLocaleString() + ' 个三角形',
+            info:
+              (positions.length / 9).toLocaleString() +
+              ' 个三角形' +
+              (reduced.reduced ? '（已抽稀，原 ' + (rawPositions.length / 9).toLocaleString() + '）' : ''),
             stats: {
               triangles: positions.length / 9,
               vertices: positions.length / 3,
@@ -3479,6 +3502,51 @@ window.__ModuleLoader__.load({
       );
     }
 
+    // Vertex clustering: cheap decimation that keeps the silhouette when a mesh
+    // is far too heavy for an interactive preview.
+    const MAX_PREVIEW_TRIANGLES = 800000;
+    const decimateMesh = (positions, target) => {
+      const triangles = positions.length / 9;
+      if (triangles <= target) return { positions, reduced: false, triangles };
+      let minX = Infinity;
+      let minY = Infinity;
+      let minZ = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      let maxZ = -Infinity;
+      for (let index = 0; index < positions.length; index += 3) {
+        if (positions[index] < minX) minX = positions[index];
+        if (positions[index] > maxX) maxX = positions[index];
+        if (positions[index + 1] < minY) minY = positions[index + 1];
+        if (positions[index + 1] > maxY) maxY = positions[index + 1];
+        if (positions[index + 2] < minZ) minZ = positions[index + 2];
+        if (positions[index + 2] > maxZ) maxZ = positions[index + 2];
+      }
+      const span = Math.max(maxX - minX, maxY - minY, maxZ - minZ, 1e-6);
+      const resolution = Math.max(8, Math.min(512, Math.round(Math.sqrt(target / 2))));
+      const cell = span / resolution;
+      const representatives = new Map();
+      const remap = (x, y, z) => {
+        const key =
+          Math.floor((x - minX) / cell) + ',' + Math.floor((y - minY) / cell) + ',' + Math.floor((z - minZ) / cell);
+        const seen = representatives.get(key);
+        if (seen) return seen;
+        const entry = { key, x, y, z };
+        representatives.set(key, entry);
+        return entry;
+      };
+      const out = [];
+      for (let index = 0; index < positions.length; index += 9) {
+        const a = remap(positions[index], positions[index + 1], positions[index + 2]);
+        const b = remap(positions[index + 3], positions[index + 4], positions[index + 5]);
+        const c = remap(positions[index + 6], positions[index + 7], positions[index + 8]);
+        if (a.key === b.key || b.key === c.key || a.key === c.key) continue;
+        out.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
+      }
+      if (!out.length) return { positions, reduced: false, triangles };
+      return { positions: new Float32Array(out), reduced: true, triangles: out.length / 9 };
+    };
+
     // ---------------- cad drawings: dxf entities in, svg out ----------------
     const parseDxf = (text) => {
       const lines = String(text || '').split(/\r\n|\r|\n/);
@@ -3783,6 +3851,37 @@ window.__ModuleLoader__.load({
       const marqueeRef = React.useRef(null);
       const [layers, setLayers] = React.useState([]);
       const imageRef = React.useRef(null);
+      const [sample, setSample] = React.useState(null);
+      const sampleCanvasRef = React.useRef(null);
+
+      // Pixel sampling needs the raster in a canvas we control; an <img> cannot
+      // be read back for cross-origin safety reasons once it is a blob.
+      const ensureSampleCanvas = () => {
+        if (sampleCanvasRef.current) return sampleCanvasRef.current;
+        const image = imageRef.current;
+        if (!image || !image.naturalWidth) return null;
+        const canvas = document.createElement('canvas');
+        canvas.width = image.naturalWidth;
+        canvas.height = image.naturalHeight;
+        const context = canvas.getContext('2d');
+        if (!context) return null;
+        context.drawImage(image, 0, 0);
+        sampleCanvasRef.current = canvas;
+        return canvas;
+      };
+      const onSample = (event) => {
+        if (!event.shiftKey) return;
+        const canvas = ensureSampleCanvas();
+        const image = imageRef.current;
+        if (!canvas || !image) return;
+        const rect = image.getBoundingClientRect();
+        const x = Math.round(((event.clientX - rect.left) / Math.max(1, rect.width)) * canvas.width);
+        const y = Math.round(((event.clientY - rect.top) / Math.max(1, rect.height)) * canvas.height);
+        if (x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) return;
+        const context = canvas.getContext('2d');
+        const pixel = context.getImageData(x, y, 1, 1).data;
+        setSample({ x, y, r: pixel[0], g: pixel[1], b: pixel[2], a: pixel[3] });
+      };
 
       React.useEffect(() => {
         if (!sessionId) {
@@ -3895,6 +3994,11 @@ window.__ModuleLoader__.load({
           h('button', { type: 'button', className: 'dshcv-btn', onClick: () => setZoom(Math.max(0.25, zoom - 0.25)) }, '−'),
           h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, Math.round(zoom * 100) + '%'),
           h('button', { type: 'button', className: 'dshcv-btn', onClick: () => setZoom(Math.min(4, zoom + 0.25)) }, '+'),
+          h('button', { type: 'button', className: 'dshcv-btn', onClick: () => setZoom(1) }, '1:1'),
+          h('button', { type: 'button', className: 'dshcv-btn', onClick: () => setZoom(0.25) }, '适应'),
+          sample
+            ? h('span', { className: 'dshcv-msg' }, sample.x + ',' + sample.y + ' · rgb(' + sample.r + ',' + sample.g + ',' + sample.b + ') a' + sample.a)
+            : h('span', { className: 'dshcv-msg' }, 'Shift 悬停取样'),
           layers.length ? h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, layers.length + ' 个 SVG 图层') : null,
         ),
         h(
@@ -3912,6 +4016,7 @@ window.__ModuleLoader__.load({
               alt: doc.path,
               style: { display: 'block', maxWidth: '100%', userSelect: 'none' },
               draggable: false,
+              onMouseMove: onSample,
             }),
             marquee
               ? h('div', {
