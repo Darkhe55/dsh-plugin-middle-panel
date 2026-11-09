@@ -1187,6 +1187,7 @@ window.__ModuleLoader__.load({
       'function overlay(){if(box)return box;box=document.createElement("div");',
       'box.style.cssText="position:fixed;pointer-events:none;z-index:2147483647;border:2px solid #2f6feb;background:rgba(47,111,235,.12);border-radius:2px;display:none";',
       'document.documentElement.appendChild(box);return box;}',
+      'function hideBox(){if(box)box.style.display="none";}',
       'function sel(el){if(el.id)return "#"+el.id;var parts=[];var node=el;var depth=0;',
       'while(node&&node.nodeType===1&&depth<5){var p=node.tagName.toLowerCase();',
       'var cls=(node.getAttribute("class")||"").trim().split(/\\s+/).filter(Boolean).slice(0,2);',
@@ -1205,7 +1206,7 @@ window.__ModuleLoader__.load({
       'function pauseAll(){var list=anims();for(var i=0;i<list.length;i++){try{list[i].pause();}catch(e){}}',
       'var roots=svgRoots();for(var j=0;j<roots.length;j++){try{roots[j].pauseAnimations&&roots[j].pauseAnimations();}catch(e){}}paused=true;report();}',
       'function resumeAll(){var list=anims();for(var i=0;i<list.length;i++){try{list[i].play();}catch(e){}}',
-      'var roots=svgRoots();for(var j=0;j<roots.length;j++){try{roots[j].unpauseAnimations&&roots[j].unpauseAnimations();}catch(e){}}paused=false;releaseRaf();report();}',
+      'var roots=svgRoots();for(var j=0;j<roots.length;j++){try{roots[j].unpauseAnimations&&roots[j].unpauseAnimations();}catch(e){}}paused=false;releaseRaf();hideBox();report();}',
       'function seek(ms){var at=Math.max(0,Number(ms)||0);var list=anims();',
       'for(var i=0;i<list.length;i++){try{var a=list[i],end=1e9;var t=a.effect&&a.effect.getComputedTiming?a.effect.getComputedTiming():null;if(t&&t.endTime)end=t.endTime;a.currentTime=Math.min(at,end);}catch(e){}}',
       'var roots=svgRoots();for(var j=0;j<roots.length;j++){try{roots[j].setCurrentTime&&roots[j].setCurrentTime(at/1000);}catch(e){}}report();}',
@@ -1218,12 +1219,14 @@ window.__ModuleLoader__.load({
       'for(var i=0;i<list.length;i++){try{var a=list[i];var t=a.effect&&a.effect.getComputedTiming?a.effect.getComputedTiming():null;',
       'var end=t&&t.endTime?t.endTime:0;if(isFinite(end)&&end>duration)duration=end;var c=Number(a.currentTime)||0;if(isFinite(c)&&c>current)current=c;}catch(e){}}',
       'parent.postMessage({source:"dshcv-anim",state:{paused:paused,duration:Math.round(duration),current:Math.round(current),count:list.length,raf:rafQueue.length}},"*");}',
-      // pointer behaviour
+      // pointer behaviour: every attention-drawing affordance (hover outline and
+      // dwell spotlight) belongs to the frozen frame, so a playing preview is
+      // left exactly as the document ships it.
       'document.addEventListener("mousemove",function(e){var el=e.target;if(!el||el.nodeType!==1)return;',
+      'if(!paused){hideBox();dwellEl=el;if(spotEl||document.documentElement.hasAttribute("data-dshcv-spotlight"))clearSpot();return;}',
       'var b=overlay();var r=el.getBoundingClientRect();b.style.display="block";b.style.left=r.left+"px";b.style.top=r.top+"px";b.style.width=r.width+"px";b.style.height=r.height+"px";',
-      'if(!paused){if(spotEl||document.documentElement.hasAttribute("data-dshcv-spotlight"))clearSpot();dwellEl=el;return;}',
       'if(el!==dwellEl){dwellEl=el;clearSpot();clearTimeout(dwellTimer);dwellTimer=setTimeout(function(){if(dwellEl===el)markSpot(el);},500);}},true);',
-      'document.addEventListener("mouseleave",function(){dwellEl=null;clearTimeout(dwellTimer);clearSpot();},true);',
+      'document.addEventListener("mouseleave",function(){dwellEl=null;clearTimeout(dwellTimer);clearSpot();hideBox();},true);',
       'document.addEventListener("click",function(e){var el=e.target;if(!el||el.nodeType!==1)return;e.preventDefault();e.stopPropagation();',
       'var r=el.getBoundingClientRect();var text=(el.innerText||el.textContent||"").trim().slice(0,240);',
       'parent.postMessage({source:"dshcv-picker",selector:sel(el),tag:el.tagName.toLowerCase(),text:text,rect:[Math.round(r.left),Math.round(r.top),Math.round(r.width),Math.round(r.height)]},"*");},true);',
