@@ -38,11 +38,11 @@
       "versions": [
         {
           "version": "0.1.0",
-          "publishTimestamp": 1794223007,
+          "publishTimestamp": 1794224065,
           "source": {
             "type": "git",
             "url": "https://github.com/Darkhe55/dsh-plugin-middle-panel",
-            "commit": "8c7d85580466febfee547251b853ef85ea76a7f9"
+            "commit": "331c4e1223d4e15a04e0105972d657f3b26af34e"
           },
           "engines": {
             "dsh": ">=0.2.2-rc.1 <0.3.0"
