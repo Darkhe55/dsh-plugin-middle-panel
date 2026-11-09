@@ -76,7 +76,7 @@
 | PDF | `.pdf` | 运行时内置阅读器（不可用时提示路径与大小） |
 | Office | `.docx` `.xlsx` `.pptx` | 解 OOXML：段落 / 表格（≤3 表 × 300 行）/ 分页文本 |
 | 表格 | `.csv` `.tsv` | 自解析渲染表格（支持引号内逗号换行） |
-| 三维 | `.stl` `.obj` `.ply` `.off` `.3mf` `.dae` `.glb` `.gltf` | WebGL 三角面渲染：Blinn-Phong 双光源 + 雾、线框、坐标轴、包围盒统计；左键旋转 / 右键平移 / 滚轮缩放 / `F` 复位取景；可导出 OBJ 到工作区 |
+| 三维 | `.stl` `.obj` `.ply` `.off` `.3mf` `.dae` `.glb` `.gltf` | WebGL 三角面渲染：Blinn-Phong 双光源 + 雾、**面/边可独立开关**（边可切消隐或透视）、坐标轴、包围盒统计；左键旋转 / 右键平移 / 滚轮缩放 / `F` 复位取景；可导出 OBJ 到工作区 |
 | 图纸 | `.dxf` | 解析 LINE/CIRCLE/ARC/LWPOLYLINE/TEXT/POINT 渲染 SVG，可缩放 |
 | 其他 | `.doc` `.xls` `.ppt` `.step` `.iges` `.dwg` `.fbx` 等 | 明确提示需转换的格式（不显示二进制乱码） |
 

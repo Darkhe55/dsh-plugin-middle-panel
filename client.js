@@ -3166,7 +3166,7 @@ window.__ModuleLoader__.load({
     function ModelDoc(props) {
       const { doc, sessionId } = props;
       const [state, setState] = React.useState({ status: 'idle', error: '', info: '', stats: null });
-      const [options, setOptions] = React.useState({ wireframe: false, fog: true, axes: true, normals: false });
+      const [options, setOptions] = React.useState({ faces: true, edges: true, hiddenLine: true, fog: true, axes: true, normals: false });
       const [notice, setNotice] = React.useState('');
       const [progress, setProgress] = React.useState(0);
       const canvasRef = React.useRef(null);
@@ -3434,7 +3434,7 @@ window.__ModuleLoader__.load({
           const camera = lookAt(eye, target, [0, 1, 0]);
           const mvp = multiplyMatrix(new Float32Array(projection), camera);
 
-          if (!options.wireframe) {
+          if (options.faces) {
             gl.useProgram(solid);
             gl.bindBuffer(gl.ARRAY_BUFFER, solidBuffer);
             gl.enableVertexAttribArray(attributes.solid.position);
@@ -3451,13 +3451,20 @@ window.__ModuleLoader__.load({
             gl.drawArrays(gl.TRIANGLES, 0, solidCount);
           }
 
-          gl.useProgram(lines);
-          gl.bindBuffer(gl.ARRAY_BUFFER, lineBuffer);
-          gl.enableVertexAttribArray(attributes.lines.position);
-          gl.vertexAttribPointer(attributes.lines.position, 3, gl.FLOAT, false, 12, 0);
-          gl.uniformMatrix4fv(uniforms.lines.mvp, false, mvp);
-          gl.uniform3f(uniforms.lines.color, options.wireframe ? 0.72 : 0.28, options.wireframe ? 0.82 : 0.34, 1.0);
-          gl.drawArrays(gl.LINES, 0, lineVertexCount);
+          if (options.edges) {
+            // Pure wireframe can either hide occluded edges (default) or show the
+            // whole cage through the model, which is the usual "see-through" view.
+            const seeThrough = !options.faces && !options.hiddenLine;
+            if (seeThrough) gl.disable(gl.DEPTH_TEST);
+            gl.useProgram(lines);
+            gl.bindBuffer(gl.ARRAY_BUFFER, lineBuffer);
+            gl.enableVertexAttribArray(attributes.lines.position);
+            gl.vertexAttribPointer(attributes.lines.position, 3, gl.FLOAT, false, 12, 0);
+            gl.uniformMatrix4fv(uniforms.lines.mvp, false, mvp);
+            gl.uniform3f(uniforms.lines.color, options.faces ? 0.28 : 0.72, options.faces ? 0.34 : 0.82, 1.0);
+            gl.drawArrays(gl.LINES, 0, lineVertexCount);
+            if (seeThrough) gl.enable(gl.DEPTH_TEST);
+          }
 
           if (options.axes) {
             const origin = new Float32Array([target[0], target[1], target[2]]);
@@ -3742,7 +3749,40 @@ window.__ModuleLoader__.load({
                   ' · 顶点 ' + stats.vertices.toLocaleString(),
               )
             : null,
-          h('button', { type: 'button', className: 'dshcv-btn', 'data-primary': options.wireframe ? '1' : '0', onClick: () => toggle('wireframe') }, '线框'),
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'dshcv-btn',
+              'data-primary': options.faces ? '1' : '0',
+              title: '显示实体面（关掉后只看线框）',
+              onClick: () => toggle('faces'),
+            },
+            '面',
+          ),
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'dshcv-btn',
+              'data-primary': options.edges ? '1' : '0',
+              title: '显示三角边',
+              onClick: () => toggle('edges'),
+            },
+            '边',
+          ),
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'dshcv-btn',
+              'data-primary': options.hiddenLine ? '1' : '0',
+              disabled: options.faces,
+              title: options.faces ? '仅在线框模式下可用：隐藏被面挡住的边' : '隐藏被挡住的边（关闭则透视显示整个线架）',
+              onClick: () => toggle('hiddenLine'),
+            },
+            '消隐',
+          ),
           h('button', { type: 'button', className: 'dshcv-btn', 'data-primary': options.normals ? '1' : '0', title: '按法线方向着色', onClick: () => toggle('normals') }, '法线'),
           h('button', { type: 'button', className: 'dshcv-btn', 'data-primary': options.fog ? '1' : '0', onClick: () => toggle('fog') }, '雾'),
           h('button', { type: 'button', className: 'dshcv-btn', 'data-primary': options.axes ? '1' : '0', onClick: () => toggle('axes') }, '坐标轴'),
