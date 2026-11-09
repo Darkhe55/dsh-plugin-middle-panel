@@ -39,6 +39,10 @@
     "icon.svg"
   ],
   "readme": "README.en.md",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
