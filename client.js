@@ -139,7 +139,9 @@ window.__ModuleLoader__.load({
       if (['html', 'htm', 'xhtml'].includes(ext)) return 'html';
       if (['md', 'markdown'].includes(ext)) return 'markdown';
       if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif'].includes(ext)) return 'image';
-      if (['csv', 'tsv', 'xlsx', 'xls', 'pdf', 'docx', 'pptx'].includes(ext)) return 'text';
+      if (ext === 'pdf') return 'pdf';
+      if (['docx', 'xlsx', 'pptx', 'doc', 'xls', 'ppt', 'odt', 'ods', 'odp'].includes(ext)) return 'office';
+      if (['csv', 'tsv'].includes(ext)) return 'sheet';
       return 'text';
     };
 
@@ -381,6 +383,19 @@ window.__ModuleLoader__.load({
       '.dshcv-svg[data-dshcv-spotlight] [data-dshcv-focus],.dshcv-svg[data-dshcv-spotlight] [data-dshcv-focus] *{opacity:1 !important}',
       '@media (prefers-reduced-motion: reduce){.dshcv-svg[data-dshcv-spotlight] *{transition:none !important}}',
       '.dshcv-editor{flex:1 1 auto;min-height:0;width:100%;box-sizing:border-box;border:0;outline:none;resize:none;padding:10px 12px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;tab-size:2}',
+      '.dshcv-docwrap{flex:1 1 auto;min-height:0;overflow:auto;padding:12px 16px 24px}',
+      '.dshcv-doc{font-size:13px;line-height:1.75;max-width:760px}',
+      '.dshcv-doc p{margin:0 0 6px;white-space:pre-wrap;overflow-wrap:anywhere}',
+      '.dshcv-docblank{height:6px;margin:0}',
+      '.dshcv-tablewrap{margin:10px 0 18px}',
+      '.dshcv-tcaption{font-size:11px;color:var(--dsw-alias-label-secondary);margin:0 0 6px}',
+      '.dshcv-table{border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums}',
+      '.dshcv-table th,.dshcv-table td{border:1px solid var(--dsw-alias-border-l1);padding:4px 8px;text-align:left;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.dshcv-table th{position:sticky;top:0;background:var(--dsw-alias-bg-layer-2);font-weight:500;color:var(--dsw-alias-label-secondary)}',
+      '.dshcv-table tbody tr:nth-child(even){background:color-mix(in srgb,var(--dsw-alias-bg-layer-1) 55%,transparent)}',
+      '.dshcv-slide{border:1px solid var(--dsw-alias-border-l1);border-radius:10px;padding:10px 14px;margin:0 0 12px;max-width:760px}',
+      '.dshcv-slidehead{font-size:11px;color:var(--dsw-alias-label-secondary);margin:0 0 6px}',
+      '.dshcv-slide p{margin:0 0 4px;font-size:13px}',
       '.dshcv-md{font-size:13px;line-height:1.7;padding:12px 16px;overflow-wrap:anywhere}',
       '.dshcv-md>:first-child{margin-top:0}',
       '.dshcv-md h1{font-size:19px;margin:16px 0 8px}',
@@ -1641,7 +1656,350 @@ window.__ModuleLoader__.load({
       );
     }
 
-    // ---------------- image viewer with region / layer picking ----------------
+    // ---------------- office documents: read the container, show the content ----------------
+    // OOXML files are zip containers. Chromium ships DecompressionStream, so the
+    // archive opens without a dependency and the XML is read with DOMParser.
+    const openZip = async (bytes) => {
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      let eocd = -1;
+      const floor = Math.max(0, bytes.length - 66000);
+      for (let index = bytes.length - 22; index >= floor; index -= 1) {
+        if (view.getUint32(index, true) === 0x06054b50) {
+          eocd = index;
+          break;
+        }
+      }
+      if (eocd < 0) throw new Error('不是有效的 zip 容器');
+      const count = view.getUint16(eocd + 10, true);
+      let cursor = view.getUint32(eocd + 16, true);
+      const entries = [];
+      for (let index = 0; index < count; index += 1) {
+        if (view.getUint32(cursor, true) !== 0x02014b50) break;
+        const method = view.getUint16(cursor + 10, true);
+        const compressed = view.getUint32(cursor + 20, true);
+        const nameLength = view.getUint16(cursor + 28, true);
+        const extraLength = view.getUint16(cursor + 30, true);
+        const commentLength = view.getUint16(cursor + 32, true);
+        const offset = view.getUint32(cursor + 42, true);
+        const name = new TextDecoder().decode(bytes.subarray(cursor + 46, cursor + 46 + nameLength));
+        entries.push({ name, method, compressed, offset });
+        cursor += 46 + nameLength + extraLength + commentLength;
+      }
+      const read = async (entry) => {
+        const nameLength = view.getUint16(entry.offset + 26, true);
+        const extraLength = view.getUint16(entry.offset + 28, true);
+        const dataStart = entry.offset + 30 + nameLength + extraLength;
+        const data = bytes.subarray(dataStart, dataStart + entry.compressed);
+        if (entry.method === 0) return data;
+        if (typeof DecompressionStream !== 'function') throw new Error('当前运行时不支持解压 zip');
+        const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+        return new Uint8Array(await new Response(stream).arrayBuffer());
+      };
+      const text = async (name) => {
+        const entry = entries.find((candidate) => candidate.name === name);
+        if (!entry) return '';
+        return new TextDecoder('utf-8', { fatal: false }).decode(await read(entry));
+      };
+      return { entries, read, text };
+    };
+
+    const parseXml = (source) => new DOMParser().parseFromString(String(source || ''), 'application/xml');
+    const xmlText = (node) => (node ? node.textContent || '' : '');
+
+    const docxToParagraphs = (xml) => {
+      const doc = parseXml(xml);
+      return Array.from(doc.getElementsByTagName('w:p')).map((paragraph) => {
+        const pieces = Array.from(paragraph.getElementsByTagName('w:t')).map(xmlText);
+        const tabs = paragraph.getElementsByTagName('w:tab').length;
+        return pieces.join('') + (tabs ? '\t'.repeat(tabs) : '');
+      });
+    };
+
+    const pptxToSlides = (zip) =>
+      zip.entries
+        .map((entry) => entry.name)
+        .filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name))
+        .sort((left, right) => Number(left.replace(/\D+/g, '')) - Number(right.replace(/\D+/g, '')));
+
+    const columnIndex = (reference) => {
+      const letters = String(reference || '').replace(/[^A-Z]/g, '');
+      let value = 0;
+      for (const letter of letters) value = value * 26 + (letter.charCodeAt(0) - 64);
+      return Math.max(0, value - 1);
+    };
+
+    const xlsxToSheets = async (zip) => {
+      const sharedXml = await zip.text('xl/sharedStrings.xml');
+      const shared = sharedXml
+        ? Array.from(parseXml(sharedXml).getElementsByTagName('si')).map((item) =>
+            Array.from(item.getElementsByTagName('t')).map(xmlText).join(''),
+          )
+        : [];
+      let sheetNames = [];
+      try {
+        const workbook = parseXml(await zip.text('xl/workbook.xml'));
+        sheetNames = Array.from(workbook.getElementsByTagName('sheet')).map((sheet) => sheet.getAttribute('name') || '');
+      } catch {
+        sheetNames = [];
+      }
+      const sheetEntries = zip.entries
+        .map((entry) => entry.name)
+        .filter((name) => /^xl\/worksheets\/sheet\d+\.xml$/.test(name))
+        .sort((left, right) => Number(left.replace(/\D+/g, '')) - Number(right.replace(/\D+/g, '')))
+        .slice(0, 3);
+      const sheets = [];
+      for (let index = 0; index < sheetEntries.length; index += 1) {
+        const sheet = parseXml(await zip.text(sheetEntries[index]));
+        const rows = [];
+        const rowNodes = Array.from(sheet.getElementsByTagName('row')).slice(0, 300);
+        for (const rowNode of rowNodes) {
+          const cells = [];
+          for (const cell of Array.from(rowNode.getElementsByTagName('c')).slice(0, 30)) {
+            const reference = cell.getAttribute('r') || '';
+            const type = cell.getAttribute('t');
+            let value = '';
+            if (type === 's') value = shared[Number(xmlText(cell.getElementsByTagName('v')[0]))] || '';
+            else if (type === 'inlineStr') value = Array.from(cell.getElementsByTagName('t')).map(xmlText).join('');
+            else value = xmlText(cell.getElementsByTagName('v')[0]);
+            const at = reference ? columnIndex(reference) : cells.length;
+            while (cells.length < at) cells.push('');
+            cells[at] = value;
+          }
+          rows.push(cells);
+        }
+        sheets.push({ name: sheetNames[index] || '工作表 ' + (index + 1), rows });
+      }
+      return sheets;
+    };
+
+    const parseDelimited = (source, delimiter) => {
+      const rows = [];
+      let row = [];
+      let field = '';
+      let quoted = false;
+      const text = String(source || '').replace(/\r\n/g, '\n');
+      for (let index = 0; index < text.length && rows.length < 300; index += 1) {
+        const character = text[index];
+        if (quoted) {
+          if (character === '"' && text[index + 1] === '"') {
+            field += '"';
+            index += 1;
+          } else if (character === '"') {
+            quoted = false;
+          } else {
+            field += character;
+          }
+          continue;
+        }
+        if (character === '"') quoted = true;
+        else if (character === delimiter) {
+          row.push(field);
+          field = '';
+        } else if (character === '\n') {
+          row.push(field);
+          rows.push(row);
+          row = [];
+          field = '';
+        } else field += character;
+      }
+      if (field || row.length) {
+        row.push(field);
+        rows.push(row);
+      }
+      return rows;
+    };
+
+    function DataTable(props) {
+      const { rows, caption } = props;
+      const body = rows.slice(0, 200);
+      const width = body.reduce((widest, row) => Math.max(widest, row.length), 0);
+      const columns = Array.from({ length: width }, (_, index) => index);
+      return h(
+        'div',
+        { className: 'dshcv-tablewrap' },
+        caption ? h('div', { className: 'dshcv-tcaption' }, caption) : null,
+        h(
+          'table',
+          { className: 'dshcv-table' },
+          h('thead', null, h('tr', null, columns.map((column) => h('th', { key: 'h' + column }, String(column + 1))))),
+          h(
+            'tbody',
+            null,
+            body.map((row, rowIndex) =>
+              h(
+                'tr',
+                { key: 'r' + rowIndex },
+                columns.map((column) =>
+                  h('td', { key: 'c' + column, title: row[column] || '' }, row[column] || ''),
+                ),
+              ),
+            ),
+          ),
+        ),
+        rows.length > body.length ? h('div', { className: 'dshcv-tcaption' }, '仅显示前 ' + body.length + ' 行') : null,
+      );
+    }
+
+    function OfficeDoc(props) {
+      const { doc, sessionId } = props;
+      const [state, setState] = React.useState({ status: 'idle', error: '', tables: [], slides: [], paragraphs: [], note: '' });
+
+      React.useEffect(() => {
+        if (!sessionId) return undefined;
+        const controller = new AbortController();
+        let cancelled = false;
+        setState({ status: 'loading', error: '', tables: [], slides: [], paragraphs: [], note: '' });
+        const match = /\.([a-z0-9]+)$/i.exec(doc.path);
+        const extension = match ? match[1].toLowerCase() : '';
+        readBytesFile(sessionId, doc.path, controller.signal)
+          .then(async (bytes) => {
+            if (!bytes) throw new Error('读取不到文件内容');
+            if (['doc', 'xls', 'ppt', 'odt', 'ods', 'odp'].includes(extension)) {
+              throw new Error('旧版 Office / OpenDocument 暂不支持预览，请先另存为 .docx / .xlsx / .pptx');
+            }
+            const zip = await openZip(bytes);
+            if (extension === 'docx') {
+              const paragraphs = docxToParagraphs(await zip.text('word/document.xml'));
+              if (cancelled) return;
+              setState({ status: 'ready', error: '', tables: [], slides: [], paragraphs, note: paragraphs.length + ' 段' });
+              return;
+            }
+            if (extension === 'pptx') {
+              const slides = [];
+              for (const name of pptxToSlides(zip).slice(0, 40)) {
+                const xml = parseXml(await zip.text(name));
+                const lines = Array.from(xml.getElementsByTagName('a:t')).map(xmlText).filter(Boolean);
+                slides.push({ title: lines[0] || '', lines });
+              }
+              if (cancelled) return;
+              setState({ status: 'ready', error: '', tables: [], slides, paragraphs: [], note: slides.length + ' 页' });
+              return;
+            }
+            const tables = await xlsxToSheets(zip);
+            if (cancelled) return;
+            setState({ status: 'ready', error: '', tables, slides: [], paragraphs: [], note: tables.length + ' 个工作表' });
+          })
+          .catch((error) => {
+            if (cancelled) return;
+            setState({ status: 'failed', error: errText(error), tables: [], slides: [], paragraphs: [], note: '' });
+          });
+        return () => {
+          cancelled = true;
+          controller.abort();
+        };
+      }, [doc.path, sessionId]);
+
+      if (state.status === 'failed') {
+        return h('div', { className: 'dshcv-empty' }, h('div', null, '无法预览该文档'), h('div', null, state.error));
+      }
+      if (state.status !== 'ready') {
+        return h('div', { className: 'dshcv-empty' }, h('div', null, '解析文档…'));
+      }
+      const body = [];
+      if (state.paragraphs.length) {
+        body.push(
+          h(
+            'div',
+            { className: 'dshcv-doc' },
+            state.paragraphs.map((line, index) =>
+              h('p', { key: 'p' + index, className: line.trim() ? '' : 'dshcv-docblank' }, line || '\u00a0'),
+            ),
+          ),
+        );
+      }
+      for (let index = 0; index < state.tables.length; index += 1) {
+        body.push(h(DataTable, { key: 't' + index, rows: state.tables[index].rows, caption: state.tables[index].name }));
+      }
+      for (let index = 0; index < state.slides.length; index += 1) {
+        const slide = state.slides[index];
+        body.push(
+          h(
+            'div',
+            { key: 's' + index, className: 'dshcv-slide' },
+            h('div', { className: 'dshcv-slidehead' }, '第 ' + (index + 1) + ' 页' + (slide.title ? ' · ' + slide.title : '')),
+            slide.lines.map((line, lineIndex) => h('p', { key: 'l' + lineIndex }, line)),
+          ),
+        );
+      }
+      return h(
+        'div',
+        { className: 'dshcv-docwrap' },
+        h('div', { className: 'dshcv-tools' }, h('span', { className: 'dshcv-msg' }, state.note || '已解析')),
+        ...body,
+      );
+    }
+
+    function SheetDoc(props) {
+      const { doc, sessionId } = props;
+      const [state, setState] = React.useState({ status: 'idle', error: '', rows: [] });
+      React.useEffect(() => {
+        if (!sessionId) return undefined;
+        const controller = new AbortController();
+        let cancelled = false;
+        readTextPages(sessionId, doc.path, controller.signal)
+          .then((page) => {
+            if (cancelled) return;
+            const delimiter = /\.tsv$/i.test(doc.path) ? '\t' : ',';
+            setState({ status: 'ready', error: '', rows: parseDelimited(page.text, delimiter) });
+          })
+          .catch((error) => {
+            if (cancelled) return;
+            setState({ status: 'failed', error: errText(error), rows: [] });
+          });
+        return () => {
+          cancelled = true;
+          controller.abort();
+        };
+      }, [doc.path, sessionId]);
+      if (state.status === 'failed') return h('div', { className: 'dshcv-empty' }, h('div', null, '无法读取表格'), h('div', null, state.error));
+      if (state.status !== 'ready') return h('div', { className: 'dshcv-empty' }, h('div', null, '读取中…'));
+      return h('div', { className: 'dshcv-docwrap' }, h(DataTable, { rows: state.rows, caption: state.rows.length + ' 行' }));
+    }
+
+    function PdfDoc(props) {
+      const { doc, sessionId } = props;
+      const [state, setState] = React.useState({ status: 'idle', url: '', size: 0, error: '' });
+      React.useEffect(() => {
+        if (!sessionId) return undefined;
+        const controller = new AbortController();
+        let cancelled = false;
+        let objectUrl = '';
+        readBytesFile(sessionId, doc.path, controller.signal)
+          .then((bytes) => {
+            if (cancelled || !bytes) return;
+            objectUrl = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+            setState({ status: 'ready', url: objectUrl, size: bytes.length, error: '' });
+          })
+          .catch((error) => {
+            if (!cancelled) setState({ status: 'failed', url: '', size: 0, error: errText(error) });
+          });
+        return () => {
+          cancelled = true;
+          controller.abort();
+          if (objectUrl) URL.revokeObjectURL(objectUrl);
+        };
+      }, [doc.path, sessionId]);
+      if (state.status === 'failed') return h('div', { className: 'dshcv-empty' }, h('div', null, '无法读取 PDF'), h('div', null, state.error));
+      if (state.status !== 'ready') return h('div', { className: 'dshcv-empty' }, h('div', null, '读取中…'));
+      if (navigator.pdfViewerEnabled === false) {
+        return h(
+          'div',
+          { className: 'dshcv-empty' },
+          h('div', null, '当前运行时不支持内置 PDF 预览'),
+          h('div', null, '文件已读取（' + Math.round(state.size / 1024) + ' KB），可用系统阅读器打开：'),
+          h('code', null, doc.path),
+        );
+      }
+      return h(
+        'div',
+        { style: { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' } },
+        h('iframe', {
+          title: 'canvas pdf preview',
+          src: state.url,
+          style: { flex: '1 1 auto', minHeight: 0, width: '100%', border: '0', background: '#fff' },
+        }),
+      );
+    }
 
     // ---------------- image viewer with region / layer picking ----------------
     function ImageDoc(props) {
@@ -2137,7 +2495,13 @@ window.__ModuleLoader__.load({
                     ? /\.svg$/i.test(active.path)
                       ? h(SvgDoc, { key: active.id + '-svg', doc: active, sessionId: store.sessionId })
                       : h(ImageDoc, { key: active.id + '-image', doc: active, sessionId: store.sessionId })
-                    : h(TextDoc, { key: active.id + '-text', doc: active, sessionId: store.sessionId })
+                    : active.view === 'pdf'
+                      ? h(PdfDoc, { key: active.id + '-pdf', doc: active, sessionId: store.sessionId })
+                      : active.view === 'office'
+                        ? h(OfficeDoc, { key: active.id + '-office', doc: active, sessionId: store.sessionId })
+                        : active.view === 'sheet'
+                          ? h(SheetDoc, { key: active.id + '-sheet', doc: active, sessionId: store.sessionId })
+                          : h(TextDoc, { key: active.id + '-text', doc: active, sessionId: store.sessionId })
                 : h(
                     'div',
                     { className: 'dshcv-empty' },
