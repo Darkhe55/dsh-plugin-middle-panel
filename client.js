@@ -388,6 +388,9 @@ window.__ModuleLoader__.load({
       '.dshcv-split{flex:0 0 9px;cursor:col-resize;position:relative;background:transparent}',
       '.dshcv-split::after{content:"";position:absolute;top:0;bottom:0;left:4px;width:1px;background:var(--dsw-alias-border-l1);transition:background-color .12s ease}',
       '.dshcv-split:hover::after{background:var(--dsw-alias-brand-primary)}',
+      '.dshcv-hsplit{flex:0 0 7px;cursor:row-resize;position:relative;background:transparent;z-index:2}',
+      '.dshcv-hsplit::after{content:"";position:absolute;left:12px;right:12px;top:3px;height:1px;background:var(--dsw-alias-border-l1);transition:background-color .12s ease}',
+      '.dshcv-hsplit:hover::after{background:var(--dsw-alias-brand-primary);height:2px;top:2px}',
       // Enter/leave motion: the canvas half reveals while the conversation keeps
       // its place, so opening the panel does not flash the transcript.
       '@keyframes dshcv-reveal{from{opacity:0;transform:translateX(-10px)}to{opacity:1;transform:none}}',
@@ -1305,12 +1308,12 @@ window.__ModuleLoader__.load({
     }
 
     // ---------------- marks rail ----------------
-    function MarksRail() {
+    function MarksRail(props) {
       useVersion();
       if (!store.marks.length) return null;
       return h(
         'div',
-        { className: 'dshcv-marks' },
+        { className: 'dshcv-marks', style: props && props.style },
         store.marks
           .slice()
           .sort((a, b) => a.n - b.n)
@@ -3255,8 +3258,9 @@ window.__ModuleLoader__.load({
           gl.clearColor(0, 0, 0, 0);
           gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
           gl.enable(gl.DEPTH_TEST);
-          gl.enable(gl.CULL_FACE);
-          gl.cullFace(gl.BACK);
+          // Double-sided on purpose: winding differs between OBJ/PLY/OFF writers,
+          // and culling a reversed file made the whole model vanish.
+          gl.disable(gl.CULL_FACE);
           const view = viewRef.current;
           const center = view.center;
           const distance = view.distance;
@@ -4095,6 +4099,40 @@ window.__ModuleLoader__.load({
       });
       const [helpOpen, setHelpOpen] = React.useState(false);
       const panelRef = React.useRef(null);
+      const paneRef = React.useRef(null);
+      // Height of the annotation rail. 0 means "use the default max-height".
+      const [railHeight, setRailHeight] = React.useState(() => {
+        try {
+          const saved = parseFloat(localStorage.getItem('dsh.canvas.rail') || '');
+          return saved > 60 ? saved : 0;
+        } catch {
+          return 0;
+        }
+      });
+      const railHeightRef = React.useRef(railHeight);
+      railHeightRef.current = railHeight;
+
+      const startRailDrag = (event) => {
+        event.preventDefault();
+        const pane = paneRef.current;
+        if (!pane) return;
+        const rect = pane.getBoundingClientRect();
+        const move = (moveEvent) => {
+          const next = Math.round(Math.min(rect.height * 0.8, Math.max(80, rect.bottom - moveEvent.clientY)));
+          setRailHeight(next);
+        };
+        const up = () => {
+          window.removeEventListener('pointermove', move);
+          window.removeEventListener('pointerup', up);
+          try {
+            localStorage.setItem('dsh.canvas.rail', String(railHeightRef.current));
+          } catch {
+            /* storage is best effort */
+          }
+        };
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', up);
+      };
       const [toast, setToast] = React.useState('');
       const [pickerOpen, setPickerOpen] = React.useState(false);
       const [closing, setClosing] = React.useState(false);
@@ -4405,6 +4443,7 @@ window.__ModuleLoader__.load({
                 (animateOnMount ? ' dshcv-reveal' : '') +
                 (closing ? ' dshcv-closing' : '') +
                 (animating ? ' dshcv-animating' : ''),
+              ref: paneRef,
               style: {
                 flex: '0 0 ' + (revealed ? Math.round(ratio * 1000) / 10 : 0) + '%',
                 minWidth: 0,
@@ -4486,7 +4525,24 @@ window.__ModuleLoader__.load({
                     ),
                     h('div', { style: { marginTop: 4, fontSize: 11 } }, store.sessionId ? '当前会话已连接' : '等待会话…'),
                   ),
-            h(MarksRail),
+            store.marks.length
+              ? h('div', {
+                  className: 'dshcv-hsplit',
+                  title: '拖动调整标注区高度（双击复位）',
+                  onPointerDown: startRailDrag,
+                  onDoubleClick: () => {
+                    setRailHeight(0);
+                    try {
+                      localStorage.removeItem('dsh.canvas.rail');
+                    } catch {
+                      /* ignore */
+                    }
+                  },
+                })
+              : null,
+            h(MarksRail, {
+              style: railHeight ? { flex: '0 0 ' + railHeight + 'px', maxHeight: 'none' } : undefined,
+            }),
           ),
           h('div', { className: 'dshcv-split', onPointerDown: startDrag, title: '拖动调整宽度' }),
           h(
