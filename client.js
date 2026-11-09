@@ -432,7 +432,9 @@ window.__ModuleLoader__.load({
       '.dshcv-slide{border:1px solid var(--dsw-alias-border-l1);border-radius:10px;padding:10px 14px;margin:0 0 12px;max-width:760px}',
       '.dshcv-slidehead{font-size:11px;color:var(--dsw-alias-label-secondary);margin:0 0 6px}',
       '.dshcv-slide p{margin:0 0 4px;font-size:13px}',
-      '.dshcv-canvas3d{flex:1 1 auto;min-height:0;width:100%;display:block;background:var(--dsw-alias-bg-layer-1);cursor:grab;touch-action:none}',
+      '.dshcv-canvas3d{flex:1 1 auto;min-height:0;width:100%;height:100%;display:block;background:var(--dsw-alias-bg-layer-1);cursor:grab;touch-action:none}',
+      // The 3D canvas must stretch, unlike the image wrapper it used to share.
+      '.dshcv-3dwrap{flex:1 1 auto;min-height:0;display:flex;align-items:stretch;padding:0;overflow:hidden}',
       '.dshcv-canvas3d:active{cursor:grabbing}',
       '.dshcv-cadwrap{flex:1 1 auto;min-height:0;overflow:hidden;background:var(--dsw-alias-bg-base)}',
       '.dshcv-cadwrap svg{width:100%;height:100%;display:block}',
@@ -3501,7 +3503,7 @@ window.__ModuleLoader__.load({
           h('button', { type: 'button', className: 'dshcv-btn', onClick: exportObj }, '导出 OBJ'),
           notice ? h('span', { className: 'dshcv-msg' }, notice) : null,
         ),
-        h('div', { className: 'dshcv-canvaswrap', style: { padding: 0 } }, h('canvas', { ref: canvasRef, className: 'dshcv-canvas3d' })),
+        h('div', { className: 'dshcv-3dwrap' }, h('canvas', { ref: canvasRef, className: 'dshcv-canvas3d' })),
         h('div', { className: 'dshcv-tools' }, h('span', { className: 'dshcv-msg' }, '左键旋转 · 右键/Shift 拖动平移 · 滚轮缩放 · 双击居中 · 1-5 前/后/右/左/顶 · 6 底 · 7 等轴测 · F 复位')),
       );
     }
