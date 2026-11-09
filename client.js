@@ -1651,6 +1651,16 @@ window.__ModuleLoader__.load({
             pausedRef.current = next;
             setAnim((previous) => Object.assign({}, previous, { paused: next }));
             post(next ? 'pause' : 'resume');
+            return;
+          }
+          // Frame stepping must also work while the preview iframe does not own
+          // the keyboard, so the panel forwards it like pause does.
+          if (event.altKey && (event.key === 'a' || event.key === 'A' || event.key === 'd' || event.key === 'D')) {
+            event.preventDefault();
+            const forward = event.key === 'd' || event.key === 'D';
+            pausedRef.current = true;
+            setAnim((previous) => Object.assign({}, previous, { paused: true }));
+            post('step', { dir: forward ? 1 : -1 });
           }
         };
         window.addEventListener('keydown', onKey, true);
@@ -1889,6 +1899,13 @@ window.__ModuleLoader__.load({
             event.preventDefault();
             if (animRef.current && animRef.current.paused) resume();
             else pause();
+            return;
+          }
+          if (event.altKey && (event.key === 'a' || event.key === 'A' || event.key === 'd' || event.key === 'D')) {
+            event.preventDefault();
+            pause();
+            const forward = event.key === 'd' || event.key === 'D';
+            seek((animRef.current && animRef.current.current ? animRef.current.current : 0) + (forward ? 16 : -16));
           }
         };
         window.addEventListener('keydown', onKey, true);
