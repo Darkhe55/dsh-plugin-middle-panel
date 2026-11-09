@@ -1297,6 +1297,23 @@ window.__ModuleLoader__.load({
           : null,
       );
 
+      // The pick button is shared by both views; it used to live only in the
+      // source branch, so a selection in rendered markdown never showed it.
+      const pickButton = picked
+        ? h(
+            'button',
+            {
+              type: 'button',
+              className: 'dshcv-btn dshcv-pick',
+              'data-primary': '1',
+              style: { top: picked.top, left: picked.left },
+              onMouseDown: (event) => event.preventDefault(),
+              onClick: commit,
+            },
+            '标记 ' + (picked.startLine === picked.endLine ? '第 ' + picked.startLine + ' 行' : '第 ' + picked.startLine + '-' + picked.endLine + ' 行'),
+          )
+        : null;
+
       if (isMarkdown && rendered && !editing) {
         return h(
           React.Fragment,
@@ -1307,6 +1324,7 @@ window.__ModuleLoader__.load({
             { className: 'dshcv-scroll', ref: scrollRef, onMouseUp: onMouseUp },
             h(MarkdownBody, { text: state.text, hoverRange: hoverLines }),
           ),
+          pickButton,
         );
       }
 
@@ -1363,17 +1381,7 @@ window.__ModuleLoader__.load({
           ),
         ),
         picked
-          ? h(
-              'button',
-              {
-                type: 'button',
-                className: 'dshcv-btn dshcv-pick',
-                'data-primary': '1',
-                style: { top: picked.top, left: picked.left },
-                onClick: commit,
-              },
-              '标记 ' + (picked.startLine === picked.endLine ? '第 ' + picked.startLine + ' 行' : '第 ' + picked.startLine + '-' + picked.endLine + ' 行'),
-            )
+          ? pickButton
           : null,
       );
     }
