@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Canvas panel",
+    "description": "Adds a middle canvas panel that shows deliverables beside the conversation, with numbered annotations you can send to the chat.",
+    "detail": "README.en.md"
+  }
+}

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Canvas panel">
+  <rect x="6" y="10" width="52" height="44" rx="10" fill="#1f6feb" opacity="0.12"/>
+  <rect x="6" y="10" width="52" height="44" rx="10" fill="none" stroke="#1f6feb" stroke-width="3"/>
+  <path d="M27 12v40" stroke="#1f6feb" stroke-width="3" stroke-linecap="round"/>
+  <path d="M33 22h18M33 30h13M33 38h16" stroke="#1f6feb" stroke-width="3" stroke-linecap="round" opacity="0.75"/>
+  <circle cx="16" cy="22" r="4" fill="#1f6feb"/>
+  <circle cx="16" cy="34" r="4" fill="#1f6feb" opacity="0.55"/>
+</svg>

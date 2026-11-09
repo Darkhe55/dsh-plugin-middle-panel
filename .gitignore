@@ -1,0 +1,5 @@
+node_modules/
+*.log
+.canvas-probe.log
+.DS_Store
+Thumbs.db
