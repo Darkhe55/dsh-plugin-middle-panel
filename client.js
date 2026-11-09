@@ -4077,6 +4077,10 @@ window.__ModuleLoader__.load({
       }
     };
 
+    // A remount driven by a content refresh must not replay the reveal; only a
+    // genuine open (nothing played in the last two seconds) animates.
+    const panelReveal = { at: 0 };
+
     function CanvasPanel(props) {
       useVersion();
       const ratioKey = 'dsh.canvas.ratio.' + (store.sessionId || 'none');
@@ -4096,8 +4100,16 @@ window.__ModuleLoader__.load({
       const [closing, setClosing] = React.useState(false);
       const reducedMotion = () =>
         Boolean(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
-      const [revealed, setRevealed] = React.useState(reducedMotion);
-      const [animating, setAnimating] = React.useState(!reducedMotion());
+      const animateOnMount = React.useMemo(() => {
+        const reduced = reducedMotion();
+        const recent = Date.now() - panelReveal.at < 2000;
+        const play = !reduced && !recent;
+        if (play) panelReveal.at = Date.now();
+        return play;
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, []);
+      const [revealed, setRevealed] = React.useState(() => !animateOnMount);
+      const [animating, setAnimating] = React.useState(animateOnMount);
 
       React.useEffect(() => {
         if (reducedMotion() || revealed) return undefined;
@@ -4113,6 +4125,8 @@ window.__ModuleLoader__.load({
       const closePanel = React.useRef(() => {});
       closePanel.current = () => {
         if (closing) return;
+        // The next open is a real one, so let it animate again.
+        panelReveal.at = 0;
         if (reducedMotion()) {
           selectPanel(null);
           return;
@@ -4168,18 +4182,42 @@ window.__ModuleLoader__.load({
         let area = null;
         let following = true;
         let anchor = 0;
+        // A scroll we did not originate is either the shell's own follow logic or
+        // layout settling; only a real gesture may end "follow the tail".
+        let userScrolledAt = 0;
+        const markUserScroll = () => {
+          userScrolledAt = Date.now();
+        };
+
+        const nearBottom = () => (area ? area.scrollHeight - area.scrollTop - area.clientHeight : 0) < 48;
+        const pinToBottom = () => {
+          if (!area) return;
+          area.scrollTop = area.scrollHeight;
+          anchor = area.scrollTop;
+        };
 
         const onScroll = () => {
           if (!area) return;
-          following = area.scrollHeight - area.scrollTop - area.clientHeight < 48;
-          if (!following) anchor = area.scrollTop;
+          const distance = area.scrollHeight - area.scrollTop - area.clientHeight;
+          if (distance < 48) {
+            following = true;
+            anchor = area.scrollTop;
+            return;
+          }
+          // Ignore scrolls nobody asked for (the shell restoring position, the
+          // element being re-measured) instead of freezing the reader there.
+          if (Date.now() - userScrolledAt < 700) {
+            following = false;
+            anchor = area.scrollTop;
+          } else if (following) {
+            pinToBottom();
+          }
         };
 
         const onContent = () => {
           if (!area) return;
           if (following) {
-            area.scrollTop = area.scrollHeight;
-            anchor = area.scrollTop;
+            pinToBottom();
           } else if (Math.abs(area.scrollTop - anchor) > 1) {
             // A reader who stopped mid-transcript keeps their place even while
             // content streams in below.
@@ -4188,15 +4226,25 @@ window.__ModuleLoader__.load({
         };
 
         const attach = (next) => {
-          if (!next || next === area) return;
-          if (area) area.removeEventListener('scroll', onScroll);
+          if (!next || !next.isConnected || next === area) return;
+          if (area) {
+            area.removeEventListener('scroll', onScroll);
+            area.removeEventListener('wheel', markUserScroll);
+            area.removeEventListener('touchstart', markUserScroll);
+            area.removeEventListener('pointerdown', markUserScroll);
+            area.removeEventListener('keydown', markUserScroll);
+          }
           if (contentObserver) contentObserver.disconnect();
           area = next;
           area.addEventListener('scroll', onScroll, { passive: true });
+          area.addEventListener('wheel', markUserScroll, { passive: true });
+          area.addEventListener('touchstart', markUserScroll, { passive: true });
+          area.addEventListener('pointerdown', markUserScroll, { passive: true });
+          area.addEventListener('keydown', markUserScroll);
           contentObserver = new MutationObserver(onContent);
           contentObserver.observe(area, { childList: true, subtree: true, characterData: true });
           following = true;
-          area.scrollTop = area.scrollHeight;
+          pinToBottom();
         };
 
         const apply = () => {
@@ -4245,7 +4293,13 @@ window.__ModuleLoader__.load({
           clearTimeout(timer);
           if (seatObserver) seatObserver.disconnect();
           if (contentObserver) contentObserver.disconnect();
-          if (area) area.removeEventListener('scroll', onScroll);
+          if (area) {
+            area.removeEventListener('scroll', onScroll);
+            area.removeEventListener('wheel', markUserScroll);
+            area.removeEventListener('touchstart', markUserScroll);
+            area.removeEventListener('pointerdown', markUserScroll);
+            area.removeEventListener('keydown', markUserScroll);
+          }
         };
       }, []);
 
@@ -4347,7 +4401,8 @@ window.__ModuleLoader__.load({
             'div',
             {
               className:
-                'dshcv-pane dshcv-reveal' +
+                'dshcv-pane' +
+                (animateOnMount ? ' dshcv-reveal' : '') +
                 (closing ? ' dshcv-closing' : '') +
                 (animating ? ' dshcv-animating' : ''),
               style: {
