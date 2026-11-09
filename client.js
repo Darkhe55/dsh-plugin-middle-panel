@@ -943,18 +943,8 @@ window.__ModuleLoader__.load({
       meshCache.delete(key);
     };
 
-    const readFileRange = async (sessionId, path, offset, length, signal) => {
-      if (!sessionId) return null;
-      const query = new URLSearchParams({ sessionId, path, offset: String(offset), length: String(length) });
-      const response = await fetch(fileUrl() + '?' + query.toString(), { signal });
-      if (!response.ok) throw new Error('range read failed: ' + response.status);
-      const body = await response.json();
-      if (!body || typeof body.data !== 'string') throw new Error('range read returned no data');
-      const binary = atob(body.data);
-      const bytes = new Uint8Array(binary.length);
-      for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-      return { bytes, total: body.size, offset: body.offset, count: body.bytes };
-    };
+    // File contents come from the in-process workspace channel; the HTTP route
+    // only answers metadata, so nothing here can read arbitrary bytes.
 
     const assertFits = async (sessionId, path, kind, signal) => {
       const limit = (LIMITS[kind] || 32) * MB;

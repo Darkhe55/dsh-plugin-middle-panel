@@ -43,17 +43,21 @@ const sessionRootFromStore = (ctx, sessionId) => {
   }
 }
 
-const corsFor = (request) => {
+const corsFor = (request, hostHeader) => {
 
   const origin = request.headers.get('origin') || ''
   // The desktop page runs on dsh-app://, which Chromium reports as `null` on a
-  // cross-origin request; loopback pages report their own http origin.
+  // cross-origin request; loopback pages report their own http origin. A loopback
+  // page is only trusted when it is served from this very server: another local
+  // app on a different port must not reach these routes.
   const opaque = origin === 'null' || origin === ''
-  const loopback = /^http:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):\d+$/.test(origin)
+  const loopback = /^http:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):(\d+)$/.exec(origin)
+  const requestPort = String(hostHeader || '').split(':').pop()
+  if (loopback && (!requestPort || loopback[1] !== requestPort)) return undefined
   if (!opaque && origin !== 'dsh-app://app' && !loopback) return undefined
   return {
     'access-control-allow-origin': opaque ? '*' : origin,
-    'access-control-allow-methods': 'POST, OPTIONS',
+    'access-control-allow-methods': 'GET, POST, OPTIONS',
     'access-control-allow-headers': 'content-type',
     'access-control-max-age': '600',
     vary: 'origin',
@@ -159,7 +163,7 @@ export function apply(ctx) {
         }
         const method = String((request && request.method) || '').toUpperCase()
         const origin = headerOf('origin')
-        const cors = corsFor({ headers: { get: (name) => headerOf(name) } })
+        const cors = corsFor({ headers: { get: (name) => headerOf(name) } }, headerOf('host'))
         const reply = (status, body, extra) => {
           const headers = Object.assign(
             { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
@@ -260,7 +264,7 @@ export function apply(ctx) {
         }
         const method = String((request && request.method) || '').toUpperCase()
         const origin = headerOf('origin')
-        const cors = corsFor({ headers: { get: (name) => headerOf(name) } })
+        const cors = corsFor({ headers: { get: (name) => headerOf(name) } }, headerOf('host'))
         const reply = (status, body, extra) => {
           const headers = Object.assign(
             { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
@@ -320,25 +324,10 @@ export function apply(ctx) {
         }
         if (!stats.isFile()) return reply(400, { error: 'not a file' })
 
-        const wantsRange = query.has('offset') || query.has('length')
-        if (!wantsRange) return reply(200, { ok: true, size: stats.size, mtimeMs: stats.mtimeMs })
-
-        const offset = Math.max(0, Number(query.get('offset')) || 0)
-        const length = Math.min(Math.max(0, Number(query.get('length')) || 4 * 1024 * 1024), 16 * 1024 * 1024)
-        const available = Math.max(0, stats.size - offset)
-        const take = Math.min(length, available)
-        try {
-          const handle = await fs.open(target, 'r')
-          try {
-            const buffer = Buffer.alloc(take)
-            await handle.read(buffer, 0, take, offset)
-            return reply(200, { ok: true, size: stats.size, offset, bytes: take, data: buffer.toString('base64') })
-          } finally {
-            await handle.close()
-          }
-        } catch (error) {
-          return reply(500, { error: 'cannot read: ' + (error && error.message ? error.message : String(error)) })
-        }
+        // Metadata only. Serving bytes here would turn the route into a local file
+        // reader for anything that can name a session; content always goes through
+        // the in-process workspace channel instead.
+        return reply(200, { ok: true, size: stats.size, mtimeMs: stats.mtimeMs })
       },
     }),
   )
