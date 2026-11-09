@@ -20,6 +20,29 @@ window.__ModuleLoader__.load({
     const errText = (error) => (error && error.message ? error.message : String(error));
     const basename = (path) => String(path || '').split(/[\\/]/).pop() || String(path || '');
 
+    // One file, one tab: the model may name the same file as `a/b`, `./a/b`,
+    // `a\b`, or an absolute path; compare the normalized form.
+    const normalizePath = (path) => {
+      let value = String(path || '').trim().replace(/\\/g, '/');
+      while (value.startsWith('./')) value = value.slice(2);
+      value = value.replace(/\/{2,}/g, '/');
+      if (value.length > 1 && value.endsWith('/')) value = value.slice(0, -1);
+      return value;
+    };
+    const pathKey = (path) => normalizePath(path).replace(/^[a-z]:/i, (drive) => drive.toLowerCase());
+    const isAbsolutePath = (path) => /^[a-z]:\//i.test(path) || path.startsWith('/');
+    const sameFile = (left, right) => {
+      const a = pathKey(left);
+      const b = pathKey(right);
+      if (!a || !b) return false;
+      if (a === b) return true;
+      // An absolute and a workspace-relative spelling of the same file.
+      if (isAbsolutePath(a) === isAbsolutePath(b)) return false;
+      const absolute = isAbsolutePath(a) ? a : b;
+      const relative = isAbsolutePath(a) ? b : a;
+      return absolute.endsWith('/' + relative);
+    };
+
     // Diagnostics stay silent in the delivered plugin; point this at
     // console.debug while iterating on a viewer.
     const devlog = () => {};
@@ -27,6 +50,8 @@ window.__ModuleLoader__.load({
     // ---------------- tiny shared store ----------------
     const listeners = new Set();
     let version = 0;
+    /** Tool calls whose panel opening already happened; a remounted card must not reopen it. */
+    const autoOpened = new Set();
     const store = {
       sessionId: undefined,
       actions: undefined,
@@ -41,8 +66,7 @@ window.__ModuleLoader__.load({
     const notify = () => {
       version += 1;
       for (const listener of Array.from(listeners)) listener();
-    };
-    const subscribe = (listener) => {
+    };    const subscribe = (listener) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
     };
@@ -70,6 +94,26 @@ window.__ModuleLoader__.load({
       }
     };
 
+    // Heal state saved by earlier builds: one tab per file, one number per spot.
+    const dedupeDocs = (docs) => {
+      const kept = [];
+      for (const doc of docs) {
+        if (!doc || typeof doc.path !== 'string') continue;
+        if (kept.some((existing) => sameFile(existing.path, doc.path))) continue;
+        kept.push(doc);
+      }
+      return kept;
+    };
+    const dedupeMarks = (marks) => {
+      const kept = [];
+      for (const mark of marks) {
+        if (!mark || typeof mark.path !== 'string') continue;
+        if (kept.some((existing) => sameLocator(existing, mark))) continue;
+        kept.push(mark);
+      }
+      return kept;
+    };
+
     const restore = () => {
       if (store.restored || !store.sessionId) return;
       store.restored = true;
@@ -77,10 +121,12 @@ window.__ModuleLoader__.load({
         const raw = localStorage.getItem(storageKey());
         if (!raw) return;
         const data = JSON.parse(raw);
-        if (Array.isArray(data.docs)) store.docs = data.docs;
-        if (Array.isArray(data.marks)) store.marks = data.marks;
+        if (Array.isArray(data.docs)) store.docs = dedupeDocs(data.docs);
+        if (Array.isArray(data.marks)) store.marks = dedupeMarks(data.marks);
         if (typeof data.activeId === 'string') store.activeId = data.activeId;
-        if (typeof data.seq === 'number') store.seq = data.seq;
+        const highest = store.marks.reduce((max, mark) => Math.max(max, Number(mark.n) || 0), 0);
+        store.seq = Math.max(Number(data.seq) || 0, highest);
+        if (!store.docs.some((doc) => doc.id === store.activeId)) store.activeId = store.docs.length ? store.docs[0].id : undefined;
         devlog('restored', ['docs=' + store.docs.length, 'marks=' + store.marks.length]);
       } catch (error) {
         devlog('restore-failed', [errText(error)]);
@@ -102,30 +148,52 @@ window.__ModuleLoader__.load({
 
     const findMark = (id) => store.marks.find((mark) => mark.id === id);
 
-    const addTextMark = (path, startLine, endLine, quote) => {
-      if (!path) return;
+    // The same spot keeps its number: marking it again only refreshes the quote.
+    const sameLocator = (left, right) => {
+      if (left.kind !== right.kind || !sameFile(left.path, right.path)) return false;
+      if (left.kind === 'text') return Boolean(left.lines && right.lines) && left.lines[0] === right.lines[0] && left.lines[1] === right.lines[1];
+      if (left.kind === 'element' || left.kind === 'layer') return left.selector === right.selector;
+      if (left.kind === 'region') {
+        const a = left.rect || [];
+        const b = right.rect || [];
+        return a.length === b.length && a.every((value, index) => Math.abs(Number(value) - Number(b[index])) <= 2);
+      }
+      return false;
+    };
+
+    const upsertMark = (mark) => {
+      const existing = store.marks.find((candidate) => sameLocator(candidate, mark));
+      if (existing) {
+        mutate({
+          marks: store.marks.map((candidate) =>
+            candidate.id === existing.id ? Object.assign({}, candidate, { quote: mark.quote || candidate.quote }) : candidate,
+          ),
+        });
+        persist();
+        devlog('mark-reused', ['n=' + existing.n]);
+        return existing.n;
+      }
       const n = store.seq + 1;
-      const mark = {
-        id: 'm' + Date.now().toString(36) + n,
-        n,
+      const created = Object.assign({ id: 'm' + Date.now().toString(36) + n, n, note: '' }, mark);
+      mutate({ marks: store.marks.concat(created), seq: n });
+      persist();
+      devlog('mark-added', ['n=' + n, 'kind=' + created.kind]);
+      return n;
+    };
+
+    const addTextMark = (path, startLine, endLine, quote) => {
+      if (!path) return 0;
+      return upsertMark({
         kind: 'text',
-        path,
+        path: normalizePath(path),
         lines: [startLine, endLine],
         quote: String(quote || '').slice(0, 1200),
-        note: '',
-      };
-      mutate({ marks: store.marks.concat(mark), seq: n });
-      persist();
-      devlog('mark-added', ['n=' + n, 'lines=' + startLine + '-' + endLine]);
+      });
     };
 
     const addMark = (partial) => {
-      if (!partial || !partial.path) return;
-      const n = store.seq + 1;
-      const mark = Object.assign({ id: 'm' + Date.now().toString(36) + n, n, note: '' }, partial);
-      mutate({ marks: store.marks.concat(mark), seq: n });
-      persist();
-      devlog('mark-added', ['n=' + n, 'kind=' + mark.kind]);
+      if (!partial || !partial.path) return 0;
+      return upsertMark(Object.assign({}, partial, { path: normalizePath(partial.path) }));
     };
 
     const setMarkNote = (id, note) => {
@@ -146,7 +214,7 @@ window.__ModuleLoader__.load({
     };
 
     const openDoc = (input) => {
-      const path = String((input && input.path) || '');
+      const path = normalizePath(input && input.path);
       if (!path) return;
       const view = resolveView(input && input.view, path);
       if (!store.sessionId) {
@@ -154,15 +222,21 @@ window.__ModuleLoader__.load({
         devlog('doc-pending', ['path=' + path]);
         return;
       }
-      const existing = store.docs.find((doc) => doc.path === path);
+      const existing = store.docs.find((doc) => sameFile(doc.path, path));
       let docs;
       let activeId;
       if (existing) {
-        docs = store.docs.map((doc) => (doc.id === existing.id ? Object.assign({}, doc, { view, note: input.note, line: input.line }) : doc));
+        docs = store.docs.map((doc) =>
+          doc.id === existing.id
+            ? Object.assign({}, doc, { view, note: input && input.note, line: input && input.line })
+            : doc,
+        );
         activeId = existing.id;
       } else {
+        // Drop any stale duplicate tab of the same file (older builds stored them).
+        const kept = store.docs.filter((doc) => !sameFile(doc.path, path));
         const id = 'd' + Date.now().toString(36);
-        docs = store.docs.concat({ id, path, view, note: input && input.note, line: input && input.line });
+        docs = kept.concat({ id, path, view, note: input && input.note, line: input && input.line });
         activeId = id;
       }
       mutate({ docs, activeId });
@@ -248,6 +322,8 @@ window.__ModuleLoader__.load({
       '.dshcv-btn[data-primary="1"]:hover{color:#fff;filter:brightness(1.06)}',
       '.dshcv-btn[data-quiet="1"]{color:var(--dsw-alias-label-secondary)}',
       '.dshcv-btn[data-icon="1"]{width:26px;padding:0}',
+      '.dshcv-btn[disabled]{opacity:.55;cursor:default}',
+      '.dshcv-btn[disabled]:hover{background:transparent;color:var(--dsw-alias-label-secondary)}',
       '.dshcv-chip{display:inline-flex;align-items:center;height:24px;padding:0 9px;border:0;border-radius:7px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:1;cursor:pointer;white-space:nowrap;transition:background-color .12s ease,color .12s ease}',
       '.dshcv-chip:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}',
       '.dshcv-chip[data-active="1"]{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}',
@@ -262,18 +338,46 @@ window.__ModuleLoader__.load({
     ].join('\n');
 
     const CSS_PANEL = [
-      '.dshcv-root{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary)}',
+      '.dshcv-root{display:flex;flex-direction:column;height:100%;min-height:0;overflow:hidden;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary)}',
       '.dshcv-head{display:flex;align-items:center;gap:6px;padding:0 8px 0 12px;min-height:40px;border-bottom:1px solid var(--dsw-alias-border-l1)}',
       '.dshcv-title{font-size:13px;font-weight:600;letter-spacing:-0.01em;white-space:nowrap}',
       '.dshcv-path{font-size:12px;color:var(--dsw-alias-label-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}',
       '.dshcv-spacer{flex:1 1 auto;min-width:8px}',
-      '.dshcv-body{display:flex;flex:1 1 auto;min-height:0}',
+      '.dshcv-body{display:flex;flex:1 1 0;min-height:0;overflow:hidden}',
       '.dshcv-pane{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}',
+      // The conversation must see a definite, clipped box: an auto-height flex
+      // parent let it grow past the pane, so its transcript kept believing it
+      // had more room and the last messages ended up under the composer.
+      '.dshcv-conv{position:relative;flex:1 1 0;min-width:0;min-height:0;overflow:hidden}',
+      '.dshcv-convfill{position:absolute;inset:0;overflow:hidden}',
+      '.dshcv-convfill>*{height:100%;min-height:0}',
       '.dshcv-split{flex:0 0 9px;cursor:col-resize;position:relative;background:transparent}',
       '.dshcv-split::after{content:"";position:absolute;top:0;bottom:0;left:4px;width:1px;background:var(--dsw-alias-border-l1);transition:background-color .12s ease}',
       '.dshcv-split:hover::after{background:var(--dsw-alias-brand-primary)}',
       '.dshcv-docs{display:flex;align-items:center;gap:2px;padding:6px 10px;border-bottom:1px solid var(--dsw-alias-border-l1);overflow-x:auto}',
+      '.dshcv-crumbs{display:flex;align-items:center;gap:2px;min-width:0;overflow-x:auto}',
+      '.dshcv-row{display:flex;align-items:center;gap:8px;width:100%;height:28px;padding:0 10px;border:0;border-radius:7px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;text-align:left;cursor:pointer}',
+      '.dshcv-row:hover{background:var(--dsw-alias-bg-layer-2)}',
+      '.dshcv-rowname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '.dshcv-scroll{flex:1 1 auto;min-height:0;overflow:auto}',
+      '.dshcv-tools{display:flex;align-items:center;gap:4px;min-height:34px;padding:0 8px;border-bottom:1px solid var(--dsw-alias-border-l1)}',
+      '.dshcv-msg{font-size:11px;color:var(--dsw-alias-label-secondary);white-space:nowrap}',
+      '.dshcv-editor{flex:1 1 auto;min-height:0;width:100%;box-sizing:border-box;border:0;outline:none;resize:none;padding:10px 12px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;tab-size:2}',
+      '.dshcv-md{font-size:13px;line-height:1.7;padding:12px 16px;overflow-wrap:anywhere}',
+      '.dshcv-md>:first-child{margin-top:0}',
+      '.dshcv-md h1{font-size:19px;margin:16px 0 8px}',
+      '.dshcv-md h2{font-size:16px;margin:14px 0 6px}',
+      '.dshcv-md h3,.dshcv-md h4,.dshcv-md h5,.dshcv-md h6{font-size:14px;margin:12px 0 6px}',
+      '.dshcv-md p{margin:8px 0}',
+      '.dshcv-md ul,.dshcv-md ol{margin:8px 0;padding-left:22px}',
+      '.dshcv-md li{margin:2px 0}',
+      '.dshcv-md code{font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--dsw-alias-bg-layer-2);padding:1px 5px;border-radius:5px}',
+      '.dshcv-md pre{margin:10px 0;padding:10px 12px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1);overflow:auto}',
+      '.dshcv-md pre code{background:none;padding:0;font-size:12px}',
+      '.dshcv-md blockquote{margin:10px 0;padding:2px 0 2px 12px;border-left:2px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary)}',
+      '.dshcv-md a{color:var(--dsw-alias-brand-primary);text-decoration:none}',
+      '.dshcv-md a:hover{text-decoration:underline}',
+      '.dshcv-md hr{margin:16px 0;border:0;border-top:1px solid var(--dsw-alias-border-l1)}',
       '.dshcv-code{font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;padding:6px 0}',
       '.dshcv-line{display:flex;gap:10px;padding:0 12px;white-space:pre}',
       '.dshcv-line:hover{background:var(--dsw-alias-bg-layer-2)}',
@@ -384,8 +488,11 @@ window.__ModuleLoader__.load({
         const key = String(props.callId || '') + '|' + path;
         if (opened.current === key) return;
         opened.current = key;
-        // Open the panel even when the argument shape was unreadable: the call
-        // itself means the user should be looking at the canvas.
+        // Open the panel once per call. Without this, switching back to the
+        // conversation remounts this card, whose effect would immediately
+        // select the canvas again and the panel could never be closed.
+        if (autoOpened.has(key)) return;
+        autoOpened.add(key);
         selectPanel(PANEL_KEY);
         if (path) openDoc({ path, view: args && args.view, note: args && args.note, line: args && args.line });
       }, [props.phase, props.callId, path]);
@@ -448,31 +555,254 @@ window.__ModuleLoader__.load({
       );
     }
 
+    // ---------------- workspace picker ----------------
+    const joinPath = (base, name) => {
+      const prefix = String(base || '').replace(/\/+$/, '');
+      return prefix ? prefix + '/' + name : name;
+    };
+
+    function FilePicker(props) {
+      const { sessionId, onOpen, onClose } = props;
+      const [state, setState] = React.useState({ path: '', status: 'loading', entries: [], error: '' });
+
+      const load = async (path) => {
+        // The workspace file service rejects an empty path; '.' names its root.
+        const target = path && path !== '.' ? path : '.';
+        setState({ path: target === '.' ? '' : target, status: 'loading', entries: [], error: '' });
+        try {
+          const files = workspaceFiles();
+          if (!files || typeof files.list !== 'function') throw new Error('workspaceFiles.list unavailable');
+          const result = unwrap(await files.list(sessionId, target, new AbortController().signal)) || {};
+          const entries = (result.entries || [])
+            .map((entry) => ({
+              name: String(entry.name || entry.path || ''),
+              dir: entry.type === 'directory' || entry.kind === 'directory' || entry.isDirectory === true,
+            }))
+            .filter((entry) => entry.name);
+          entries.sort((left, right) => (left.dir === right.dir ? left.name.localeCompare(right.name) : left.dir ? -1 : 1));
+          const reported = String(result.path || target);
+          setState({ path: reported === '.' ? '' : reported, status: 'ready', entries, error: '' });
+        } catch (error) {
+          setState({ path: '', status: 'failed', entries: [], error: errText(error) });
+        }
+      };
+
+      React.useEffect(() => {
+        if (sessionId) load('');
+        else setState({ path: '', status: 'failed', entries: [], error: '等待会话…' });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [sessionId]);
+
+      const segments = String(state.path || '').split('/').filter(Boolean);
+      const crumbs = [h('button', { key: 'root', type: 'button', className: 'dshcv-chip', onClick: () => load('') }, '工作区')];
+      segments.forEach((segment, index) => {
+        crumbs.push(h('span', { key: 'sep' + index, className: 'dshcv-msg' }, '/'));
+        crumbs.push(
+          h(
+            'button',
+            {
+              key: 'seg' + index,
+              type: 'button',
+              className: 'dshcv-chip',
+              onClick: () => load(segments.slice(0, index + 1).join('/')),
+            },
+            segment,
+          ),
+        );
+      });
+
+      return h(
+        'div',
+        { style: { display: 'flex', flexDirection: 'column', minHeight: 0, flex: '1 1 auto' } },
+        h(
+          'div',
+          { className: 'dshcv-tools' },
+          h('button', { type: 'button', className: 'dshcv-btn', onClick: onClose }, '返回'),
+          h('span', { className: 'dshcv-crumbs' }, crumbs),
+        ),
+        h(
+          'div',
+          { className: 'dshcv-scroll', style: { padding: '6px 8px' } },
+          state.status === 'loading' ? h('div', { className: 'dshcv-empty' }, '读取中…') : null,
+          state.status === 'failed' ? h('div', { className: 'dshcv-empty' }, state.error) : null,
+          state.status === 'ready' && !state.entries.length ? h('div', { className: 'dshcv-empty' }, '空目录') : null,
+          state.entries.map((entry) =>
+            h(
+              'button',
+              {
+                key: entry.name,
+                type: 'button',
+                className: 'dshcv-row',
+                onClick: () => {
+                  if (entry.dir) load(joinPath(state.path, entry.name));
+                  else {
+                    onOpen(joinPath(state.path, entry.name));
+                    onClose();
+                  }
+                },
+              },
+              h('span', { className: 'dshcv-rowname' }, entry.name + (entry.dir ? '/' : '')),
+            ),
+          ),
+        ),
+      );
+    }
+
+    // ---------------- markdown ----------------
+    // Small renderer: no dependency, and it builds React nodes instead of
+    // injecting HTML, so a document can never execute markup.
+    const inlineMd = (text) => {
+      const nodes = [];
+      const pattern = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*\n]+\*)|(\[[^\]]+\]\((?:https?:|mailto:)[^\s)]+\))/g;
+      let last = 0;
+      let match;
+      while ((match = pattern.exec(text)) !== null) {
+        if (match.index > last) nodes.push(text.slice(last, match.index));
+        const token = match[0];
+        const key = 'i' + match.index;
+        if (token.startsWith('`')) nodes.push(h('code', { key }, token.slice(1, -1)));
+        else if (token.startsWith('**')) nodes.push(h('strong', { key }, token.slice(2, -2)));
+        else if (token.startsWith('*')) nodes.push(h('em', { key }, token.slice(1, -1)));
+        else {
+          const link = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(token);
+          nodes.push(
+            h('a', { key, href: link[2], target: '_blank', rel: 'noreferrer' }, link[1]),
+          );
+        }
+        last = match.index + token.length;
+      }
+      if (last < text.length) nodes.push(text.slice(last));
+      return nodes;
+    };
+
+    const renderMarkdown = (text) => {
+      const lines = String(text || '').split('\n');
+      const blocks = [];
+      let paragraph = [];
+      let list = null;
+      let fence = null;
+      const flushParagraph = () => {
+        if (!paragraph.length) return;
+        blocks.push(h('p', { key: 'p' + blocks.length }, inlineMd(paragraph.join(' '))));
+        paragraph = [];
+      };
+      const flushList = () => {
+        if (!list) return;
+        blocks.push(
+          h(
+            list.ordered ? 'ol' : 'ul',
+            { key: 'l' + blocks.length },
+            list.items.map((item, index) => h('li', { key: index }, inlineMd(item))),
+          ),
+        );
+        list = null;
+      };
+      const flushAll = () => {
+        flushParagraph();
+        flushList();
+      };
+
+      for (const line of lines) {
+        if (fence) {
+          if (/^```/.test(line)) {
+            blocks.push(h('pre', { key: 'c' + blocks.length }, h('code', null, fence.lines.join('\n'))));
+            fence = null;
+          } else {
+            fence.lines.push(line);
+          }
+          continue;
+        }
+        const fenceStart = /^```(\w*)/.exec(line);
+        if (fenceStart) {
+          flushAll();
+          fence = { lines: [] };
+          continue;
+        }
+        if (!line.trim()) {
+          flushAll();
+          continue;
+        }
+        const heading = /^(#{1,6})\s+(.*)$/.exec(line);
+        if (heading) {
+          flushAll();
+          blocks.push(h('h' + heading[1].length, { key: 'h' + blocks.length }, inlineMd(heading[2])));
+          continue;
+        }
+        if (/^(\s*)(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+          flushAll();
+          blocks.push(h('hr', { key: 'r' + blocks.length }));
+          continue;
+        }
+        const quote = /^>\s?(.*)$/.exec(line);
+        if (quote) {
+          flushAll();
+          blocks.push(h('blockquote', { key: 'q' + blocks.length }, inlineMd(quote[1])));
+          continue;
+        }
+        const unordered = /^\s*[-*+]\s+(.*)$/.exec(line);
+        const ordered = /^\s*\d+[.)]\s+(.*)$/.exec(line);
+        if (unordered || ordered) {
+          flushParagraph();
+          const isOrdered = Boolean(ordered);
+          if (!list || list.ordered !== isOrdered) {
+            flushList();
+            list = { ordered: isOrdered, items: [] };
+          }
+          list.items.push((unordered || ordered)[1]);
+          continue;
+        }
+        flushList();
+        paragraph.push(line.trim());
+      }
+      if (fence) blocks.push(h('pre', { key: 'c' + blocks.length }, h('code', null, fence.lines.join('\n'))));
+      flushAll();
+      return blocks;
+    };
+
+    const MarkdownBody = (props) =>
+      h('div', { className: 'dshcv-md' }, renderMarkdown(props.text));
+
     // ---------------- text viewer ----------------
+    const SAVE_PATH = '/dsh-canvas/save';
+    const SAVE_ABSOLUTE = 'http://127.0.0.1:1296/dsh-canvas/save';
+    const saveUrl = () => (/^https?:$/.test(location.protocol) ? SAVE_PATH : SAVE_ABSOLUTE);
+
     function TextDoc(props) {
       const { doc, sessionId } = props;
-      const [state, setState] = React.useState({ status: 'idle', text: '', error: '' });
+      const [state, setState] = React.useState({ status: 'idle', text: '', absolutePath: '', version: undefined, error: '' });
       const [picked, setPicked] = React.useState(null);
+      const [editing, setEditing] = React.useState(false);
+      const [draft, setDraft] = React.useState('');
+      const [saving, setSaving] = React.useState(false);
+      const [message, setMessage] = React.useState('');
+      const isMarkdown = doc.view === 'markdown';
+      const [rendered, setRendered] = React.useState(isMarkdown);
+      const scrollPos = React.useRef(0);
       const scrollRef = React.useRef(null);
+
+      // Switching between rendered and source keeps the reading position and
+      // never moves focus: the toggle cancels its own mousedown.
+      React.useEffect(() => {
+        if (scrollRef.current) scrollRef.current.scrollTop = scrollPos.current;
+      }, [rendered]);
 
       React.useEffect(() => {
         if (!sessionId) {
-          setState({ status: 'idle', text: '', error: '等待会话…' });
+          setState({ status: 'idle', text: '', absolutePath: '', version: undefined, error: '等待会话…' });
           return undefined;
         }
         const controller = new AbortController();
         let cancelled = false;
-        setState({ status: 'loading', text: '', error: '' });
+        setState({ status: 'loading', text: '', absolutePath: '', version: undefined, error: '' });
+        setEditing(false);
         const load = async () => {
           try {
-            const text = await readTextPages(sessionId, doc.path, controller.signal);
+            const page = await readTextPages(sessionId, doc.path, controller.signal);
             if (cancelled) return;
-            setState({ status: 'ready', text, error: '' });
-            devlog('read-ok', ['path=' + doc.path, 'chars=' + text.length]);
+            setState({ status: 'ready', text: page.text, absolutePath: page.absolutePath, version: page.version, error: '' });
           } catch (error) {
             if (cancelled) return;
-            setState({ status: 'failed', text: '', error: errText(error) });
-            devlog('read-failed', ['path=' + doc.path, 'error=' + errText(error)]);
+            setState({ status: 'failed', text: '', absolutePath: '', version: undefined, error: errText(error) });
           }
         };
         load();
@@ -481,6 +811,12 @@ window.__ModuleLoader__.load({
           controller.abort();
         };
       }, [doc.path, sessionId]);
+
+      React.useEffect(() => {
+        if (!message) return undefined;
+        const timer = setTimeout(() => setMessage(''), 3000);
+        return () => clearTimeout(timer);
+      }, [message]);
 
       const lineElements = React.useMemo(() => {
         if (state.status !== 'ready') return [];
@@ -494,6 +830,7 @@ window.__ModuleLoader__.load({
       };
 
       const onMouseUp = () => {
+        if (editing || rendered) return;
         const selection = window.getSelection();
         if (!selection || selection.isCollapsed || !selection.rangeCount) {
           setPicked(null);
@@ -522,12 +859,58 @@ window.__ModuleLoader__.load({
 
       const commit = () => {
         if (!picked) return;
-        addTextMark(doc.path, picked.startLine, picked.endLine, picked.quote);
+        const number = addTextMark(doc.path, picked.startLine, picked.endLine, picked.quote);
+        if (number) setMessage('已标注为 #' + number);
         setPicked(null);
         try {
           window.getSelection().removeAllRanges();
         } catch {
           /* ignore */
+        }
+      };
+
+      const beginEdit = () => {
+        setDraft(state.text);
+        setEditing(true);
+        setRendered(false);
+        setPicked(null);
+        setMessage('');
+      };
+
+      const cancelEdit = () => {
+        setEditing(false);
+        setDraft('');
+        setMessage('');
+      };
+
+      const save = async () => {
+        if (!state.absolutePath) {
+          setMessage('未取得文件绝对路径，无法保存');
+          return;
+        }
+        setSaving(true);
+        setMessage('保存中…');
+        try {
+          const response = await fetch(saveUrl(), {
+            method: 'POST',
+            mode: 'cors',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              sessionId,
+              path: doc.path,
+              absolutePath: state.absolutePath,
+              content: draft,
+            }),
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(payload && payload.error ? payload.error : 'HTTP ' + response.status);
+          setState(Object.assign({}, state, { text: draft, version: payload.version }));
+          setEditing(false);
+          setMessage('已保存');
+        } catch (error) {
+          setMessage('保存失败：' + errText(error));
+        } finally {
+          setSaving(false);
         }
       };
 
@@ -538,9 +921,74 @@ window.__ModuleLoader__.load({
         return h('div', { className: 'dshcv-empty' }, h('div', null, state.status === 'loading' ? '读取中…' : state.error || '……'));
       }
 
+      const toolbar = h(
+        'div',
+        { className: 'dshcv-tools' },
+        h('button', { type: 'button', className: 'dshcv-btn', onClick: editing ? cancelEdit : beginEdit }, editing ? '退出编辑' : '编辑'),
+        isMarkdown
+          ? h(
+              'button',
+              {
+                type: 'button',
+                className: 'dshcv-btn',
+                title: rendered ? '显示 Markdown 原文' : '显示渲染结果',
+                onMouseDown: (event) => event.preventDefault(),
+                onClick: () => {
+                  scrollPos.current = scrollRef.current ? scrollRef.current.scrollTop : 0;
+                  setRendered(!rendered);
+                },
+              },
+              rendered ? '原文' : '渲染',
+            )
+          : null,
+        h('span', { className: 'dshcv-spacer' }),
+        message ? h('span', { className: 'dshcv-msg' }, message) : null,
+        editing
+          ? h(
+              'button',
+              { type: 'button', className: 'dshcv-btn', 'data-primary': '1', disabled: saving, onClick: save },
+              saving ? '保存中…' : '保存',
+            )
+          : null,
+      );
+
+      if (isMarkdown && rendered && !editing) {
+        return h(
+          React.Fragment,
+          null,
+          toolbar,
+          h(
+            'div',
+            { className: 'dshcv-scroll', ref: scrollRef },
+            h(MarkdownBody, { text: state.text }),
+          ),
+        );
+      }
+
+      if (editing) {
+        return h(
+          React.Fragment,
+          null,
+          toolbar,
+          h('textarea', {
+            className: 'dshcv-editor',
+            value: draft,
+            spellCheck: false,
+            onChange: (event) => setDraft(event.target.value),
+            onKeyDown: (event) => {
+              if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+                event.preventDefault();
+                save();
+              }
+            },
+          }),
+        );
+      }
+
       return h(
         React.Fragment,
         null,
+        toolbar,
         h(
           'div',
           { className: 'dshcv-scroll', ref: scrollRef, onMouseUp: onMouseUp },
@@ -649,20 +1097,19 @@ window.__ModuleLoader__.load({
       if (!files) throw new Error('workspaceFiles.read unavailable');
       let text = '';
       let offset = 1;
+      let absolutePath = '';
+      let version;
       for (let page = 0; page < 12; page += 1) {
         const result = unwrap(await files.read(sessionId, path, { offset }, signal));
-        if (page === 0) {
-          devlog('read-page0', [
-            'path=' + path,
-            'textLen=' + String(result && typeof result.text === 'string' ? result.text.length : -1),
-            'eof=' + String(result && result.eof),
-          ]);
+        if (page === 0 && result) {
+          absolutePath = String(result.absolutePath || '');
+          version = result.version;
         }
         text += (text ? '\n' : '') + String(result && result.text ? result.text : '');
         if (!result || result.eof) break;
         offset += Math.max(1, Number(result.lines) || 1000);
       }
-      return text;
+      return { text, absolutePath, version };
     };
 
     const readBytesFile = async (sessionId, path, signal) => {
@@ -727,8 +1174,8 @@ window.__ModuleLoader__.load({
         let objectUrl = '';
         setState({ status: 'loading', url: '', error: '' });
         readTextPages(sessionId, doc.path, controller.signal)
-          .then(async (text) => {
-            let html = text;
+          .then(async (page) => {
+            let html = page.text;
             if (!html) {
               devlog('html-empty-text', ['trying bytes']);
               const bytes = await readBytesFile(sessionId, doc.path, controller.signal);
@@ -814,7 +1261,8 @@ window.__ModuleLoader__.load({
           setState({ status: 'ready', url: objectUrl, error: '' });
           devlog('image-ready', ['path=' + doc.path, 'bytes=' + (bytes.byteLength || bytes.length || 0)]);
           if (/\.svg$/i.test(doc.path)) {
-            let text = await readTextPages(sessionId, doc.path, controller.signal);
+            const page = await readTextPages(sessionId, doc.path, controller.signal);
+            let text = page.text;
             if (!text) {
               const svgBytes = await readBytesFile(sessionId, doc.path, controller.signal);
               if (svgBytes) text = new TextDecoder('utf-8', { fatal: false }).decode(svgBytes);
@@ -996,13 +1444,97 @@ window.__ModuleLoader__.load({
         }
       });
       const [toast, setToast] = React.useState('');
+      const [pickerOpen, setPickerOpen] = React.useState(false);
       const bodyRef = React.useRef(null);
+      const convRef = React.useRef(null);
+      const [convBox, setConvBox] = React.useState(null);
 
       const active = store.docs.find((doc) => doc.id === store.activeId) || store.docs[0];
 
       React.useEffect(() => {
         devlog('panel-mount', ['docs=' + store.docs.length, 'hasFactory=' + (typeof props.renderFactorySlot === 'function')]);
         // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, []);
+
+      // The embedded Conversation sizes its transcript and pins its sticky
+      // composer from its own box; a percentage inside an absolutely filled
+      // pane left that box content-sized, so the composer scrolled away and the
+      // last messages hid under it. Hand it the measured pixels instead.
+      React.useEffect(() => {
+        const element = convRef.current;
+        if (!element || typeof ResizeObserver !== 'function') return undefined;
+        const measure = () => {
+          const height = element.clientHeight;
+          const width = element.clientWidth;
+          if (height > 0 && width > 0) setConvBox({ height, width });
+        };
+        measure();
+        const observer = new ResizeObserver(measure);
+        observer.observe(element);
+        return () => observer.disconnect();
+      }, []);
+
+      // Evidence from the live DOM: the seat sits *inside* the scroller as a
+      // normal flex child, and the shell's docking rule never matches because an
+      // embedded occurrence resolves `conversation.composer` to its
+      // `data-chain-overlay-fallback` entry. Restore that marker on the trunk so
+      // the shipped CSS (`scrollBody:has([data-conversation-composer-overlay])
+      // > .composerSeat{position:absolute;bottom:0}` plus the viewArea flex rule)
+      // takes over, and size the tail spacer so nothing hides behind it.
+      React.useEffect(() => {
+        const host = convRef.current;
+        if (!host) return undefined;
+        const mark = 'data-conversation-composer-overlay';
+        let seatObserver;
+        const apply = () => {
+          const scroller = host.querySelector('[data-conversation-scroll]');
+          const trunk = host.querySelector('[data-chain-overlay-fallback]');
+          if (!scroller || !trunk) return;
+          if (!trunk.hasAttribute(mark)) {
+            trunk.setAttribute(mark, '');
+            scroller.style.setProperty('--dsh-scrollbar-width', '0px');
+          }
+          const seat = host.querySelector('[data-composer-seat]');
+          const view = host.querySelector('[data-conversation-scroll] > [data-slot="conversation.session"]');
+          const area = view && view.firstElementChild ? view.firstElementChild : null;
+          if (seat && area) {
+            const need = seat.offsetHeight;
+            // With the overlay marker the shipped rule sets the view area to
+            // `overflow:hidden`, while the chat view gives up its own scrolling
+            // under [data-conversation-scroll]; nothing would scroll and the
+            // transcript would stay clipped mid-way. Make the view area the
+            // scroller and reserve the composer's height at its bottom edge.
+            if (area.dataset.canvasScroller !== '1') {
+              area.dataset.canvasScroller = '1';
+              area.style.overflowY = 'auto';
+              area.style.overflowX = 'hidden';
+              area.style.minHeight = '0';
+            }
+            if (need > 0 && area.dataset.canvasPad !== String(need)) {
+              area.dataset.canvasPad = String(need);
+              area.style.paddingBottom = need + 'px';
+            }
+            if (!seatObserver && typeof ResizeObserver === 'function') {
+              seatObserver = new ResizeObserver(() => {
+                const height = seat.offsetHeight;
+                if (height > 0) {
+                  area.dataset.canvasPad = String(height);
+                  area.style.paddingBottom = height + 'px';
+                }
+              });
+              seatObserver.observe(seat);
+            }
+          }
+        };
+        apply();
+        const timer = setTimeout(apply, 600);
+        const observer = new MutationObserver(apply);
+        observer.observe(host, { childList: true, subtree: true });
+        return () => {
+          observer.disconnect();
+          clearTimeout(timer);
+          if (seatObserver) seatObserver.disconnect();
+        };
       }, []);
 
       const startDrag = (event) => {
@@ -1050,6 +1582,7 @@ window.__ModuleLoader__.load({
           h('span', { className: 'dshcv-title' }, '画布'),
           h('span', { className: 'dshcv-path' }, active ? active.path : '未打开交付物'),
           h('span', { className: 'dshcv-spacer' }),
+          h('button', { type: 'button', className: 'dshcv-btn', onClick: () => setPickerOpen(!pickerOpen) }, '打开'),
           store.marks.length
             ? h(
                 'button',
@@ -1103,30 +1636,48 @@ window.__ModuleLoader__.load({
                   ),
                 )
               : null,
-            active
-              ? active.view === 'html'
-                ? h(HtmlDoc, { key: active.id + '-html', doc: active, sessionId: store.sessionId })
-                : active.view === 'image'
-                  ? h(ImageDoc, { key: active.id + '-image', doc: active, sessionId: store.sessionId })
-                  : h(TextDoc, { key: active.id + '-text', doc: active, sessionId: store.sessionId })
-              : h(
-                  'div',
-                  { className: 'dshcv-empty' },
-                  h('div', { style: { fontSize: 13 } }, '这里显示交付物'),
-                  h('div', null, '模型用 canvas 工具打开文件后，它出现在这里；'),
-                  h('div', null, '划选文字、点选页面元素或框选图片区域，会生成编号标注，发送回对话即可。'),
-                  h('div', { style: { marginTop: 8, fontSize: 11 } }, store.sessionId ? '当前会话已连接' : '等待会话…'),
-                ),
+            pickerOpen
+              ? h(FilePicker, {
+                  sessionId: store.sessionId,
+                  onOpen: (path) => openDoc({ path }),
+                  onClose: () => setPickerOpen(false),
+                })
+              : active
+                ? active.view === 'html'
+                  ? h(HtmlDoc, { key: active.id + '-html', doc: active, sessionId: store.sessionId })
+                  : active.view === 'image'
+                    ? h(ImageDoc, { key: active.id + '-image', doc: active, sessionId: store.sessionId })
+                    : h(TextDoc, { key: active.id + '-text', doc: active, sessionId: store.sessionId })
+                : h(
+                    'div',
+                    { className: 'dshcv-empty' },
+                    h('div', { style: { fontSize: 13 } }, '这里显示交付物'),
+                    h('div', null, '模型用 canvas 工具打开文件后，它出现在这里；'),
+                    h('div', null, '划选文字、点选页面元素或框选图片区域，会生成编号标注，发送回对话即可。'),
+                    h(
+                      'button',
+                      { type: 'button', className: 'dshcv-btn', style: { marginTop: 8 }, onClick: () => setPickerOpen(true) },
+                      '打开文件…',
+                    ),
+                    h('div', { style: { marginTop: 4, fontSize: 11 } }, store.sessionId ? '当前会话已连接' : '等待会话…'),
+                  ),
             h(MarksRail),
           ),
           h('div', { className: 'dshcv-split', onPointerDown: startDrag, title: '拖动调整宽度' }),
           h(
             'div',
-            { className: 'dshcv-pane', style: { flex: '1 1 0', minWidth: 0 } },
+            { className: 'dshcv-conv', ref: convRef },
             h(
               React.Suspense,
               { fallback: h('div', { className: 'dshcv-empty' }, '对话加载中…') },
-              conversation,
+              h(
+                'div',
+                {
+                  className: 'dshcv-convfill',
+                  style: convBox ? { width: convBox.width + 'px', height: convBox.height + 'px' } : undefined,
+                },
+                conversation,
+              ),
             ),
           ),
         ),
