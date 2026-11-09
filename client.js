@@ -825,25 +825,30 @@ window.__ModuleLoader__.load({
       return nodes;
     };
 
-    const renderMarkdown = (text) => {
-      const lines = String(text || '').split('\n');
+    const renderMarkdown = (text, hoverRange) => {
+      const source = String(text || '').split('\n');
       const blocks = [];
       let paragraph = [];
+      let paragraphLine = 0;
       let list = null;
       let fence = null;
+      // Every block remembers the source line it came from, so a selection in the
+      // rendered view can still be numbered as line ranges.
+      const push = (element, line) => blocks.push(React.cloneElement(element, { 'data-line': line }));
       const flushParagraph = () => {
         if (!paragraph.length) return;
-        blocks.push(h('p', { key: 'p' + blocks.length }, inlineMd(paragraph.join(' '))));
+        push(h('p', { key: 'p' + blocks.length }, inlineMd(paragraph.join(' '))), paragraphLine);
         paragraph = [];
       };
       const flushList = () => {
         if (!list) return;
-        blocks.push(
+        push(
           h(
             list.ordered ? 'ol' : 'ul',
             { key: 'l' + blocks.length },
-            list.items.map((item, index) => h('li', { key: index }, inlineMd(item))),
+            list.items.map((item, index) => h('li', { key: index, 'data-line': item.line }, inlineMd(item.text))),
           ),
+          list.line,
         );
         list = null;
       };
@@ -852,10 +857,12 @@ window.__ModuleLoader__.load({
         flushList();
       };
 
-      for (const line of lines) {
+      for (let index = 0; index < source.length; index += 1) {
+        const line = source[index];
+        const lineNo = index + 1;
         if (fence) {
           if (/^```/.test(line)) {
-            blocks.push(h('pre', { key: 'c' + blocks.length }, h('code', null, fence.lines.join('\n'))));
+            push(h('pre', { key: 'c' + blocks.length }, h('code', null, fence.lines.join('\n'))), fence.line);
             fence = null;
           } else {
             fence.lines.push(line);
@@ -865,7 +872,7 @@ window.__ModuleLoader__.load({
         const fenceStart = /^```(\w*)/.exec(line);
         if (fenceStart) {
           flushAll();
-          fence = { lines: [] };
+          fence = { lines: [], line: lineNo };
           continue;
         }
         if (!line.trim()) {
@@ -875,18 +882,18 @@ window.__ModuleLoader__.load({
         const heading = /^(#{1,6})\s+(.*)$/.exec(line);
         if (heading) {
           flushAll();
-          blocks.push(h('h' + heading[1].length, { key: 'h' + blocks.length }, inlineMd(heading[2])));
+          push(h('h' + heading[1].length, { key: 'h' + blocks.length }, inlineMd(heading[2])), lineNo);
           continue;
         }
         if (/^(\s*)(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
           flushAll();
-          blocks.push(h('hr', { key: 'r' + blocks.length }));
+          push(h('hr', { key: 'r' + blocks.length }), lineNo);
           continue;
         }
         const quote = /^>\s?(.*)$/.exec(line);
         if (quote) {
           flushAll();
-          blocks.push(h('blockquote', { key: 'q' + blocks.length }, inlineMd(quote[1])));
+          push(h('blockquote', { key: 'q' + blocks.length }, inlineMd(quote[1])), lineNo);
           continue;
         }
         const unordered = /^\s*[-*+]\s+(.*)$/.exec(line);
@@ -896,21 +903,35 @@ window.__ModuleLoader__.load({
           const isOrdered = Boolean(ordered);
           if (!list || list.ordered !== isOrdered) {
             flushList();
-            list = { ordered: isOrdered, items: [] };
+            list = { ordered: isOrdered, items: [], line: lineNo };
           }
-          list.items.push((unordered || ordered)[1]);
+          list.items.push({ text: (unordered || ordered)[1], line: lineNo });
           continue;
         }
         flushList();
+        if (!paragraph.length) paragraphLine = lineNo;
         paragraph.push(line.trim());
       }
-      if (fence) blocks.push(h('pre', { key: 'c' + blocks.length }, h('code', null, fence.lines.join('\n'))));
+      if (fence) push(h('pre', { key: 'c' + blocks.length }, h('code', null, fence.lines.join('\n'))), fence.line || source.length);
       flushAll();
-      return blocks;
+
+      if (!hoverRange) return blocks;
+      const spans = blocks.map((block, index) => {
+        const from = Number(block.props['data-line']) || 0;
+        const next = index + 1 < blocks.length ? Number(blocks[index + 1].props['data-line']) || 0 : 0;
+        return { from, to: next > from ? next - 1 : Infinity };
+      });
+      return blocks.map((block, index) => {
+        const span = spans[index];
+        const hit = span.from > 0 && hoverRange.from <= span.to && hoverRange.to >= span.from;
+        return React.cloneElement(block, {
+          className: (block.props.className ? block.props.className + ' ' : '') + (hit ? 'dshcv-spot' : 'dshcv-dim'),
+        });
+      });
     };
 
     const MarkdownBody = (props) =>
-      h('div', { className: 'dshcv-md' }, renderMarkdown(props.text));
+      h('div', { className: 'dshcv-md' }, renderMarkdown(props.text, props.hoverRange));
 
     // ---------------- text viewer ----------------
     const SAVE_PATH = '/dsh-canvas/save';
@@ -1119,7 +1140,7 @@ window.__ModuleLoader__.load({
       };
 
       const onMouseUp = () => {
-        if (editing || rendered) return;
+        if (editing) return;
         const selection = window.getSelection();
         if (!selection || selection.isCollapsed || !selection.rangeCount) {
           setPicked(null);
@@ -1283,8 +1304,8 @@ window.__ModuleLoader__.load({
           toolbar,
           h(
             'div',
-            { className: 'dshcv-scroll', ref: scrollRef },
-            h(MarkdownBody, { text: state.text }),
+            { className: 'dshcv-scroll', ref: scrollRef, onMouseUp: onMouseUp },
+            h(MarkdownBody, { text: state.text, hoverRange: hoverLines }),
           ),
         );
       }
