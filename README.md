@@ -6,10 +6,13 @@
 
 ## 安装
 
-- **从市场安装**：在 Plugins → Discover 里搜索 `middle-panel`（索引条目的安装参数为 `git+https://github.com/Darkhe55/dsh-plugin-middle-panel.git#<commit>`）。
-- **从 Git 安装**（不需要 npm 账号）：
+- **从市场安装**：在 Plugins → Discover 里添加索引源
+  `https://raw.githubusercontent.com/Darkhe55/dsh-plugin-middle-panel/main/market-index.json`，
+  然后搜索 `middle-panel`。
+- **从 Git 直接安装**（不需要 npm 账号）：
   ```
-  plugin_manager install_bundle → target: git+https://github.com/Darkhe55/dsh-plugin-middle-panel.git
+  plugin_manager install_bundle
+  target: git+https://github.com/Darkhe55/dsh-plugin-middle-panel.git#<commit>
   ```
 - **本地开发**：`install_bundle` 指向本目录。
 
