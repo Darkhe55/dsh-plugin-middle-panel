@@ -835,12 +835,57 @@ window.__ModuleLoader__.load({
     const SAVE_PATH = '/dsh-canvas/save';
     const SAVE_ABSOLUTE = 'http://127.0.0.1:1296/dsh-canvas/save';
     const saveUrl = () => (/^https?:$/.test(location.protocol) ? SAVE_PATH : SAVE_ABSOLUTE);
+    const fileUrl = () => (/^https?:$/.test(location.protocol) ? '/dsh-canvas/file' : 'http://127.0.0.1:1296/dsh-canvas/file');
+
+    // Preview budgets. A viewer that survives a 500 MB file is worth less than
+    // one that says so clearly, so every heavy reader asks for the size first.
+    const LIMITS = { model: 64, design: 64, office: 32, pdf: 256, html: 16, sheet: 32, text: 8 };
+    const MB = 1024 * 1024;
+
+    const readFileSize = async (sessionId, path, signal) => {
+      if (!sessionId) return null;
+      try {
+        const query = new URLSearchParams({ sessionId, path });
+        const response = await fetch(fileUrl() + '?' + query.toString(), { signal });
+        if (!response.ok) return null;
+        const body = await response.json();
+        return body && typeof body.size === 'number' ? body.size : null;
+      } catch {
+        return null;
+      }
+    };
+
+    const readFileRange = async (sessionId, path, offset, length, signal) => {
+      if (!sessionId) return null;
+      const query = new URLSearchParams({ sessionId, path, offset: String(offset), length: String(length) });
+      const response = await fetch(fileUrl() + '?' + query.toString(), { signal });
+      if (!response.ok) throw new Error('range read failed: ' + response.status);
+      const body = await response.json();
+      if (!body || typeof body.data !== 'string') throw new Error('range read returned no data');
+      const binary = atob(body.data);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+      return { bytes, total: body.size, offset: body.offset, count: body.bytes };
+    };
+
+    const assertFits = async (sessionId, path, kind, signal) => {
+      const limit = (LIMITS[kind] || 32) * MB;
+      const size = await readFileSize(sessionId, path, signal);
+      if (size !== null && size > limit) {
+        throw new Error(
+          '文件 ' + (size / MB).toFixed(1) + ' MB，超过预览上限 ' + Math.round(limit / MB) + ' MB；请先转换或裁切后再看。',
+        );
+      }
+      return size;
+    };
+
 
     function TextDoc(props) {
       const { doc, sessionId } = props;
       const [state, setState] = React.useState({ status: 'idle', text: '', absolutePath: '', version: undefined, error: '' });
       const [picked, setPicked] = React.useState(null);
       const [editing, setEditing] = React.useState(false);
+      const [pageBudget, setPageBudget] = React.useState(12);
       const [draft, setDraft] = React.useState('');
       const [saving, setSaving] = React.useState(false);
       const [message, setMessage] = React.useState('');
@@ -857,21 +902,28 @@ window.__ModuleLoader__.load({
 
       React.useEffect(() => {
         if (!sessionId) {
-          setState({ status: 'idle', text: '', absolutePath: '', version: undefined, error: '等待会话…' });
+          setState({ status: 'idle', text: '', absolutePath: '', version: undefined, error: '', truncated: false });
           return undefined;
         }
         const controller = new AbortController();
         let cancelled = false;
-        setState({ status: 'loading', text: '', absolutePath: '', version: undefined, error: '' });
+        setState({ status: 'loading', text: '', absolutePath: '', version: undefined, error: '', truncated: false });
         setEditing(false);
         const load = async () => {
           try {
-            const page = await readTextPages(sessionId, doc.path, controller.signal);
+            const page = await readTextPages(sessionId, doc.path, controller.signal, pageBudget);
             if (cancelled) return;
-            setState({ status: 'ready', text: page.text, absolutePath: page.absolutePath, version: page.version, error: '' });
+            setState({
+              status: 'ready',
+              text: page.text,
+              absolutePath: page.absolutePath,
+              version: page.version,
+              error: '',
+              truncated: page.truncated,
+            });
           } catch (error) {
             if (cancelled) return;
-            setState({ status: 'failed', text: '', absolutePath: '', version: undefined, error: errText(error) });
+            setState({ status: 'failed', text: '', absolutePath: '', version: undefined, error: errText(error), truncated: false });
           }
         };
         load();
@@ -879,7 +931,7 @@ window.__ModuleLoader__.load({
           cancelled = true;
           controller.abort();
         };
-      }, [doc.path, sessionId]);
+      }, [doc.path, sessionId, pageBudget]);
 
       React.useEffect(() => {
         if (!message) return undefined;
@@ -1011,6 +1063,18 @@ window.__ModuleLoader__.load({
             )
           : null,
         h('span', { className: 'dshcv-spacer' }),
+        state.truncated
+          ? h(
+              'button',
+              {
+                type: 'button',
+                className: 'dshcv-btn',
+                title: '文件超过一次读取量，点击继续加载',
+                onClick: () => setPageBudget((value) => value + 12),
+              },
+              '已截断 · 继续加载',
+            )
+          : null,
         message ? h('span', { className: 'dshcv-msg' }, message) : null,
         editing
           ? h(
@@ -1161,14 +1225,17 @@ window.__ModuleLoader__.load({
       return files && typeof files.read === 'function' ? files : null;
     };
 
-    const readTextPages = async (sessionId, path, signal) => {
+    const readTextPages = async (sessionId, path, signal, maxPages) => {
       const files = workspaceFiles();
       if (!files) throw new Error('workspaceFiles.read unavailable');
+      await assertFits(sessionId, path, fileKind(path), signal);
       let text = '';
       let offset = 1;
       let absolutePath = '';
       let version;
-      for (let page = 0; page < 12; page += 1) {
+      let truncated = false;
+      const budget = Math.max(1, Number(maxPages) || 12);
+      for (let page = 0; page < budget; page += 1) {
         const result = unwrap(await files.read(sessionId, path, { offset }, signal));
         if (page === 0 && result) {
           absolutePath = String(result.absolutePath || '');
@@ -1176,14 +1243,17 @@ window.__ModuleLoader__.load({
         }
         text += (text ? '\n' : '') + String(result && result.text ? result.text : '');
         if (!result || result.eof) break;
+        if (page === budget - 1) truncated = true;
         offset += Math.max(1, Number(result.lines) || 1000);
       }
-      return { text, absolutePath, version };
+      return { text, absolutePath, version, truncated };
     };
 
     const readBytesFile = async (sessionId, path, signal) => {
       const files = workspaceFiles();
       if (!files || typeof files.readBytes !== 'function') throw new Error('workspaceFiles.readBytes unavailable');
+      // Refuse oversized payloads before they are materialised in memory.
+      await assertFits(sessionId, path, fileKind(path), signal);
       const result = unwrap(await files.readBytes(sessionId, path, {}, signal));
       return result && result.data;
     };
@@ -2053,6 +2123,9 @@ window.__ModuleLoader__.load({
       const mode = view.getUint16(24, false);
       if (depth !== 8) throw new Error('仅支持 8 位/通道的 PSD（当前 ' + depth + ' 位）');
       if (![1, 3].includes(mode)) throw new Error('仅支持 RGB / 灰度 PSD（当前色彩模式 ' + mode + '）');
+      if (width * height > 40e6) {
+        throw new Error('PSD 尺寸 ' + width + '×' + height + ' 过大（超过 4000 万像素），请先缩小后再导出');
+      }
       let offset = 26;
       offset += 4 + view.getUint32(offset, false);
       offset += 4 + view.getUint32(offset, false);
@@ -2867,6 +2940,9 @@ window.__ModuleLoader__.load({
         const lineBuffer = gl.createBuffer();
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, lineBuffer);
         gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, edgeIndices, gl.STATIC_DRAW);
+        // One reusable buffer for the axis overlay: allocating per frame made
+        // every orbit step leave garbage behind.
+        const axisBuffer = gl.createBuffer();
         const indexExt = gl.getExtension('OES_element_index_uint');
         void indexExt;
 
@@ -2946,8 +3022,8 @@ window.__ModuleLoader__.load({
               origin[0], origin[1], origin[2], origin[0], origin[1] + size, origin[2],
               origin[0], origin[1], origin[2], origin[0], origin[1], origin[2] + size,
             ]);
-            const axisBuffer = gl.createBuffer();
-            gl.bindBuffer(gl.ARRAY_BUFFER, axisBuffer);
+            const axisBufferLocal = axisBuffer;
+            gl.bindBuffer(gl.ARRAY_BUFFER, axisBufferLocal);
             gl.bufferData(gl.ARRAY_BUFFER, axes, gl.STREAM_DRAW);
             gl.enableVertexAttribArray(attributes.lines.position);
             gl.vertexAttribPointer(attributes.lines.position, 3, gl.FLOAT, false, 12, 0);
@@ -2957,7 +3033,6 @@ window.__ModuleLoader__.load({
             gl.drawArrays(gl.LINES, 2, 2);
             gl.uniform3f(uniforms.lines.color, 0.42, 0.62, 0.95);
             gl.drawArrays(gl.LINES, 4, 2);
-            gl.deleteBuffer(axisBuffer);
           }
         };
         drawRef.current = render;
@@ -3018,6 +3093,7 @@ window.__ModuleLoader__.load({
           if (observer) observer.disconnect();
           gl.deleteBuffer(solidBuffer);
           gl.deleteBuffer(lineBuffer);
+          gl.deleteBuffer(axisBuffer);
         };
       }, [state.status, options, doc.path]);
 

@@ -44,6 +44,7 @@ const sessionRootFromStore = (ctx, sessionId) => {
 }
 
 const corsFor = (request) => {
+
   const origin = request.headers.get('origin') || ''
   // The desktop page runs on dsh-app://, which Chromium reports as `null` on a
   // cross-origin request; loopback pages report their own http origin.
@@ -236,6 +237,107 @@ export function apply(ctx) {
           return reply(200, { ok: true, path: absolute, bytes: content.length })
         } catch (error) {
           return reply(500, { error: error && error.message ? error.message : String(error) })
+        }
+      },
+    }),
+  )
+
+  // Read side: a size probe so the client can refuse an oversized file before
+  // pulling it into memory, and a byte range so big containers can be streamed.
+  ctx.effect(() =>
+    ctx.webServer.register({
+      path: '/dsh-canvas/file',
+      handler: async (request, response) => {
+        const nodeStyle = Boolean(response && typeof response.writeHead === 'function' && typeof response.end === 'function')
+        const headerOf = (name) => {
+          try {
+            if (request && request.headers && typeof request.headers.get === 'function') return request.headers.get(name) || ''
+            if (request && request.headers) return String(request.headers[String(name).toLowerCase()] || '')
+          } catch {
+            /* fall through */
+          }
+          return ''
+        }
+        const method = String((request && request.method) || '').toUpperCase()
+        const origin = headerOf('origin')
+        const cors = corsFor({ headers: { get: (name) => headerOf(name) } })
+        const reply = (status, body, extra) => {
+          const headers = Object.assign(
+            { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+            cors || {},
+            extra || {},
+          )
+          if (nodeStyle) {
+            response.writeHead(status, headers)
+            response.end(JSON.stringify(body))
+            return undefined
+          }
+          return new Response(JSON.stringify(body), { status, headers })
+        }
+        if (method === 'OPTIONS') {
+          if (!cors) return reply(403, { error: 'origin not allowed', origin })
+          if (nodeStyle) {
+            response.writeHead(204, cors)
+            response.end()
+            return undefined
+          }
+          return new Response(null, { status: 204, headers: cors })
+        }
+        if (method !== 'GET') return reply(405, { error: 'GET only' })
+        if (!cors) return reply(403, { error: 'origin not allowed', origin })
+
+        let query
+        try {
+          query = new URL(String((request && request.url) || '/'), 'http://127.0.0.1').searchParams
+        } catch {
+          return reply(400, { error: 'unreadable url' })
+        }
+        const sessionId = String(query.get('sessionId') || '')
+        const requested = normalize(String(query.get('path') || ''))
+        if (!requested) return reply(400, { error: 'path is required' })
+        const root = sessionRootFromStore(ctx, sessionId) || sessionRoots.get(sessionId)
+        if (!root) return reply(403, { error: 'unknown session workspace: ' + (sessionId || '(missing sessionId)') })
+        const absolute = /^[a-z]:\//i.test(requested) || requested.startsWith('/') ? requested : normalize(root + '/' + requested)
+        if (!isInside(root, absolute)) return reply(403, { error: 'refusing to read outside the session workspace' })
+
+        let fs
+        try {
+          fs = await import('node:fs/promises')
+        } catch (error) {
+          return reply(500, { error: 'filesystem unavailable: ' + (error && error.message ? error.message : String(error)) })
+        }
+        let target
+        try {
+          target = await ctx.fs.resolve(absolute)
+        } catch (error) {
+          return reply(500, { error: error && error.message ? error.message : String(error) })
+        }
+        let stats
+        try {
+          stats = await fs.stat(target)
+        } catch (error) {
+          return reply(404, { error: 'cannot stat: ' + (error && error.message ? error.message : String(error)) })
+        }
+        if (!stats.isFile()) return reply(400, { error: 'not a file' })
+
+        const wantsRange = query.has('offset') || query.has('length')
+        if (!wantsRange) return reply(200, { ok: true, size: stats.size, mtimeMs: stats.mtimeMs })
+
+        const offset = Math.max(0, Number(query.get('offset')) || 0)
+        const length = Math.min(Math.max(0, Number(query.get('length')) || 4 * 1024 * 1024), 16 * 1024 * 1024)
+        const available = Math.max(0, stats.size - offset)
+        const take = Math.min(length, available)
+        try {
+          const handle = await fs.open(target, 'r')
+          try {
+            const buffer = Buffer.alloc(take)
+            await handle.read(buffer, 0, take, offset)
+            return reply(200, { ok: true, size: stats.size, offset, bytes: take, data: buffer.toString('base64') })
+          } finally {
+            await handle.close()
+          }
+        } catch (error) {
+          return reply(500, { error: 'cannot read: ' + (error && error.message ? error.message : String(error)) })
         }
       },
     }),
