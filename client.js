@@ -333,7 +333,8 @@ window.__ModuleLoader__.load({
       '.dshcv-note:focus{outline:none;border-color:var(--dsw-alias-brand-primary)}',
       '.dshcv-card{display:flex;align-items:center;gap:10px;padding:8px 10px;margin:6px 0;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1)}',
       '.dshcv-pick{position:fixed;z-index:60;transform:translate(-50%,-100%);box-shadow:0 8px 24px rgba(0,0,0,.2)}',
-      '.dshcv-toast{position:absolute;right:16px;top:48px;z-index:50;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l1);border-radius:10px;padding:8px 12px;font-size:12px;box-shadow:0 8px 24px rgba(0,0,0,.16)}',
+      '.dshcv-toast{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);z-index:50;pointer-events:none;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l1);border-radius:10px;padding:8px 12px;font-size:12px;box-shadow:0 8px 24px rgba(0,0,0,.16);animation:dshcv-toast-in .16s ease-out both}',
+      '@keyframes dshcv-toast-in{from{opacity:0;transform:translate(-50%,4px)}to{opacity:1;transform:translate(-50%,0)}}',
       '@media (prefers-reduced-motion: reduce){.dshcv-btn,.dshcv-chip,.dshcv-note{transition:none}}',
     ].join('\n');
 
@@ -1153,7 +1154,7 @@ window.__ModuleLoader__.load({
     // spotlight, and animation freeze/scrub control (CSS, WAAPI and SMIL).
     const PICKER_SCRIPT = [
       '(function(){',
-      'var box=null,dwellEl=null,dwellTimer=null,spotEl=null,paused=false,armed=false;',
+      'var box=null,dwellEl=null,dwellTimer=null,spotEl=null,paused=false,capture=false;',
       // Freeze JS frame loops too: queue requestAnimationFrame callbacks while
       // frozen and release them on resume, so rAF-driven motion stops with the
       // rest of the timeline (a loop that captured the original function and
@@ -1196,27 +1197,28 @@ window.__ModuleLoader__.load({
       'function report(){var list=anims(),duration=0,current=0;',
       'for(var i=0;i<list.length;i++){try{var a=list[i];var t=a.effect&&a.effect.getComputedTiming?a.effect.getComputedTiming():null;',
       'var end=t&&t.endTime?t.endTime:0;if(isFinite(end)&&end>duration)duration=end;var c=Number(a.currentTime)||0;if(isFinite(c)&&c>current)current=c;}catch(e){}}',
-      'parent.postMessage({source:"dshcv-anim",state:{paused:paused,armed:armed,duration:Math.round(duration),current:Math.round(current),count:list.length,raf:rafQueue.length}},"*");}',
+      'parent.postMessage({source:"dshcv-anim",state:{paused:paused,capture:capture,duration:Math.round(duration),current:Math.round(current),count:list.length,raf:rafQueue.length}},"*");}',
       // pointer behaviour
       'document.addEventListener("mousemove",function(e){var el=e.target;if(!el||el.nodeType!==1)return;',
       'var b=overlay();var r=el.getBoundingClientRect();b.style.display="block";b.style.left=r.left+"px";b.style.top=r.top+"px";b.style.width=r.width+"px";b.style.height=r.height+"px";',
+      'if(!capture){if(spotEl||document.documentElement.hasAttribute("data-dshcv-spotlight"))clearSpot();dwellEl=el;return;}',
       'if(el!==dwellEl){dwellEl=el;clearSpot();clearTimeout(dwellTimer);dwellTimer=setTimeout(function(){if(dwellEl===el)markSpot(el);},500);}},true);',
       'document.addEventListener("mouseleave",function(){dwellEl=null;clearTimeout(dwellTimer);clearSpot();},true);',
-      'document.addEventListener("click",function(e){var el=e.target;if(!el||el.nodeType!==1)return;e.preventDefault();e.stopPropagation();',
+      'document.addEventListener("click",function(e){var el=e.target;if(!el||el.nodeType!==1)return;if(capture)return;e.preventDefault();e.stopPropagation();',
       'var r=el.getBoundingClientRect();var text=(el.innerText||el.textContent||"").trim().slice(0,240);',
       'parent.postMessage({source:"dshcv-picker",selector:sel(el),tag:el.tagName.toLowerCase(),text:text,rect:[Math.round(r.left),Math.round(r.top),Math.round(r.width),Math.round(r.height)]},"*");},true);',
-      // capture the next interaction: hover/press styles apply, then time stops
-      'document.addEventListener("pointerdown",function(){if(!armed)return;armed=false;setTimeout(pauseAll,40);},true);',
-      'document.addEventListener("mouseover",function(){if(!armed)return;armed=false;setTimeout(pauseAll,80);},true);',
+      // In capture mode a click freezes the interaction state; outside it the
+      // page keeps its own interactions and clicks only create a mark.
+      'document.addEventListener("pointerdown",function(){if(!capture)return;setTimeout(pauseAll,40);},true);',
       'document.addEventListener("keydown",function(e){var step=e.shiftKey?100:16;',
-      'if(e.code==="Space"){e.preventDefault();paused?resumeAll():pauseAll();}',
+      'if(e.code==="Space"){e.preventDefault();capture=!capture;if(!capture)clearSpot();report();}',
       'else if(e.key==="ArrowLeft"){e.preventDefault();pauseAll();var t=anims();var c=0;for(var i=0;i<t.length;i++){try{c=Math.max(c,Number(t[i].currentTime)||0);}catch(x){}}seek(c-step);}',
       'else if(e.key==="ArrowRight"){e.preventDefault();pauseAll();var u=anims();var d=0;for(var i=0;i<u.length;i++){try{d=Math.max(d,Number(u[i].currentTime)||0);}catch(x){}}seek(d+step);}',
       'else if(e.key==="p"||e.key==="P"){paused?resumeAll():pauseAll();}},true);',
       'window.addEventListener("message",function(e){var d=e.data;if(!d||d.source!=="dshcv-cmd")return;',
       'if(d.cmd==="pause")pauseAll();else if(d.cmd==="resume")resumeAll();else if(d.cmd==="seek")seek(d.time);',
       'else if(d.cmd==="step")stepFrame(d.dir||1);',
-      'else if(d.cmd==="arm"){armed=!!d.on;report();}else if(d.cmd==="state")report();},false);',
+      'else if(d.cmd==="capture"||d.cmd==="arm"){capture=!!d.on;if(!capture)clearSpot();report();}else if(d.cmd==="state")report();},false);',
       'setTimeout(report,300);',
       '})();',
     ].join('\n');
@@ -1269,11 +1271,11 @@ window.__ModuleLoader__.load({
           {
             type: 'button',
             className: 'dshcv-btn',
-            'data-primary': anim.armed ? '1' : '0',
-            title: '点一下这个，再在预览里悬停或点击：交互态会立刻定格在当前帧',
-            onClick: () => onArm(!anim.armed),
+            'data-primary': anim.capture ? '1' : '0',
+            title: '抓帧模式（空格）：悬停 0.5 秒淡化其余元素，点击定格交互态',
+            onClick: () => onArm(!anim.capture),
           },
-          anim.armed ? '抓帧就绪' : '抓帧',
+          anim.capture ? '抓帧中' : '抓帧',
         ),
         anim.paused
           ? h('input', {
@@ -1329,14 +1331,35 @@ window.__ModuleLoader__.load({
     function HtmlDoc(props) {
       const { doc, sessionId } = props;
       const [state, setState] = React.useState({ status: 'idle', url: '', error: '' });
-      const [anim, setAnim] = React.useState({ paused: false, armed: false, duration: 0, current: 0, count: 0 });
+      const [anim, setAnim] = React.useState({ paused: false, capture: false, duration: 0, current: 0, count: 0 });
       const frameRef = React.useRef(null);
+      const captureRef = React.useRef(false);
 
       const post = (cmd, extra) => {
         const frame = frameRef.current;
         if (!frame || !frame.contentWindow) return;
         frame.contentWindow.postMessage(Object.assign({ source: 'dshcv-cmd', cmd }, extra || {}), '*');
       };
+
+      // Space toggles capture while the panel has focus; the preview document
+      // handles its own Space when the iframe owns focus.
+      React.useEffect(() => {
+        const onKey = (event) => {
+          if (event.code !== 'Space') return;
+          const target = event.target;
+          const tag = target && target.tagName ? target.tagName.toLowerCase() : '';
+          if (tag === 'input' || tag === 'textarea' || tag === 'select' || tag === 'button') return;
+          if (document.activeElement === frameRef.current) return;
+          event.preventDefault();
+          const next = !captureRef.current;
+          captureRef.current = next;
+          setAnim((previous) => Object.assign({}, previous, { capture: next }));
+          post('capture', { on: next });
+        };
+        window.addEventListener('keydown', onKey, true);
+        return () => window.removeEventListener('keydown', onKey, true);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, []);
 
       React.useEffect(() => {
         if (!sessionId) {
@@ -1375,7 +1398,10 @@ window.__ModuleLoader__.load({
           if (!frame || event.source !== frame.contentWindow) return;
           const data = event.data;
           if (!data) return;
-          if (data.source === 'dshcv-anim' && data.state) setAnim(data.state);
+          if (data.source === 'dshcv-anim' && data.state) {
+            captureRef.current = Boolean(data.state.capture);
+            setAnim(data.state);
+          }
           if (data.source !== 'dshcv-picker') return;
           addMark({
             kind: 'element',
@@ -1404,7 +1430,11 @@ window.__ModuleLoader__.load({
           onResume: () => post('resume'),
           onSeek: (time) => post('seek', { time }),
           onStep: (dir) => post('step', { dir }),
-          onArm: (on) => post('arm', { on }),
+          onArm: (on) => {
+            captureRef.current = on;
+            setAnim((previous) => Object.assign({}, previous, { capture: on }));
+            post('capture', { on });
+          },
         }),
         h('iframe', {
           ref: frameRef,
@@ -1440,10 +1470,10 @@ window.__ModuleLoader__.load({
     function SvgDoc(props) {
       const { doc, sessionId } = props;
       const [state, setState] = React.useState({ status: 'idle', markup: '', error: '' });
-      const [anim, setAnim] = React.useState({ paused: false, armed: false, duration: 0, current: 0, count: 0 });
+      const [anim, setAnim] = React.useState({ paused: false, capture: false, duration: 0, current: 0, count: 0 });
       const hostRef = React.useRef(null);
       const dwellRef = React.useRef({ element: null, timer: null });
-      const armedRef = React.useRef(false);
+      const captureRef = React.useRef(false);
 
       React.useEffect(() => {
         if (!sessionId) {
@@ -1500,6 +1530,7 @@ window.__ModuleLoader__.load({
         sync();
       };
 
+      const spotting = () => Boolean(hostRef.current && hostRef.current.hasAttribute('data-dshcv-spotlight'));
       const clearSpot = () => {
         const host = hostRef.current;
         if (!host) return;
@@ -1525,6 +1556,10 @@ window.__ModuleLoader__.load({
       const onHover = (event) => {
         const target = event.target;
         if (!target || target.nodeType !== 1) return;
+        if (!captureRef.current) {
+          if (spotting()) clearSpot();
+          return;
+        }
         const dwell = dwellRef.current;
         if (dwell.element === target) return;
         dwell.element = target;
@@ -1542,9 +1577,7 @@ window.__ModuleLoader__.load({
       const onClick = (event) => {
         const target = event.target;
         if (!target || target.nodeType !== 1) return;
-        if (armedRef.current) {
-          armedRef.current = false;
-          setAnim((previous) => Object.assign({}, previous, { armed: false }));
+        if (captureRef.current) {
           setTimeout(pause, 40);
           return;
         }
@@ -1553,6 +1586,22 @@ window.__ModuleLoader__.load({
         if (!id && tag === 'svg') return;
         addMark({ kind: 'layer', path: doc.path, selector: id ? '#' + id : tag, quote: tag });
       };
+
+      React.useEffect(() => {
+        const onKey = (event) => {
+          if (event.code !== 'Space') return;
+          const tag = event.target && event.target.tagName ? event.target.tagName.toLowerCase() : '';
+          if (tag === 'input' || tag === 'textarea' || tag === 'select' || tag === 'button') return;
+          event.preventDefault();
+          const next = !captureRef.current;
+          captureRef.current = next;
+          setAnim((previous) => Object.assign({}, previous, { capture: next }));
+          if (!next) clearSpot();
+        };
+        window.addEventListener('keydown', onKey, true);
+        return () => window.removeEventListener('keydown', onKey, true);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, []);
 
       React.useEffect(() => {
         if (state.status === 'ready') sync();
@@ -1574,8 +1623,9 @@ window.__ModuleLoader__.load({
           onResume: resume,
           onSeek: seek,
           onArm: (on) => {
-            armedRef.current = on;
-            setAnim((previous) => Object.assign({}, previous, { armed: on }));
+            captureRef.current = on;
+            setAnim((previous) => Object.assign({}, previous, { capture: on }));
+            if (!on) clearSpot();
           },
         }),
         h('div', {
