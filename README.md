@@ -6,17 +6,26 @@
 
 ## 安装
 
-- **从市场安装**：在 Plugins → Discover 里添加索引源
+已发布到 npm：**`dsh-plugin-middle-panel@0.2.0`**（`latest`）。
+
+- **按包名安装**（官方 npm 源，或任意镜像源，二者等价）：
+  ```bash
+  dsh plugin --profile desktop add dsh-plugin-middle-panel
+  # 镜像源
+  dsh plugin --profile desktop add dsh-plugin-middle-panel --registry https://registry.npmmirror.com
+  ```
+  安装后重启 DSH；首次打开若界面无变化，`Ctrl+Shift+R` 硬刷新一次。
+- **从市场（Discover）安装**：在 Plugins → Discover 添加索引源
   `https://raw.githubusercontent.com/Darkhe55/dsh-plugin-middle-panel/main/market-index.json`，
-  然后搜索 `middle-panel`。
-- **从 Git 直接安装**（不需要 npm 账号）：
+  搜索「画布面板」。该索引条目指向 npm 源，安装参数为 `dsh-plugin-middle-panel@0.2.0`。
+- **从 Git 直接安装**（不依赖 npm）：
   ```
   plugin_manager install_bundle
   target: git+https://github.com/Darkhe55/dsh-plugin-middle-panel.git#<commit>
   ```
 - **本地开发**：`install_bundle` 指向本目录。
 
-兼容 `engines.dsh: >=0.2.2-rc.1 <0.3.0`。
+兼容 `engines.dsh: >=0.2.2-rc.1 <0.3.0`，无运行时依赖、无 `postinstall`。
 
 ## 用法
 
