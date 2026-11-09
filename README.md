@@ -47,14 +47,14 @@
 - HTML 预览：读文本 → 注入 picker 脚本 → Blob iframe（`sandbox="allow-scripts"`，不给 same-origin），选取结果经 `postMessage` 回传。
 - 标注只存客户端（`localStorage`，按 session 分键）；**发送后才进入 session log**，符合“log 是唯一真相”。
 
-## 检视能力（v0.2）
+## 检视能力
 
-- **驻留聚光**：鼠标在同一元素上停 0.5 秒，其余元素淡到 45%，被悬停元素及其子树保持清晰；移开或换元素立即恢复，过渡 `180ms cubic-bezier(.33,0,.2,1)`。HTML 在预览文档内实现，SVG 在面板内实现。
-- **动画冻结 + 时间轴**：`暂停 / 继续`、时间轴滑轨、`±1 帧`（16ms）。HTML 走 `document.getAnimations()`（CSS 动画 / 过渡 / WAAPI）+ SVG SMIL；预览内快捷键 `Space` 暂停、`←/→` 步进（Shift 为 100ms）。
-- **交互态定格（抓帧）**：点「抓帧」后就绪，下一次悬停或点击会让交互样式先生效、再在 40–80ms 后冻结，然后可用滑轨往回拖。用于只在 hover/press 时才出现的动画。
+- **定格聚光**：`空格` 暂停后画面定格，此时鼠标在同一元素上停 0.5 秒，其余元素淡到 45%，被悬停元素及其子树保持清晰；移开或换元素立即恢复，过渡 `180ms cubic-bezier(.33,0,.2,1)`。播放状态下不做任何淡化，页面按自己的交互跑。
+- **动画冻结 + 时间轴**：`暂停 / 继续`（空格）、时间轴滑轨、`±1 帧`（16ms，Shift 100ms）。HTML 走 `document.getAnimations()`（CSS 动画 / 过渡 / WAAPI）+ SVG SMIL，并接管 `requestAnimationFrame` 让 JS 帧循环也能停住、`+` 可逐帧推进。
+- **快捷键归属**：只有鼠标悬停在面板上、或焦点在面板内时才响应；在会话输入框、任意 `input/textarea/select/contenteditable` 或输入法组合期间一律不拦截。
 - **SVG 内联渲染**：不再用 `<img>`，因此可悬停聚光、点元素生成图层标注、暂停/拖动 SMIL 时间线。插入前剥掉 `<script>`、`on*` 事件与 `javascript:` 链接。
 
-已知边界：JS 驱动的动画（`requestAnimationFrame` 循环、canvas 自绘）无法暂停或回溯，只能对被 CSS/WAAPI/SMIL 管理的动画生效；时间轴范围取当前运行中动画的最长 endTime。
+已知边界：JS 帧无法回退（`requestAnimationFrame` 没有历史）；页面若在启动时缓存了原生 `requestAnimationFrame` 引用则不吃接管；时间轴范围取运行中动画的最长有限 `endTime`，无限循环动画用随播放时间增长的窗口。
 
 ## 最近的变化
 

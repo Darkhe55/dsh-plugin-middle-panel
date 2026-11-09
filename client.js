@@ -673,15 +673,17 @@ window.__ModuleLoader__.load({
     const ownsKeyboard = (event, root) => {
       if (!root) return false;
       if (event.isComposing || event.keyCode === 229) return false;
+      // The pointer resting over the panel is the strongest signal: a shortcut
+      // there is meant for the panel, so it is intercepted (and the keystroke
+      // swallowed) even when focus sits elsewhere.
+      if (typeof root.matches === 'function' && root.matches(':hover')) return true;
       const target = event.target;
       if (target && target.isContentEditable) return false;
       if (target && typeof target.closest === 'function') {
         if (target.closest('input,textarea,select,[contenteditable="true"]')) return false;
       }
       const active = document.activeElement;
-      if (active && root.contains(active)) return true;
-      if (active && active !== document.body) return false;
-      return typeof root.matches === 'function' && root.matches(':hover');
+      return Boolean(active && root.contains(active));
     };
 
     // ---------------- markdown ----------------
@@ -1172,7 +1174,7 @@ window.__ModuleLoader__.load({
     // spotlight, and animation freeze/scrub control (CSS, WAAPI and SMIL).
     const PICKER_SCRIPT = [
       '(function(){',
-      'var box=null,dwellEl=null,dwellTimer=null,spotEl=null,paused=false,capture=false;',
+      'var box=null,dwellEl=null,dwellTimer=null,spotEl=null,paused=false;',
       // Freeze JS frame loops too: queue requestAnimationFrame callbacks while
       // frozen and release them on resume, so rAF-driven motion stops with the
       // rest of the timeline (a loop that captured the original function and
@@ -1215,29 +1217,25 @@ window.__ModuleLoader__.load({
       'function report(){var list=anims(),duration=0,current=0;',
       'for(var i=0;i<list.length;i++){try{var a=list[i];var t=a.effect&&a.effect.getComputedTiming?a.effect.getComputedTiming():null;',
       'var end=t&&t.endTime?t.endTime:0;if(isFinite(end)&&end>duration)duration=end;var c=Number(a.currentTime)||0;if(isFinite(c)&&c>current)current=c;}catch(e){}}',
-      'parent.postMessage({source:"dshcv-anim",state:{paused:paused,capture:capture,duration:Math.round(duration),current:Math.round(current),count:list.length,raf:rafQueue.length}},"*");}',
+      'parent.postMessage({source:"dshcv-anim",state:{paused:paused,duration:Math.round(duration),current:Math.round(current),count:list.length,raf:rafQueue.length}},"*");}',
       // pointer behaviour
       'document.addEventListener("mousemove",function(e){var el=e.target;if(!el||el.nodeType!==1)return;',
       'var b=overlay();var r=el.getBoundingClientRect();b.style.display="block";b.style.left=r.left+"px";b.style.top=r.top+"px";b.style.width=r.width+"px";b.style.height=r.height+"px";',
-      'if(!capture){if(spotEl||document.documentElement.hasAttribute("data-dshcv-spotlight"))clearSpot();dwellEl=el;return;}',
+      'if(!paused){if(spotEl||document.documentElement.hasAttribute("data-dshcv-spotlight"))clearSpot();dwellEl=el;return;}',
       'if(el!==dwellEl){dwellEl=el;clearSpot();clearTimeout(dwellTimer);dwellTimer=setTimeout(function(){if(dwellEl===el)markSpot(el);},500);}},true);',
       'document.addEventListener("mouseleave",function(){dwellEl=null;clearTimeout(dwellTimer);clearSpot();},true);',
-      'document.addEventListener("click",function(e){var el=e.target;if(!el||el.nodeType!==1)return;if(capture)return;e.preventDefault();e.stopPropagation();',
+      'document.addEventListener("click",function(e){var el=e.target;if(!el||el.nodeType!==1)return;e.preventDefault();e.stopPropagation();',
       'var r=el.getBoundingClientRect();var text=(el.innerText||el.textContent||"").trim().slice(0,240);',
       'parent.postMessage({source:"dshcv-picker",selector:sel(el),tag:el.tagName.toLowerCase(),text:text,rect:[Math.round(r.left),Math.round(r.top),Math.round(r.width),Math.round(r.height)]},"*");},true);',
-      // In capture mode a click freezes the interaction state; outside it the
-      // page keeps its own interactions and clicks only create a mark.
-      'document.addEventListener("pointerdown",function(){if(!capture)return;setTimeout(pauseAll,40);},true);',
       'document.addEventListener("keydown",function(e){var t=e.target;if(t&&(t.isContentEditable||/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||"")))return;var step=e.shiftKey?100:16;',
       'if(e.code==="Space"){e.preventDefault();paused?resumeAll():pauseAll();}',
-      'else if(e.key==="f"||e.key==="F"){e.preventDefault();capture=!capture;if(!capture)clearSpot();report();}',
       'else if(e.key==="ArrowLeft"){e.preventDefault();pauseAll();var t2=anims();var c=0;for(var i=0;i<t2.length;i++){try{c=Math.max(c,Number(t2[i].currentTime)||0);}catch(x){}}seek(c-step);}',
       'else if(e.key==="ArrowRight"){e.preventDefault();pauseAll();var u=anims();var d=0;for(var i=0;i<u.length;i++){try{d=Math.max(d,Number(u[i].currentTime)||0);}catch(x){}}seek(d+step);}',
       'else if(e.key==="p"||e.key==="P"){paused?resumeAll():pauseAll();}},true);',
       'window.addEventListener("message",function(e){var d=e.data;if(!d||d.source!=="dshcv-cmd")return;',
       'if(d.cmd==="pause")pauseAll();else if(d.cmd==="resume")resumeAll();else if(d.cmd==="seek")seek(d.time);',
       'else if(d.cmd==="step")stepFrame(d.dir||1);',
-      'else if(d.cmd==="capture"||d.cmd==="arm"){capture=!!d.on;if(!capture)clearSpot();report();}else if(d.cmd==="state")report();},false);',
+      'else if(d.cmd==="state")report();},false);',
       'setTimeout(report,300);',
       '})();',
     ].join('\n');
@@ -1261,7 +1259,7 @@ window.__ModuleLoader__.load({
     // scrub the timeline, and step single frames. Every control clamps to the
     // same span, so stepping cannot leave the timeline.
     function AnimBar(props) {
-      const { anim, onPause, onResume, onSeek, onArm, onStep } = props;
+      const { anim, onPause, onResume, onSeek, onStep } = props;
       const finite = Number.isFinite(anim.duration) && anim.duration > 0 ? anim.duration : 0;
       // Looping animations report no finite end, so the span grows with the
       // elapsed time instead of collapsing to a meaningless value.
@@ -1285,17 +1283,6 @@ window.__ModuleLoader__.load({
           { type: 'button', className: 'dshcv-btn', title: '暂停 / 继续（空格）', onClick: anim.paused ? onResume : onPause },
           anim.paused ? '继续' : '暂停',
         ),
-        h(
-          'button',
-          {
-            type: 'button',
-            className: 'dshcv-btn',
-            'data-primary': anim.capture ? '1' : '0',
-            title: '抓帧模式（F）：悬停 0.5 秒淡化其余元素，点击定格交互态',
-            onClick: () => onArm(!anim.capture),
-          },
-          anim.capture ? '抓帧中' : '抓帧',
-        ),
         anim.paused
           ? h('input', {
               type: 'range',
@@ -1309,7 +1296,7 @@ window.__ModuleLoader__.load({
           : null,
         h(
           'span',
-          { className: 'dshcv-msg' },
+          { className: 'dshcv-msg', title: anim.paused ? '定格中：悬停任意元素 0.5 秒，其余元素淡化' : '空格暂停 / 继续' },
           anim.paused
             ? Math.round(current) + ' ms / ' + Math.round(span) + ' ms' + (anim.raf ? ' · JS 帧 ' + anim.raf : '')
             : anim.count || anim.raf
@@ -1350,10 +1337,9 @@ window.__ModuleLoader__.load({
     function HtmlDoc(props) {
       const { doc, sessionId } = props;
       const [state, setState] = React.useState({ status: 'idle', url: '', error: '' });
-      const [anim, setAnim] = React.useState({ paused: false, capture: false, duration: 0, current: 0, count: 0 });
+      const [anim, setAnim] = React.useState({ paused: false, duration: 0, current: 0, count: 0 });
       const frameRef = React.useRef(null);
       const rootRef = React.useRef(null);
-      const captureRef = React.useRef(false);
       const pausedRef = React.useRef(false);
 
       const post = (cmd, extra) => {
@@ -1362,8 +1348,8 @@ window.__ModuleLoader__.load({
         frame.contentWindow.postMessage(Object.assign({ source: 'dshcv-cmd', cmd }, extra || {}), '*');
       };
 
-      // Space pauses and resumes; F toggles capture mode. Both stay inert while
-      // the user types anywhere outside the panel.
+      // Space pauses and resumes; both stay inert while the user types outside
+      // the panel.
       React.useEffect(() => {
         const onKey = (event) => {
           if (!ownsKeyboard(event, rootRef.current)) return;
@@ -1374,14 +1360,6 @@ window.__ModuleLoader__.load({
             pausedRef.current = next;
             setAnim((previous) => Object.assign({}, previous, { paused: next }));
             post(next ? 'pause' : 'resume');
-            return;
-          }
-          if (event.key === 'f' || event.key === 'F') {
-            event.preventDefault();
-            const next = !captureRef.current;
-            captureRef.current = next;
-            setAnim((previous) => Object.assign({}, previous, { capture: next }));
-            post('capture', { on: next });
           }
         };
         window.addEventListener('keydown', onKey, true);
@@ -1427,7 +1405,6 @@ window.__ModuleLoader__.load({
           const data = event.data;
           if (!data) return;
           if (data.source === 'dshcv-anim' && data.state) {
-            captureRef.current = Boolean(data.state.capture);
             pausedRef.current = Boolean(data.state.paused);
             setAnim(data.state);
           }
@@ -1459,11 +1436,6 @@ window.__ModuleLoader__.load({
           onResume: () => post('resume'),
           onSeek: (time) => post('seek', { time }),
           onStep: (dir) => post('step', { dir }),
-          onArm: (on) => {
-            captureRef.current = on;
-            setAnim((previous) => Object.assign({}, previous, { capture: on }));
-            post('capture', { on });
-          },
         }),
         h('iframe', {
           ref: frameRef,
@@ -1499,12 +1471,11 @@ window.__ModuleLoader__.load({
     function SvgDoc(props) {
       const { doc, sessionId } = props;
       const [state, setState] = React.useState({ status: 'idle', markup: '', error: '' });
-      const [anim, setAnim] = React.useState({ paused: false, capture: false, duration: 0, current: 0, count: 0 });
+      const [anim, setAnim] = React.useState({ paused: false, duration: 0, current: 0, count: 0 });
       const hostRef = React.useRef(null);
       const rootRef = React.useRef(null);
       const animRef = React.useRef(null);
       const dwellRef = React.useRef({ element: null, timer: null });
-      const captureRef = React.useRef(false);
       animRef.current = anim;
 
       React.useEffect(() => {
@@ -1588,7 +1559,9 @@ window.__ModuleLoader__.load({
       const onHover = (event) => {
         const target = event.target;
         if (!target || target.nodeType !== 1) return;
-        if (!captureRef.current) {
+        // The spotlight belongs to the frozen frame: while playing, the SVG
+        // keeps its own behaviour untouched.
+        if (!(animRef.current && animRef.current.paused)) {
           if (spotting()) clearSpot();
           return;
         }
@@ -1609,10 +1582,6 @@ window.__ModuleLoader__.load({
       const onClick = (event) => {
         const target = event.target;
         if (!target || target.nodeType !== 1) return;
-        if (captureRef.current) {
-          setTimeout(pause, 40);
-          return;
-        }
         const id = target.getAttribute && target.getAttribute('id');
         const tag = target.tagName ? target.tagName.toLowerCase() : 'node';
         if (!id && tag === 'svg') return;
@@ -1626,14 +1595,6 @@ window.__ModuleLoader__.load({
             event.preventDefault();
             if (animRef.current && animRef.current.paused) resume();
             else pause();
-            return;
-          }
-          if (event.key === 'f' || event.key === 'F') {
-            event.preventDefault();
-            const next = !captureRef.current;
-            captureRef.current = next;
-            setAnim((previous) => Object.assign({}, previous, { capture: next }));
-            if (!next) clearSpot();
           }
         };
         window.addEventListener('keydown', onKey, true);
@@ -1660,11 +1621,6 @@ window.__ModuleLoader__.load({
           onPause: pause,
           onResume: resume,
           onSeek: seek,
-          onArm: (on) => {
-            captureRef.current = on;
-            setAnim((previous) => Object.assign({}, previous, { capture: on }));
-            if (!on) clearSpot();
-          },
         }),
         h('div', {
           ref: hostRef,
