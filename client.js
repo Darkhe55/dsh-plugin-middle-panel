@@ -3025,7 +3025,7 @@ window.__ModuleLoader__.load({
       const canvasRef = React.useRef(null);
       const rootRef = React.useRef(null);
       const meshRef = React.useRef(null);
-      const viewRef = React.useRef({ yaw: 0.72, pitch: 0.42, distance: 3, panX: 0, panY: 0, center: [0, 0, 0], radius: 1 });
+      const viewRef = React.useRef({ yaw: 0.72, pitch: 0.42, distance: 3, pan: [0, 0, 0], center: [0, 0, 0], radius: 1 });
       const drawRef = React.useRef(() => {});
 
       React.useEffect(() => {
@@ -3210,25 +3210,32 @@ window.__ModuleLoader__.load({
         gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
         const solidCount = data.length / 6;
 
-        const edgeIndices = new Uint32Array((solidCount / 3) * 6);
-        for (let triangle = 0; triangle < solidCount / 3; triangle += 1) {
-          const base = triangle * 3;
-          const at = triangle * 6;
-          edgeIndices[at] = base;
-          edgeIndices[at + 1] = base + 1;
-          edgeIndices[at + 2] = base + 1;
-          edgeIndices[at + 3] = base + 2;
-          edgeIndices[at + 4] = base + 2;
-          edgeIndices[at + 5] = base;
-        }
+        // Edges are drawn as a plain vertex list: 32-bit indices need
+        // OES_element_index_uint, and without it drawElements failed silently,
+        // which is exactly why the wireframe button blanked the model.
         const lineBuffer = gl.createBuffer();
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, lineBuffer);
-        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, edgeIndices, gl.STATIC_DRAW);
+        const lineVertexCount = solidCount * 2;
+        {
+          const lines = new Float32Array(solidCount * 2 * 3);
+          let write = 0;
+          for (let triangle = 0; triangle < solidCount / 3; triangle += 1) {
+            const base = triangle * 3;
+            for (const [from, to] of [[0, 1], [1, 2], [2, 0]]) {
+              for (const corner of [from, to]) {
+                const at = (base + corner) * 6;
+                lines[write] = data[at];
+                lines[write + 1] = data[at + 1];
+                lines[write + 2] = data[at + 2];
+                write += 3;
+              }
+            }
+          }
+          gl.bindBuffer(gl.ARRAY_BUFFER, lineBuffer);
+          gl.bufferData(gl.ARRAY_BUFFER, lines, gl.STATIC_DRAW);
+        }
         // One reusable buffer for the axis overlay: allocating per frame made
         // every orbit step leave garbage behind.
         const axisBuffer = gl.createBuffer();
-        const indexExt = gl.getExtension('OES_element_index_uint');
-        void indexExt;
 
         const uniforms = {
           solid: {
@@ -3266,13 +3273,15 @@ window.__ModuleLoader__.load({
           const view = viewRef.current;
           const center = view.center;
           const distance = view.distance;
+          const pan = view.pan || [0, 0, 0];
+          const target = [center[0] + pan[0], center[1] + pan[1], center[2] + pan[2]];
           const eye = [
-            center[0] + view.panX + distance * Math.cos(view.pitch) * Math.sin(view.yaw),
-            center[1] + view.panY + distance * Math.sin(view.pitch),
-            center[2] + distance * Math.cos(view.pitch) * Math.cos(view.yaw),
+            target[0] + distance * Math.cos(view.pitch) * Math.sin(view.yaw),
+            target[1] + distance * Math.sin(view.pitch),
+            target[2] + distance * Math.cos(view.pitch) * Math.cos(view.yaw),
           ];
           const projection = perspective(Math.PI / 4, width / height, distance / 500, distance * 40);
-          const camera = lookAt(eye, [center[0] + view.panX, center[1] + view.panY, center[2]], [0, 1, 0]);
+          const camera = lookAt(eye, target, [0, 1, 0]);
           const mvp = multiplyMatrix(new Float32Array(projection), camera);
 
           if (!options.wireframe) {
@@ -3293,16 +3302,15 @@ window.__ModuleLoader__.load({
           }
 
           gl.useProgram(lines);
-          gl.bindBuffer(gl.ARRAY_BUFFER, solidBuffer);
+          gl.bindBuffer(gl.ARRAY_BUFFER, lineBuffer);
           gl.enableVertexAttribArray(attributes.lines.position);
-          gl.vertexAttribPointer(attributes.lines.position, 3, gl.FLOAT, false, 24, 0);
-          gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, lineBuffer);
+          gl.vertexAttribPointer(attributes.lines.position, 3, gl.FLOAT, false, 12, 0);
           gl.uniformMatrix4fv(uniforms.lines.mvp, false, mvp);
           gl.uniform3f(uniforms.lines.color, options.wireframe ? 0.72 : 0.28, options.wireframe ? 0.82 : 0.34, 1.0);
-          gl.drawElements(gl.LINES, edgeIndices.length, gl.UNSIGNED_INT, 0);
+          gl.drawArrays(gl.LINES, 0, lineVertexCount);
 
           if (options.axes) {
-            const origin = new Float32Array([center[0], center[1], center[2]]);
+            const origin = new Float32Array([target[0], target[1], target[2]]);
             const size = view.radius * 1.35;
             const axes = new Float32Array([
               origin[0], origin[1], origin[2], origin[0] + size, origin[1], origin[2],
@@ -3324,6 +3332,32 @@ window.__ModuleLoader__.load({
         };
         drawRef.current = render;
 
+        // Pan moves the target along the camera's screen axes, not world X/Y.
+        const cameraBasis = (view) => {
+          const dir = [
+            Math.cos(view.pitch) * Math.sin(view.yaw),
+            Math.sin(view.pitch),
+            Math.cos(view.pitch) * Math.cos(view.yaw),
+          ];
+          const forward = [-dir[0], -dir[1], -dir[2]];
+          const rightRaw = [-forward[2], 0, forward[0]];
+          const rightLength = Math.hypot(rightRaw[0], rightRaw[1], rightRaw[2]) || 1;
+          const right = [rightRaw[0] / rightLength, rightRaw[1] / rightLength, rightRaw[2] / rightLength];
+          const up = [
+            right[1] * forward[2] - right[2] * forward[1],
+            right[2] * forward[0] - right[0] * forward[2],
+            right[0] * forward[1] - right[1] * forward[0],
+          ];
+          return { right, up };
+        };
+        const panBy = (view, rightAmount, upAmount) => {
+          const basis = cameraBasis(view);
+          if (!view.pan) view.pan = [0, 0, 0];
+          for (let axis = 0; axis < 3; axis += 1) {
+            view.pan[axis] += basis.right[axis] * rightAmount + basis.up[axis] * upAmount;
+          }
+        };
+
         let dragging = 0;
         let lastX = 0;
         let lastY = 0;
@@ -3342,8 +3376,7 @@ window.__ModuleLoader__.load({
           lastY = event.clientY;
           if (dragging === 2) {
             const scale = view.distance * 0.0016;
-            view.panX -= deltaX * scale;
-            view.panY += deltaY * scale;
+            panBy(view, -deltaX * scale, deltaY * scale);
           } else {
             view.yaw -= deltaX * 0.01;
             view.pitch = Math.max(-1.5, Math.min(1.5, view.pitch + deltaY * 0.01));
@@ -3361,8 +3394,8 @@ window.__ModuleLoader__.load({
           const ny = (event.clientY - rect.top) / Math.max(1, rect.height) - 0.5;
           const factor = 1 + Math.sign(event.deltaY) * 0.12;
           // Keep the point under the cursor roughly fixed while zooming.
-          view.panX += nx * view.distance * (factor - 1) * 0.55;
-          view.panY -= ny * view.distance * (factor - 1) * 0.55;
+          const shift = view.distance * (factor - 1) * 0.55;
+          panBy(view, nx * shift, -ny * shift);
           view.distance = Math.max(view.radius * 0.05, Math.min(view.radius * 400, view.distance * factor));
           render();
         };
@@ -3371,8 +3404,7 @@ window.__ModuleLoader__.load({
           const rect = canvas.getBoundingClientRect();
           const nx = (event.clientX - rect.left) / Math.max(1, rect.width) - 0.5;
           const ny = (event.clientY - rect.top) / Math.max(1, rect.height) - 0.5;
-          view.panX += nx * view.distance;
-          view.panY -= ny * view.distance;
+          panBy(view, nx * view.distance, -ny * view.distance);
           view.distance = Math.max(view.radius * 0.1, view.distance * 0.72);
           render();
         };
@@ -3421,16 +3453,16 @@ window.__ModuleLoader__.load({
             event.preventDefault();
             view.yaw = PRESETS[event.key][0];
             view.pitch = PRESETS[event.key][1];
-            view.panX = 0;
-            view.panY = 0;
+            view.pan = [0, 0, 0];
+            
             view.distance = view.radius / Math.tan(Math.PI / 8) + view.radius;
             drawRef.current();
             return;
           }
           if (event.key !== 'f' && event.key !== 'F') return;
           event.preventDefault();
-          view.panX = 0;
-          view.panY = 0;
+          view.pan = [0, 0, 0];
+          
           if (event.shiftKey) {
             view.yaw = 0.72;
             view.pitch = 0.42;
