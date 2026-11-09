@@ -3169,6 +3169,16 @@ window.__ModuleLoader__.load({
       const [options, setOptions] = React.useState({ faces: true, edges: true, hiddenLine: true, fog: true, axes: true, normals: false });
       const [notice, setNotice] = React.useState('');
       const [progress, setProgress] = React.useState(0);
+      // Visible render diagnostics: triangle and line counts plus the last GL error.
+      const [diag, setDiag] = React.useState({ triangles: 0, lineVertices: 0, error: 0 });
+      const diagRef = React.useRef({ triangles: 0, lineVertices: 0, error: 0 });
+      const publishDiag = (patch) => {
+        const next = Object.assign({}, diagRef.current, patch);
+        const previous = diagRef.current;
+        if (next.triangles === previous.triangles && next.lineVertices === previous.lineVertices && next.error === previous.error) return;
+        diagRef.current = next;
+        setDiag(next);
+      };
       const canvasRef = React.useRef(null);
       const rootRef = React.useRef(null);
       const meshRef = React.useRef(null);
@@ -3383,6 +3393,7 @@ window.__ModuleLoader__.load({
           gl.bindBuffer(gl.ARRAY_BUFFER, lineBuffer);
           gl.bufferData(gl.ARRAY_BUFFER, lines, gl.STATIC_DRAW);
         }
+        publishDiag({ triangles: solidCount / 3, lineVertices: lineVertexCount, error: 0 });
         // One reusable buffer for the axis overlay: allocating per frame made
         // every orbit step leave garbage behind.
         const axisBuffer = gl.createBuffer();
@@ -3456,6 +3467,9 @@ window.__ModuleLoader__.load({
             // whole cage through the model, which is the usual "see-through" view.
             const seeThrough = !options.faces && !options.hiddenLine;
             if (seeThrough) gl.disable(gl.DEPTH_TEST);
+            // Edges sit exactly on the surface, so LESS would reject every one of
+            // them when faces are drawn; LEQUAL lets coincident lines through.
+            gl.depthFunc(gl.LEQUAL);
             gl.useProgram(lines);
             gl.bindBuffer(gl.ARRAY_BUFFER, lineBuffer);
             gl.enableVertexAttribArray(attributes.lines.position);
@@ -3464,6 +3478,7 @@ window.__ModuleLoader__.load({
             gl.uniform3f(uniforms.lines.color, options.faces ? 0.28 : 0.72, options.faces ? 0.34 : 0.82, 1.0);
             gl.drawArrays(gl.LINES, 0, lineVertexCount);
             if (seeThrough) gl.enable(gl.DEPTH_TEST);
+            gl.depthFunc(gl.LESS);
           }
 
           if (options.axes) {
@@ -3486,6 +3501,7 @@ window.__ModuleLoader__.load({
             gl.uniform3f(uniforms.lines.color, 0.42, 0.62, 0.95);
             gl.drawArrays(gl.LINES, 4, 2);
           }
+          publishDiag({ error: gl.getError() });
         };
         drawRef.current = render;
 
@@ -3787,6 +3803,11 @@ window.__ModuleLoader__.load({
           h('button', { type: 'button', className: 'dshcv-btn', 'data-primary': options.fog ? '1' : '0', onClick: () => toggle('fog') }, '雾'),
           h('button', { type: 'button', className: 'dshcv-btn', 'data-primary': options.axes ? '1' : '0', onClick: () => toggle('axes') }, '坐标轴'),
           h('button', { type: 'button', className: 'dshcv-btn', onClick: exportObj }, '导出 OBJ'),
+          h(
+            'span',
+            { className: 'dshcv-msg', title: '三角形数 · 线顶点数 · WebGL 错误码（0 为正常）' },
+            '△ ' + diag.triangles.toLocaleString() + ' · ‖ ' + diag.lineVertices.toLocaleString() + (diag.error ? ' · GL ' + diag.error : ''),
+          ),
           notice ? h('span', { className: 'dshcv-msg' }, notice) : null,
         ),
         h('div', { className: 'dshcv-3dwrap' }, h('canvas', {
