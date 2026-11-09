@@ -666,6 +666,24 @@ window.__ModuleLoader__.load({
       );
     }
 
+    // A panel shortcut may only fire when the panel itself owns the keyboard:
+    // the pointer is over it with nothing else focused, or focus is inside it.
+    // Anything typed into the composer, an input, or a contenteditable is left
+    // strictly alone.
+    const ownsKeyboard = (event, root) => {
+      if (!root) return false;
+      if (event.isComposing || event.keyCode === 229) return false;
+      const target = event.target;
+      if (target && target.isContentEditable) return false;
+      if (target && typeof target.closest === 'function') {
+        if (target.closest('input,textarea,select,[contenteditable="true"]')) return false;
+      }
+      const active = document.activeElement;
+      if (active && root.contains(active)) return true;
+      if (active && active !== document.body) return false;
+      return typeof root.matches === 'function' && root.matches(':hover');
+    };
+
     // ---------------- markdown ----------------
     // Small renderer: no dependency, and it builds React nodes instead of
     // injecting HTML, so a document can never execute markup.
@@ -1210,9 +1228,10 @@ window.__ModuleLoader__.load({
       // In capture mode a click freezes the interaction state; outside it the
       // page keeps its own interactions and clicks only create a mark.
       'document.addEventListener("pointerdown",function(){if(!capture)return;setTimeout(pauseAll,40);},true);',
-      'document.addEventListener("keydown",function(e){var step=e.shiftKey?100:16;',
-      'if(e.code==="Space"){e.preventDefault();capture=!capture;if(!capture)clearSpot();report();}',
-      'else if(e.key==="ArrowLeft"){e.preventDefault();pauseAll();var t=anims();var c=0;for(var i=0;i<t.length;i++){try{c=Math.max(c,Number(t[i].currentTime)||0);}catch(x){}}seek(c-step);}',
+      'document.addEventListener("keydown",function(e){var t=e.target;if(t&&(t.isContentEditable||/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||"")))return;var step=e.shiftKey?100:16;',
+      'if(e.code==="Space"){e.preventDefault();paused?resumeAll():pauseAll();}',
+      'else if(e.key==="f"||e.key==="F"){e.preventDefault();capture=!capture;if(!capture)clearSpot();report();}',
+      'else if(e.key==="ArrowLeft"){e.preventDefault();pauseAll();var t2=anims();var c=0;for(var i=0;i<t2.length;i++){try{c=Math.max(c,Number(t2[i].currentTime)||0);}catch(x){}}seek(c-step);}',
       'else if(e.key==="ArrowRight"){e.preventDefault();pauseAll();var u=anims();var d=0;for(var i=0;i<u.length;i++){try{d=Math.max(d,Number(u[i].currentTime)||0);}catch(x){}}seek(d+step);}',
       'else if(e.key==="p"||e.key==="P"){paused?resumeAll():pauseAll();}},true);',
       'window.addEventListener("message",function(e){var d=e.data;if(!d||d.source!=="dshcv-cmd")return;',
@@ -1263,7 +1282,7 @@ window.__ModuleLoader__.load({
         { className: 'dshcv-tools' },
         h(
           'button',
-          { type: 'button', className: 'dshcv-btn', onClick: anim.paused ? onResume : onPause },
+          { type: 'button', className: 'dshcv-btn', title: '暂停 / 继续（空格）', onClick: anim.paused ? onResume : onPause },
           anim.paused ? '继续' : '暂停',
         ),
         h(
@@ -1272,7 +1291,7 @@ window.__ModuleLoader__.load({
             type: 'button',
             className: 'dshcv-btn',
             'data-primary': anim.capture ? '1' : '0',
-            title: '抓帧模式（空格）：悬停 0.5 秒淡化其余元素，点击定格交互态',
+            title: '抓帧模式（F）：悬停 0.5 秒淡化其余元素，点击定格交互态',
             onClick: () => onArm(!anim.capture),
           },
           anim.capture ? '抓帧中' : '抓帧',
@@ -1333,7 +1352,9 @@ window.__ModuleLoader__.load({
       const [state, setState] = React.useState({ status: 'idle', url: '', error: '' });
       const [anim, setAnim] = React.useState({ paused: false, capture: false, duration: 0, current: 0, count: 0 });
       const frameRef = React.useRef(null);
+      const rootRef = React.useRef(null);
       const captureRef = React.useRef(false);
+      const pausedRef = React.useRef(false);
 
       const post = (cmd, extra) => {
         const frame = frameRef.current;
@@ -1341,20 +1362,27 @@ window.__ModuleLoader__.load({
         frame.contentWindow.postMessage(Object.assign({ source: 'dshcv-cmd', cmd }, extra || {}), '*');
       };
 
-      // Space toggles capture while the panel has focus; the preview document
-      // handles its own Space when the iframe owns focus.
+      // Space pauses and resumes; F toggles capture mode. Both stay inert while
+      // the user types anywhere outside the panel.
       React.useEffect(() => {
         const onKey = (event) => {
-          if (event.code !== 'Space') return;
-          const target = event.target;
-          const tag = target && target.tagName ? target.tagName.toLowerCase() : '';
-          if (tag === 'input' || tag === 'textarea' || tag === 'select' || tag === 'button') return;
+          if (!ownsKeyboard(event, rootRef.current)) return;
           if (document.activeElement === frameRef.current) return;
-          event.preventDefault();
-          const next = !captureRef.current;
-          captureRef.current = next;
-          setAnim((previous) => Object.assign({}, previous, { capture: next }));
-          post('capture', { on: next });
+          if (event.code === 'Space') {
+            event.preventDefault();
+            const next = !pausedRef.current;
+            pausedRef.current = next;
+            setAnim((previous) => Object.assign({}, previous, { paused: next }));
+            post(next ? 'pause' : 'resume');
+            return;
+          }
+          if (event.key === 'f' || event.key === 'F') {
+            event.preventDefault();
+            const next = !captureRef.current;
+            captureRef.current = next;
+            setAnim((previous) => Object.assign({}, previous, { capture: next }));
+            post('capture', { on: next });
+          }
         };
         window.addEventListener('keydown', onKey, true);
         return () => window.removeEventListener('keydown', onKey, true);
@@ -1400,6 +1428,7 @@ window.__ModuleLoader__.load({
           if (!data) return;
           if (data.source === 'dshcv-anim' && data.state) {
             captureRef.current = Boolean(data.state.capture);
+            pausedRef.current = Boolean(data.state.paused);
             setAnim(data.state);
           }
           if (data.source !== 'dshcv-picker') return;
@@ -1423,7 +1452,7 @@ window.__ModuleLoader__.load({
       }
       return h(
         'div',
-        { style: { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' } },
+        { ref: rootRef, style: { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' } },
         h(AnimBar, {
           anim,
           onPause: () => post('pause'),
@@ -1472,8 +1501,11 @@ window.__ModuleLoader__.load({
       const [state, setState] = React.useState({ status: 'idle', markup: '', error: '' });
       const [anim, setAnim] = React.useState({ paused: false, capture: false, duration: 0, current: 0, count: 0 });
       const hostRef = React.useRef(null);
+      const rootRef = React.useRef(null);
+      const animRef = React.useRef(null);
       const dwellRef = React.useRef({ element: null, timer: null });
       const captureRef = React.useRef(false);
+      animRef.current = anim;
 
       React.useEffect(() => {
         if (!sessionId) {
@@ -1589,14 +1621,20 @@ window.__ModuleLoader__.load({
 
       React.useEffect(() => {
         const onKey = (event) => {
-          if (event.code !== 'Space') return;
-          const tag = event.target && event.target.tagName ? event.target.tagName.toLowerCase() : '';
-          if (tag === 'input' || tag === 'textarea' || tag === 'select' || tag === 'button') return;
-          event.preventDefault();
-          const next = !captureRef.current;
-          captureRef.current = next;
-          setAnim((previous) => Object.assign({}, previous, { capture: next }));
-          if (!next) clearSpot();
+          if (!ownsKeyboard(event, rootRef.current)) return;
+          if (event.code === 'Space') {
+            event.preventDefault();
+            if (animRef.current && animRef.current.paused) resume();
+            else pause();
+            return;
+          }
+          if (event.key === 'f' || event.key === 'F') {
+            event.preventDefault();
+            const next = !captureRef.current;
+            captureRef.current = next;
+            setAnim((previous) => Object.assign({}, previous, { capture: next }));
+            if (!next) clearSpot();
+          }
         };
         window.addEventListener('keydown', onKey, true);
         return () => window.removeEventListener('keydown', onKey, true);
@@ -1616,7 +1654,7 @@ window.__ModuleLoader__.load({
       }
       return h(
         'div',
-        { style: { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' } },
+        { ref: rootRef, style: { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' } },
         h(AnimBar, {
           anim,
           onPause: pause,
