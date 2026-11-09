@@ -1477,53 +1477,86 @@ window.__ModuleLoader__.load({
       // Evidence from the live DOM: the seat sits *inside* the scroller as a
       // normal flex child, and the shell's docking rule never matches because an
       // embedded occurrence resolves `conversation.composer` to its
-      // `data-chain-overlay-fallback` entry. Restore that marker on the trunk so
-      // the shipped CSS (`scrollBody:has([data-conversation-composer-overlay])
-      // > .composerSeat{position:absolute;bottom:0}` plus the viewArea flex rule)
-      // takes over, and size the tail spacer so nothing hides behind it.
+      // `data-chain-overlay-fallback` entry. Restore that marker so the shipped
+      // CSS docks the seat, make the view area the scroller (the chat view gives
+      // up its own scrolling under [data-conversation-scroll]), keep its scroll
+      // bar clear of the composer, and follow the tail only while the reader is
+      // already at the bottom.
       React.useEffect(() => {
         const host = convRef.current;
         if (!host) return undefined;
         const mark = 'data-conversation-composer-overlay';
         let seatObserver;
+        let contentObserver;
+        let area = null;
+        let following = true;
+        let anchor = 0;
+
+        const onScroll = () => {
+          if (!area) return;
+          following = area.scrollHeight - area.scrollTop - area.clientHeight < 48;
+          if (!following) anchor = area.scrollTop;
+        };
+
+        const onContent = () => {
+          if (!area) return;
+          if (following) {
+            area.scrollTop = area.scrollHeight;
+            anchor = area.scrollTop;
+          } else if (Math.abs(area.scrollTop - anchor) > 1) {
+            // A reader who stopped mid-transcript keeps their place even while
+            // content streams in below.
+            area.scrollTop = anchor;
+          }
+        };
+
+        const attach = (next) => {
+          if (!next || next === area) return;
+          if (area) area.removeEventListener('scroll', onScroll);
+          if (contentObserver) contentObserver.disconnect();
+          area = next;
+          area.addEventListener('scroll', onScroll, { passive: true });
+          contentObserver = new MutationObserver(onContent);
+          contentObserver.observe(area, { childList: true, subtree: true, characterData: true });
+          following = true;
+          area.scrollTop = area.scrollHeight;
+        };
+
         const apply = () => {
           const scroller = host.querySelector('[data-conversation-scroll]');
           const trunk = host.querySelector('[data-chain-overlay-fallback]');
           if (!scroller || !trunk) return;
-          if (!trunk.hasAttribute(mark)) {
-            trunk.setAttribute(mark, '');
-            scroller.style.setProperty('--dsh-scrollbar-width', '0px');
-          }
+          if (!trunk.hasAttribute(mark)) trunk.setAttribute(mark, '');
           const seat = host.querySelector('[data-composer-seat]');
           const view = host.querySelector('[data-conversation-scroll] > [data-slot="conversation.session"]');
-          const area = view && view.firstElementChild ? view.firstElementChild : null;
-          if (seat && area) {
-            const need = seat.offsetHeight;
-            // With the overlay marker the shipped rule sets the view area to
-            // `overflow:hidden`, while the chat view gives up its own scrolling
-            // under [data-conversation-scroll]; nothing would scroll and the
-            // transcript would stay clipped mid-way. Make the view area the
-            // scroller and reserve the composer's height at its bottom edge.
-            if (area.dataset.canvasScroller !== '1') {
-              area.dataset.canvasScroller = '1';
-              area.style.overflowY = 'auto';
-              area.style.overflowX = 'hidden';
-              area.style.minHeight = '0';
-            }
-            if (need > 0 && area.dataset.canvasPad !== String(need)) {
-              area.dataset.canvasPad = String(need);
-              area.style.paddingBottom = need + 'px';
-            }
-            if (!seatObserver && typeof ResizeObserver === 'function') {
-              seatObserver = new ResizeObserver(() => {
-                const height = seat.offsetHeight;
-                if (height > 0) {
-                  area.dataset.canvasPad = String(height);
-                  area.style.paddingBottom = height + 'px';
-                }
-              });
-              seatObserver.observe(seat);
-            }
+          const next = view && view.firstElementChild ? view.firstElementChild : null;
+          if (!seat || !next) return;
+          if (next.dataset.canvasScroller !== '1') {
+            next.dataset.canvasScroller = '1';
+            next.style.overflowY = 'auto';
+            next.style.overflowX = 'hidden';
+            next.style.minHeight = '0';
+            next.style.scrollbarGutter = 'stable';
+          }
+          const need = seat.offsetHeight;
+          if (need > 0 && next.dataset.canvasPad !== String(need)) {
+            next.dataset.canvasPad = String(need);
+            next.style.paddingBottom = need + 'px';
+          }
+          // The seat leaves room for the real scroll bar instead of covering it.
+          const bar = Math.max(0, next.offsetWidth - next.clientWidth);
+          scroller.style.setProperty('--dsh-scrollbar-width', bar + 'px');
+          next.style.setProperty('--dsh-scrollbar-width', bar + 'px');
+          attach(next);
+          if (!seatObserver && typeof ResizeObserver === 'function') {
+            seatObserver = new ResizeObserver(() => {
+              const height = seat.offsetHeight;
+              if (height > 0) {
+                next.dataset.canvasPad = String(height);
+                next.style.paddingBottom = height + 'px';
+              }
+            });
+            seatObserver.observe(seat);
           }
         };
         apply();
@@ -1534,6 +1567,8 @@ window.__ModuleLoader__.load({
           observer.disconnect();
           clearTimeout(timer);
           if (seatObserver) seatObserver.disconnect();
+          if (contentObserver) contentObserver.disconnect();
+          if (area) area.removeEventListener('scroll', onScroll);
         };
       }, []);
 
@@ -1542,8 +1577,14 @@ window.__ModuleLoader__.load({
         const host = bodyRef.current;
         if (!host) return;
         const rect = host.getBoundingClientRect();
+        const SPLIT = 9;
+        const MIN_CONVERSATION = 320;
+        const maxRatio = Math.max(0.25, Math.min(0.8, (rect.width - MIN_CONVERSATION - SPLIT) / rect.width));
         const move = (moveEvent) => {
-          const next = Math.min(0.8, Math.max(0.2, (moveEvent.clientX - rect.left) / rect.width));
+          const raw = (moveEvent.clientX - rect.left) / rect.width;
+          // The canvas pane owns a fixed basis, so the conversation always gets
+          // the remainder; clamp before the conversation can hit its floor.
+          const next = Math.min(maxRatio, Math.max(0.2, raw));
           setRatio(next);
         };
         const up = () => {
@@ -1600,7 +1641,7 @@ window.__ModuleLoader__.load({
           { className: 'dshcv-body', ref: bodyRef },
           h(
             'div',
-            { className: 'dshcv-pane', style: { flexBasis: ratio * 100 + '%', flexGrow: 1, flexShrink: 1 } },
+            { className: 'dshcv-pane', style: { flex: '0 0 ' + Math.round(ratio * 1000) / 10 + '%', minWidth: 240 } },
             store.docs.length
               ? h(
                   'div',
