@@ -183,7 +183,10 @@ window.__ModuleLoader__.load({
         devlog('mark-reused', ['n=' + existing.n]);
         return existing.n;
       }
-      const n = store.seq + 1;
+      // Numbers stay dense: they follow the marks that exist, so a cleared or
+      // restored list always continues from what is actually on screen.
+      const highest = store.marks.reduce((max, candidate) => Math.max(max, Number(candidate.n) || 0), 0);
+      const n = highest + 1;
       const created = Object.assign({ id: 'm' + Date.now().toString(36) + n, n, note: '' }, mark);
       mutate({ marks: store.marks.concat(created), seq: n });
       persist();
@@ -364,7 +367,7 @@ window.__ModuleLoader__.load({
       '.dshcv-searchinput:focus{border-color:var(--dsw-alias-brand-primary)}',
       '.dshcv-linehit{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 10%,transparent)}',
       '.dshcv-linehitcur{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 22%,transparent)}',
-      '.dshcv-mark{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 45%,transparent);color:inherit;border-radius:3px;padding:0 1px}',
+      '.dshcv-hit{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 45%,transparent);color:inherit;border-radius:3px;padding:0 1px}',
       '.dshcv-badge{flex:0 0 auto;min-width:18px;height:18px;border-radius:9px;background:var(--dsw-alias-brand-primary);color:#fff;font-size:11px;line-height:18px;text-align:center;padding:0 5px;font-variant-numeric:tabular-nums}',
       '.dshcv-note{width:100%;box-sizing:border-box;font:inherit;font-size:12px;line-height:1.5;padding:5px 8px;border-radius:7px;border:1px solid transparent;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);resize:vertical;transition:border-color .12s ease}',
       '.dshcv-note:hover{border-color:var(--dsw-alias-border-l1)}',
@@ -476,7 +479,7 @@ window.__ModuleLoader__.load({
       '.dshcv-mark{display:flex;gap:8px;padding:8px 0;border-bottom:1px solid var(--dsw-alias-border-l1)}',
       '.dshcv-mark:last-child{border-bottom:0}',
       '.dshcv-markbody{flex:1 1 auto;min-width:0}',
-      '.dshcv-meta{font-size:11px;color:var(--dsw-alias-label-secondary);margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.dshcv-meta{font-size:11px;color:var(--dsw-alias-label-primary);opacity:.8;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '.dshcv-quote{font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--dsw-alias-label-secondary);border-left:2px solid var(--dsw-alias-border-l1);padding-left:8px;margin:4px 0;max-height:56px;overflow:hidden}',
       '@media (prefers-reduced-motion: reduce){.dshcv-split::after{transition:none}}',
     ].join('\n');
@@ -1041,7 +1044,7 @@ window.__ModuleLoader__.load({
         let guard = 0;
         while (at >= 0 && guard < 200) {
           if (at > from) pieces.push(line.slice(from, at));
-          pieces.push(h('mark', { key: 'm' + at + '-' + guard, className: 'dshcv-mark' }, line.slice(at, at + needle.length)));
+          pieces.push(h('mark', { key: 'm' + at + '-' + guard, className: 'dshcv-hit' }, line.slice(at, at + needle.length)));
           from = at + needle.length;
           at = lower.indexOf(target, from);
           guard += 1;
