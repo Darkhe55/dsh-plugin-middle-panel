@@ -78,6 +78,23 @@ window.__ModuleLoader__.load({
 
     const storageKey = () => STORAGE_PREFIX + (store.sessionId || 'none');
 
+    // Hovering a mark in the rail spotlights the same spot in the viewer. This is
+    // transient UI state: it is never persisted and never leaves the panel.
+    const setHoverMark = (id) => {
+      if (store.hoverId === id) return;
+      store.hoverId = id;
+      notify();
+    };
+    const hoveredMarkFor = (path) => {
+      if (!store.hoverId) return null;
+      const mark = store.marks.find((candidate) => candidate.id === store.hoverId);
+      return mark && sameFile(mark.path, path) ? mark : null;
+    };
+    const useHoverMark = (path) => {
+      useVersion();
+      return hoveredMarkFor(path);
+    };
+
     const persist = () => {
       try {
         localStorage.setItem(
@@ -469,6 +486,14 @@ window.__ModuleLoader__.load({
       '.dshcv-guidesec{flex:0 0 auto;color:var(--dsw-alias-label-secondary);padding-top:2px}',
       '.dshcv-tags{display:flex;flex-wrap:wrap;gap:4px}',
       '.dshcv-tag{padding:1px 6px;border-radius:5px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);font-size:10.5px;line-height:16px}',
+      // Rail hover -> viewer spotlight.
+      '.dshcv-spot{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 18%,transparent);outline:1px solid color-mix(in srgb,var(--dsw-alias-brand-primary) 55%,transparent);border-radius:3px}',
+      '.dshcv-dim{opacity:.4;transition:opacity .14s ease}',
+      '.dshcv-cadhit{stroke:var(--dsw-alias-brand-primary) !important;stroke-width:3 !important;vector-effect:non-scaling-stroke}',
+      '.dshcv-line.dshcv-spot{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 18%,transparent);outline:none}',
+      '.dshcv-docp.dshcv-spot,.dshcv-slide.dshcv-spot{box-shadow:0 0 0 1px color-mix(in srgb,var(--dsw-alias-brand-primary) 55%,transparent)}',
+      '.dshcv-table td.dshcv-spot,.dshcv-table th.dshcv-spot{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 26%,transparent);outline:1px solid color-mix(in srgb,var(--dsw-alias-brand-primary) 60%,transparent)}',
+      '.dshcv-markrow-on{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 10%,transparent);border-radius:6px}',
       '.dshcv-md>:first-child{margin-top:0}',
       '.dshcv-md h1{font-size:19px;margin:16px 0 8px}',
       '.dshcv-md h2{font-size:16px;margin:14px 0 6px}',
@@ -964,6 +989,9 @@ window.__ModuleLoader__.load({
       const [picked, setPicked] = React.useState(null);
       const [editing, setEditing] = React.useState(false);
       const [pageBudget, setPageBudget] = React.useState(12);
+      const hovered = useHoverMark(doc.path);
+      const hoverLines =
+        hovered && hovered.kind === 'text' && hovered.lines ? { from: hovered.lines[0], to: hovered.lines[1] } : null;
       const [draft, setDraft] = React.useState('');
       const [saving, setSaving] = React.useState(false);
       const [message, setMessage] = React.useState('');
@@ -1296,7 +1324,15 @@ window.__ModuleLoader__.load({
                 'div',
                 {
                   key: index,
-                  className: 'dshcv-line' + (searchHits.includes(index + 1) ? ' dshcv-linehit' : '') + (searchIndex >= 0 && searchHits[searchIndex] === index + 1 ? ' dshcv-linehitcur' : ''),
+                  className:
+                    'dshcv-line' +
+                    (searchHits.includes(index + 1) ? ' dshcv-linehit' : '') +
+                    (searchIndex >= 0 && searchHits[searchIndex] === index + 1 ? ' dshcv-linehitcur' : '') +
+                    (hoverLines
+                      ? index + 1 >= hoverLines.from && index + 1 <= hoverLines.to
+                        ? ' dshcv-spot'
+                        : ' dshcv-dim'
+                      : ''),
                   'data-line': index + 1,
                 },
                 h('span', { className: 'dshcv-num' }, String(index + 1)),
@@ -1334,7 +1370,12 @@ window.__ModuleLoader__.load({
           .map((mark) =>
             h(
               'div',
-              { key: mark.id, className: 'dshcv-mark' },
+              {
+                key: mark.id,
+                className: 'dshcv-mark' + (store.hoverId === mark.id ? ' dshcv-markrow-on' : ''),
+                onMouseEnter: () => setHoverMark(mark.id),
+                onMouseLeave: () => setHoverMark(undefined),
+              },
               h('span', { className: 'dshcv-badge' }, String(mark.n)),
               h(
                 'div',
@@ -1516,7 +1557,7 @@ window.__ModuleLoader__.load({
       'window.addEventListener("message",function(e){var d=e.data;if(!d||d.source!=="dshcv-cmd")return;',
       'if(d.cmd==="pause")pauseAll();else if(d.cmd==="resume")resumeAll();else if(d.cmd==="seek")seek(d.time);',
       'else if(d.cmd==="step")stepFrame(d.dir||1);',
-      'else if(d.cmd==="state")report();},false);',
+      'else if(d.cmd==="state")report();else if(d.cmd==="spot"){var spotTarget=null;if(d.selector){try{spotTarget=document.querySelector(d.selector);}catch(spotError){}}if(spotTarget){markSpot(spotTarget);}else{clearSpot();}}},false);',
       'setTimeout(report,300);',
       '})();',
     ].join('\n');
@@ -1628,6 +1669,14 @@ window.__ModuleLoader__.load({
         if (!frame || !frame.contentWindow) return;
         frame.contentWindow.postMessage(Object.assign({ source: 'dshcv-cmd', cmd }, extra || {}), '*');
       };
+
+      // Rail hover spotlights the same element inside the preview document.
+      const hovered = useHoverMark(doc.path);
+      const hoverSelector = hovered && hovered.kind === 'element' ? hovered.selector || '' : '';
+      React.useEffect(() => {
+        if (state.status !== 'ready') return;
+        post('spot', { selector: hoverSelector });
+      }, [hoverSelector, state.status]);
 
       // Space pauses and resumes; both stay inert while the user types outside
       // the panel.
@@ -1768,6 +1817,24 @@ window.__ModuleLoader__.load({
       const animRef = React.useRef(null);
       const dwellRef = React.useRef({ element: null, timer: null });
       animRef.current = anim;
+
+      const hovered = useHoverMark(doc.path);
+      React.useEffect(() => {
+        const host = hostRef.current;
+        if (!host) return;
+        if (!hovered || hovered.kind !== 'layer' || !hovered.selector) {
+          clearSpot();
+          return;
+        }
+        let resolved = null;
+        try {
+          resolved = host.querySelector(hovered.selector);
+        } catch {
+          resolved = null;
+        }
+        if (resolved) markSpot(resolved);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [hovered && hovered.id, state.markup]);
 
       React.useEffect(() => {
         if (!sessionId) {
@@ -2098,7 +2165,7 @@ window.__ModuleLoader__.load({
     };
 
     function DataTable(props) {
-      const { rows, caption, onPick } = props;
+      const { rows, caption, onPick, sheet, spot } = props;
       const body = rows.slice(0, 200);
       const width = body.reduce((widest, row) => Math.max(widest, row.length), 0);
       const columns = Array.from({ length: width }, (_, index) => index);
@@ -2133,6 +2200,9 @@ window.__ModuleLoader__.load({
                     {
                       key: 'c' + column,
                       title: row[column] || '',
+                      'data-row': rowIndex,
+                      'data-col': column,
+                      className: spot && spot.row === rowIndex && spot.column === column ? 'dshcv-spot' : undefined,
                       style: onPick ? { cursor: 'pointer' } : undefined,
                       onClick: onPick ? () => onPick(rowIndex, column, row[column] || '') : undefined,
                     },
@@ -2150,6 +2220,7 @@ window.__ModuleLoader__.load({
     function OfficeDoc(props) {
       const { doc, sessionId } = props;
       const [state, setState] = React.useState({ status: 'idle', error: '', tables: [], slides: [], paragraphs: [], note: '' });
+      const hoverSpot = useHoverMark(doc.path);
 
       React.useEffect(() => {
         if (!sessionId) return undefined;
@@ -2213,7 +2284,14 @@ window.__ModuleLoader__.load({
                 'p',
                 {
                   key: 'p' + index,
-                  className: line.trim() ? 'dshcv-docp' : 'dshcv-docblank',
+                  className:
+                    (line.trim() ? 'dshcv-docp' : 'dshcv-docblank') +
+                    (hoverSpot
+                      ? hoverSpot.kind === 'paragraph' && hoverSpot.paragraph === index + 1
+                        ? ' dshcv-spot'
+                        : ' dshcv-dim'
+                      : ''),
+                  'data-para': index + 1,
                   title: line.trim() ? '点击标注这一段' : undefined,
                   onClick: line.trim()
                     ? () => addMark({ kind: 'paragraph', path: doc.path, paragraph: index + 1, quote: line.trim().slice(0, 240) })
@@ -2232,12 +2310,17 @@ window.__ModuleLoader__.load({
             key: 't' + index,
             rows: table.rows,
             caption: table.name,
+            sheet: table.name,
+            spot: hoverSpot && hoverSpot.kind === 'spot' && hoverSpot.sheet === table.name ? hoverSpot : null,
             onPick: (rowIndex, column, value) =>
               addMark({
                 kind: 'spot',
                 path: doc.path,
                 label: table.name + ' · ' + String.fromCharCode(65 + Math.min(25, column)) + (rowIndex + 1),
                 quote: String(value || '').slice(0, 200),
+                sheet: table.name,
+                row: rowIndex,
+                column,
               }),
           }),
         );
@@ -2249,10 +2332,23 @@ window.__ModuleLoader__.load({
             'div',
             {
               key: 's' + index,
-              className: 'dshcv-slide dshcv-docp',
+              className:
+                'dshcv-slide dshcv-docp' +
+                (hoverSpot && hoverSpot.kind === 'spot'
+                  ? hoverSpot.slide === index
+                    ? ' dshcv-spot'
+                    : ' dshcv-dim'
+                  : ''),
+              'data-slide': index + 1,
               title: '点击标注这一页',
               onClick: () =>
-                addMark({ kind: 'spot', path: doc.path, label: '第 ' + (index + 1) + ' 页', quote: (slide.title || slide.lines[0] || '').slice(0, 200) }),
+                addMark({
+                  kind: 'spot',
+                  path: doc.path,
+                  label: '第 ' + (index + 1) + ' 页',
+                  quote: (slide.title || slide.lines[0] || '').slice(0, 200),
+                  slide: index,
+                }),
             },
             h('div', { className: 'dshcv-slidehead' }, '第 ' + (index + 1) + ' 页' + (slide.title ? ' · ' + slide.title : '')),
             slide.lines.map((line, lineIndex) => h('p', { key: 'l' + lineIndex }, line)),
@@ -2270,6 +2366,7 @@ window.__ModuleLoader__.load({
     function SheetDoc(props) {
       const { doc, sessionId } = props;
       const [state, setState] = React.useState({ status: 'idle', error: '', rows: [] });
+      const hoverSpot = useHoverMark(doc.path);
       React.useEffect(() => {
         if (!sessionId) return undefined;
         const controller = new AbortController();
@@ -2297,12 +2394,15 @@ window.__ModuleLoader__.load({
         h(DataTable, {
           rows: state.rows,
           caption: state.rows.length + ' 行',
+          spot: hoverSpot && hoverSpot.kind === 'spot' && hoverSpot.sheet === undefined ? hoverSpot : null,
           onPick: (rowIndex, column, value) =>
             addMark({
               kind: 'spot',
               path: doc.path,
               label: String.fromCharCode(65 + Math.min(25, column)) + (rowIndex + 1),
               quote: String(value || '').slice(0, 200),
+              row: rowIndex,
+              column,
             }),
         }),
       );
@@ -2497,6 +2597,10 @@ window.__ModuleLoader__.load({
       const { doc, sessionId } = props;
       const [state, setState] = React.useState({ status: 'idle', error: '', mode: '', bitmap: null, outline: [], info: '' });
       const canvasRef = React.useRef(null);
+      const hoverSpot = useHoverMark(doc.path);
+      const hoverPixel = hoverSpot && hoverSpot.kind === 'spot' && Array.isArray(hoverSpot.pixel) ? hoverSpot.pixel : null;
+      const psdCanvas = canvasRef.current;
+      const pixelFactor = state.bitmap && psdCanvas && psdCanvas.clientWidth ? state.bitmap.width / psdCanvas.clientWidth : 1;
 
       React.useEffect(() => {
         if (!sessionId) return undefined;
@@ -2572,29 +2676,55 @@ window.__ModuleLoader__.load({
           'div',
           { style: { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' } },
           header,
-          h('div', { className: 'dshcv-canvaswrap' }, h('canvas', {
-            ref: canvasRef,
-            className: 'dshcv-bitmap',
-            style: { cursor: 'crosshair' },
-            onClick: (event) => {
-              const bitmap = state.bitmap;
-              if (!bitmap) return;
-              const rect = event.currentTarget.getBoundingClientRect();
-              const x = Math.round(((event.clientX - rect.left) / Math.max(1, rect.width)) * bitmap.width);
-              const y = Math.round(((event.clientY - rect.top) / Math.max(1, rect.height)) * bitmap.height);
-              if (x < 0 || y < 0 || x >= bitmap.width || y >= bitmap.height) return;
-              const at = (y * bitmap.width + x) * 4;
-              const red = bitmap.rgba[at];
-              const green = bitmap.rgba[at + 1];
-              const blue = bitmap.rgba[at + 2];
-              addMark({
-                kind: 'spot',
-                path: doc.path,
-                label: '像素 (' + x + ', ' + y + ')',
-                quote: 'rgb(' + red + ', ' + green + ', ' + blue + ')',
-              });
-            },
-          })),
+          h(
+            'div',
+            { className: 'dshcv-canvaswrap' },
+            h(
+              'div',
+              { style: { position: 'relative', display: 'inline-block' } },
+              h('canvas', {
+                ref: canvasRef,
+                className: 'dshcv-bitmap',
+                style: { cursor: 'crosshair' },
+                onClick: (event) => {
+                  const bitmap = state.bitmap;
+                  if (!bitmap) return;
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  const x = Math.round(((event.clientX - rect.left) / Math.max(1, rect.width)) * bitmap.width);
+                  const y = Math.round(((event.clientY - rect.top) / Math.max(1, rect.height)) * bitmap.height);
+                  if (x < 0 || y < 0 || x >= bitmap.width || y >= bitmap.height) return;
+                  const at = (y * bitmap.width + x) * 4;
+                  const red = bitmap.rgba[at];
+                  const green = bitmap.rgba[at + 1];
+                  const blue = bitmap.rgba[at + 2];
+                  addMark({
+                    kind: 'spot',
+                    path: doc.path,
+                    label: '像素 (' + x + ', ' + y + ')',
+                    quote: 'rgb(' + red + ', ' + green + ', ' + blue + ')',
+                    pixel: [x, y],
+                  });
+                },
+              }),
+              hoverPixel
+                ? h('div', {
+                    style: {
+                      position: 'absolute',
+                      left: hoverPixel[0] / pixelFactor + 'px',
+                      top: hoverPixel[1] / pixelFactor + 'px',
+                      width: '16px',
+                      height: '16px',
+                      marginLeft: '-8px',
+                      marginTop: '-8px',
+                      border: '2px solid var(--dsw-alias-brand-primary)',
+                      borderRadius: '50%',
+                      boxShadow: '0 0 0 9999px rgba(0,0,0,.3)',
+                      pointerEvents: 'none',
+                    },
+                  })
+                : null,
+            ),
+          ),
         );
       }
       if (state.mode === 'pdf') {
@@ -2622,9 +2752,16 @@ window.__ModuleLoader__.load({
                   'li',
                   {
                     key: index,
+                    className:
+                      hoverSpot && hoverSpot.kind === 'spot'
+                        ? hoverSpot.outlineIndex === index
+                          ? 'dshcv-spot'
+                          : 'dshcv-dim'
+                        : undefined,
                     style: { cursor: 'pointer' },
                     title: '点击标注这一项',
-                    onClick: () => addMark({ kind: 'spot', path: doc.path, label: item.label, quote: item.path }),
+                    onClick: () =>
+                      addMark({ kind: 'spot', path: doc.path, label: item.label, quote: item.path, outlineIndex: index }),
                   },
                   h('span', { className: 'dshcv-tcaption' }, item.path),
                   ' ',
@@ -3174,6 +3311,7 @@ window.__ModuleLoader__.load({
       const meshRef = React.useRef(null);
       const viewRef = React.useRef({ yaw: 0.72, pitch: 0.42, distance: 3, pan: [0, 0, 0], center: [0, 0, 0], radius: 1 });
       const drawRef = React.useRef(() => {});
+      const repaintRef = React.useRef(() => {});
       const pickRef = React.useRef(() => null);
       // A click that ends a drag must not drop a mark on the model.
       const dragMovedRef = React.useRef(false);
@@ -3507,9 +3645,37 @@ window.__ModuleLoader__.load({
             gl.uniform3f(uniforms.lines.color, 0.42, 0.62, 0.95);
             gl.drawArrays(gl.LINES, 4, 2);
           }
+
+          // Rail hover outlines the picked triangle in place.
+          const hoverMark = hoveredMarkFor(doc.path);
+          if (hoverMark && hoverMark.kind === 'spot' && typeof hoverMark.triangle === 'number') {
+            const start = hoverMark.triangle * 9;
+            if (start >= 0 && start + 8 < positions.length) {
+              const outline = new Float32Array([
+                positions[start], positions[start + 1], positions[start + 2],
+                positions[start + 3], positions[start + 4], positions[start + 5],
+                positions[start + 6], positions[start + 7], positions[start + 8],
+              ]);
+              gl.useProgram(lines);
+              gl.bindBuffer(gl.ARRAY_BUFFER, axisBuffer);
+              gl.bufferData(gl.ARRAY_BUFFER, outline, gl.STREAM_DRAW);
+              gl.enableVertexAttribArray(attributes.lines.position);
+              gl.vertexAttribPointer(attributes.lines.position, 3, gl.FLOAT, false, 12, 0);
+              gl.depthFunc(gl.LEQUAL);
+              gl.uniform3f(uniforms.lines.color, 1.0, 0.78, 0.24);
+              gl.drawArrays(gl.LINE_LOOP, 0, 3);
+              gl.depthFunc(gl.LESS);
+            }
+          }
           publishDiag({ error: gl.getError() });
         };
         drawRef.current = render;
+
+        // A hovered mark only changes the overlay, so repaint without rebuilding.
+        const repaint = () => {
+          if (drawRef.current) drawRef.current();
+        };
+        repaintRef.current = repaint;
 
         // Click picking: build a ray through the clicked pixel and take the
         // nearest triangle hit, so a model can be annotated like any other file.
@@ -3721,6 +3887,12 @@ window.__ModuleLoader__.load({
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, []);
 
+      const hoverToken = useHoverMark(doc.path);
+      React.useEffect(() => {
+        repaintRef.current();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [hoverToken && hoverToken.id]);
+
       const exportObj = () => {
         const positions = meshRef.current;
         if (!positions) return;
@@ -3831,6 +4003,7 @@ window.__ModuleLoader__.load({
               path: doc.path,
               label: '三角形 #' + hit.triangle,
               quote: hit.point.map((value) => value.toFixed(3)).join(', '),
+              triangle: hit.triangle,
             });
           },
         })),
@@ -3968,6 +4141,7 @@ window.__ModuleLoader__.load({
       const [hidden, setHidden] = React.useState(() => new Set());
       const wrapRef = React.useRef(null);
       const dragRef = React.useRef(null);
+      const hoverShape = useHoverMark(doc.path);
 
       React.useEffect(() => {
         if (!sessionId) return undefined;
@@ -4164,6 +4338,13 @@ window.__ModuleLoader__.load({
                 'g',
                 {
                   key: index,
+                  'data-shape': index,
+                  className:
+                    hoverShape && hoverShape.kind === 'spot'
+                      ? hoverShape.shapeIndex === index
+                        ? 'dshcv-cadhit'
+                        : 'dshcv-dim'
+                      : undefined,
                   style: { cursor: 'pointer' },
                   onClick: () =>
                     addMark({
@@ -4171,6 +4352,7 @@ window.__ModuleLoader__.load({
                       path: doc.path,
                       label: (shape.layer || '0') + ' · ' + String(shape.kind).toUpperCase(),
                       quote: shape.label || '',
+                      shapeIndex: index,
                     }),
                 },
                 renderShape(shape, index),
@@ -4207,6 +4389,10 @@ window.__ModuleLoader__.load({
       const imageRef = React.useRef(null);
       const [sample, setSample] = React.useState(null);
       const sampleCanvasRef = React.useRef(null);
+      const hoverMark = useHoverMark(doc.path);
+      const hoverRegion = hoverMark && hoverMark.kind === 'region' && Array.isArray(hoverMark.rect) ? hoverMark : null;
+      const imageNode = imageRef.current;
+      const displayFactor = imageNode && imageNode.naturalWidth && imageNode.clientWidth ? imageNode.naturalWidth / imageNode.clientWidth : 1;
 
       // Pixel sampling needs the raster in a canvas we control; an <img> cannot
       // be read back for cross-origin safety reasons once it is a blob.
@@ -4382,6 +4568,21 @@ window.__ModuleLoader__.load({
                     height: marquee.height + 'px',
                     border: '2px solid var(--dsw-alias-brand-primary)',
                     background: 'rgba(47,111,235,.12)',
+                    pointerEvents: 'none',
+                  },
+                })
+              : null,
+            // Rail hover frames the marked region and dims the rest of the image.
+            hoverRegion
+              ? h('div', {
+                  style: {
+                    position: 'absolute',
+                    left: hoverRegion.rect[0] / displayFactor + 'px',
+                    top: hoverRegion.rect[1] / displayFactor + 'px',
+                    width: hoverRegion.rect[2] / displayFactor + 'px',
+                    height: hoverRegion.rect[3] / displayFactor + 'px',
+                    border: '2px solid var(--dsw-alias-brand-primary)',
+                    boxShadow: '0 0 0 9999px rgba(0,0,0,.3)',
                     pointerEvents: 'none',
                   },
                 })

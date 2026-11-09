@@ -62,6 +62,7 @@
 - **动画冻结 + 时间轴**：`暂停 / 继续`（Alt+S，单手）、时间轴滑轨、`±1 帧`（16ms，Shift 100ms）。HTML 走 `document.getAnimations()`（CSS 动画 / 过渡 / WAAPI）+ SVG SMIL，并接管 `requestAnimationFrame` 让 JS 帧循环也能停住、`+` 可逐帧推进。
 - **快捷键归属**：只有鼠标悬停在面板上、或焦点在面板内时才响应；在会话输入框、任意 `input/textarea/select/contenteditable` 或输入法组合期间一律不拦截。
 - **SVG 内联渲染**：不再用 `<img>`，因此可悬停聚光、点元素生成图层标注、暂停/拖动 SMIL 时间线。插入前剥掉 `<script>`、`on*` 事件与 `javascript:` 链接。
+- **标注 ↔ 视图联动**：鼠标停在标注栏的编号或意见框上，视图里对应的目标立即高亮、其余内容淡到 40%；移出即恢复。覆盖文本行、HTML 元素、SVG 图层、图片区域、docx 段落、xlsx/csv 单元格、pptx 页、DXF 图元、三维三角面、PSD 像素与 sketch 结构行。
 
 已知边界：JS 帧无法回退（`requestAnimationFrame` 没有历史）；页面若在启动时缓存了原生 `requestAnimationFrame` 引用则不吃接管；时间轴范围取运行中动画的最长有限 `endTime`，无限循环动画用随播放时间增长的窗口。
 
