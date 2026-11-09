@@ -236,43 +236,61 @@ window.__ModuleLoader__.load({
     };
 
     // ---------------- styles ----------------
-    const CSS = [
-      '.dshcv-root{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary)}',
-      '.dshcv-head{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--dsw-alias-border-l1);min-height:40px}',
-      '.dshcv-title{font-size:13px;font-weight:600;white-space:nowrap}',
-      '.dshcv-path{font-size:12px;color:var(--dsw-alias-label-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      '.dshcv-spacer{flex:1 1 auto}',
-      '.dshcv-btn{font:inherit;font-size:12px;line-height:18px;padding:4px 10px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);cursor:pointer;white-space:nowrap}',
-      '.dshcv-btn:hover{background:var(--dsw-alias-bg-layer-2)}',
-      '.dshcv-btn[data-primary="1"]{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary)}',
-      '.dshcv-btn[data-quiet="1"]{border-color:transparent;background:transparent;color:var(--dsw-alias-label-secondary)}',
-      '.dshcv-body{display:flex;flex:1 1 auto;min-height:0}',
-      '.dshcv-pane{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}',
-      '.dshcv-split{flex:0 0 7px;cursor:col-resize;background:var(--dsw-alias-border-l1)}',
-      '.dshcv-split:hover{background:var(--dsw-alias-brand-primary)}',
-      '.dshcv-docs{display:flex;gap:6px;padding:6px 12px;border-bottom:1px solid var(--dsw-alias-border-l1);overflow-x:auto}',
-      '.dshcv-chip{font-size:12px;padding:3px 8px;border-radius:7px;border:1px solid var(--dsw-alias-border-l1);background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer;white-space:nowrap}',
-      '.dshcv-chip[data-active="1"]{background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-border-l2)}',
-      '.dshcv-scroll{flex:1 1 auto;min-height:0;overflow:auto}',
-      '.dshcv-code{font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;padding:8px 0}',
-      '.dshcv-line{display:flex;gap:10px;padding:0 12px;white-space:pre}',
-      '.dshcv-line:hover{background:var(--dsw-alias-bg-layer-2)}',
-      '.dshcv-num{color:var(--dsw-alias-label-secondary);user-select:none;text-align:right;min-width:42px;flex:0 0 auto}',
-      '.dshcv-text{white-space:pre}',
-      '.dshcv-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;height:100%;padding:24px;text-align:center;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.7}',
-      '.dshcv-marks{flex:0 0 auto;max-height:38%;overflow:auto;border-top:1px solid var(--dsw-alias-border-l1);padding:8px 12px}',
-      '.dshcv-mark{display:flex;gap:8px;padding:6px 0;border-bottom:1px solid var(--dsw-alias-border-l1)}',
-      '.dshcv-badge{flex:0 0 auto;min-width:20px;height:20px;border-radius:10px;background:var(--dsw-alias-brand-primary);color:#fff;font-size:11px;line-height:20px;text-align:center;padding:0 5px}',
-      '.dshcv-markbody{flex:1 1 auto;min-width:0}',
-      '.dshcv-meta{font-size:11px;color:var(--dsw-alias-label-secondary);margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      '.dshcv-quote{font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--dsw-alias-label-secondary);border-left:2px solid var(--dsw-alias-border-l2);padding-left:8px;margin:4px 0;max-height:56px;overflow:hidden}',
-      '.dshcv-note{width:100%;box-sizing:border-box;font:inherit;font-size:12px;line-height:1.5;padding:5px 8px;border-radius:7px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);resize:vertical}',
-      '.dshcv-pick{position:fixed;z-index:60;transform:translate(-50%,-100%);box-shadow:0 6px 20px rgba(0,0,0,.18)}',
-      '.dshcv-toast{position:absolute;right:16px;top:48px;z-index:50;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l2);border-radius:9px;padding:8px 12px;font-size:12px;box-shadow:0 8px 24px rgba(0,0,0,.16)}',
-      '.dshcv-card{border:1px solid var(--dsw-alias-border-l1);border-radius:10px;padding:10px 12px;margin:6px 0;display:flex;align-items:center;gap:10px}',
+    // Controls follow the host's compact-button language: no border, transparent
+    // fill, a soft hover wash, 26px tall, 8px radius, secondary label colour.
+    // Theme tokens only, so light and dark both follow the application.
+    const CSS_BASE = [
+      '.dshcv-btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;height:26px;padding:0 9px;border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:1;cursor:pointer;white-space:nowrap;transition:background-color .12s ease,color .12s ease}',
+      '.dshcv-btn:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}',
+      '.dshcv-btn:active{background:var(--dsw-alias-bg-layer-1)}',
+      '.dshcv-btn:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
+      '.dshcv-btn[data-primary="1"]{background:var(--dsw-alias-brand-primary);color:#fff}',
+      '.dshcv-btn[data-primary="1"]:hover{color:#fff;filter:brightness(1.06)}',
+      '.dshcv-btn[data-quiet="1"]{color:var(--dsw-alias-label-secondary)}',
+      '.dshcv-btn[data-icon="1"]{width:26px;padding:0}',
+      '.dshcv-chip{display:inline-flex;align-items:center;height:24px;padding:0 9px;border:0;border-radius:7px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:1;cursor:pointer;white-space:nowrap;transition:background-color .12s ease,color .12s ease}',
+      '.dshcv-chip:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}',
+      '.dshcv-chip[data-active="1"]{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}',
+      '.dshcv-badge{flex:0 0 auto;min-width:18px;height:18px;border-radius:9px;background:var(--dsw-alias-brand-primary);color:#fff;font-size:11px;line-height:18px;text-align:center;padding:0 5px;font-variant-numeric:tabular-nums}',
+      '.dshcv-note{width:100%;box-sizing:border-box;font:inherit;font-size:12px;line-height:1.5;padding:5px 8px;border-radius:7px;border:1px solid transparent;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);resize:vertical;transition:border-color .12s ease}',
+      '.dshcv-note:hover{border-color:var(--dsw-alias-border-l1)}',
+      '.dshcv-note:focus{outline:none;border-color:var(--dsw-alias-brand-primary)}',
+      '.dshcv-card{display:flex;align-items:center;gap:10px;padding:8px 10px;margin:6px 0;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1)}',
+      '.dshcv-pick{position:fixed;z-index:60;transform:translate(-50%,-100%);box-shadow:0 8px 24px rgba(0,0,0,.2)}',
+      '.dshcv-toast{position:absolute;right:16px;top:48px;z-index:50;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l1);border-radius:10px;padding:8px 12px;font-size:12px;box-shadow:0 8px 24px rgba(0,0,0,.16)}',
+      '@media (prefers-reduced-motion: reduce){.dshcv-btn,.dshcv-chip,.dshcv-note{transition:none}}',
     ].join('\n');
 
-    const Styles = () => h('style', { 'data-dshcv': '1' }, CSS);
+    const CSS_PANEL = [
+      '.dshcv-root{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary)}',
+      '.dshcv-head{display:flex;align-items:center;gap:6px;padding:0 8px 0 12px;min-height:40px;border-bottom:1px solid var(--dsw-alias-border-l1)}',
+      '.dshcv-title{font-size:13px;font-weight:600;letter-spacing:-0.01em;white-space:nowrap}',
+      '.dshcv-path{font-size:12px;color:var(--dsw-alias-label-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}',
+      '.dshcv-spacer{flex:1 1 auto;min-width:8px}',
+      '.dshcv-body{display:flex;flex:1 1 auto;min-height:0}',
+      '.dshcv-pane{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}',
+      '.dshcv-split{flex:0 0 9px;cursor:col-resize;position:relative;background:transparent}',
+      '.dshcv-split::after{content:"";position:absolute;top:0;bottom:0;left:4px;width:1px;background:var(--dsw-alias-border-l1);transition:background-color .12s ease}',
+      '.dshcv-split:hover::after{background:var(--dsw-alias-brand-primary)}',
+      '.dshcv-docs{display:flex;align-items:center;gap:2px;padding:6px 10px;border-bottom:1px solid var(--dsw-alias-border-l1);overflow-x:auto}',
+      '.dshcv-scroll{flex:1 1 auto;min-height:0;overflow:auto}',
+      '.dshcv-code{font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;padding:6px 0}',
+      '.dshcv-line{display:flex;gap:10px;padding:0 12px;white-space:pre}',
+      '.dshcv-line:hover{background:var(--dsw-alias-bg-layer-2)}',
+      '.dshcv-num{color:var(--dsw-alias-label-secondary);user-select:none;text-align:right;min-width:42px;flex:0 0 auto;opacity:.75}',
+      '.dshcv-text{white-space:pre}',
+      '.dshcv-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;height:100%;padding:24px;text-align:center;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.7}',
+      '.dshcv-marks{flex:0 0 auto;max-height:38%;overflow:auto;border-top:1px solid var(--dsw-alias-border-l1);padding:4px 12px 8px}',
+      '.dshcv-mark{display:flex;gap:8px;padding:8px 0;border-bottom:1px solid var(--dsw-alias-border-l1)}',
+      '.dshcv-mark:last-child{border-bottom:0}',
+      '.dshcv-markbody{flex:1 1 auto;min-width:0}',
+      '.dshcv-meta{font-size:11px;color:var(--dsw-alias-label-secondary);margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.dshcv-quote{font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--dsw-alias-label-secondary);border-left:2px solid var(--dsw-alias-border-l1);padding-left:8px;margin:4px 0;max-height:56px;overflow:hidden}',
+      '@media (prefers-reduced-motion: reduce){.dshcv-split::after{transition:none}}',
+    ].join('\n');
+
+    const Styles = (props) =>
+      h('style', { 'data-dshcv': props && props.panel ? 'panel' : 'base' }, props && props.panel ? CSS_BASE + '\n' + CSS_PANEL : CSS_BASE);
 
     // ---------------- conversation bridge ----------------
     // The composer dock is Session-scoped, so it gives us the current session
@@ -372,29 +390,60 @@ window.__ModuleLoader__.load({
         if (path) openDoc({ path, view: args && args.view, note: args && args.note, line: args && args.line });
       }, [props.phase, props.callId, path]);
 
+      const glyph = h(
+        'svg',
+        {
+          width: 16,
+          height: 16,
+          viewBox: '0 0 16 16',
+          fill: 'none',
+          'aria-hidden': true,
+          style: { flex: '0 0 auto', color: 'var(--dsw-alias-label-secondary)' },
+        },
+        h('rect', { x: 2.25, y: 2.75, width: 11.5, height: 10.5, rx: 2.25, stroke: 'currentColor', strokeWidth: 1.3 }),
+        h('path', { d: 'M6.6 3.2v9.6', stroke: 'currentColor', strokeWidth: 1.3 }),
+      );
+
       if (!path) {
         return h(
-          'div',
-          { className: 'dshcv-card' },
-          h('span', { style: { fontSize: 13 } }, '🖼'),
-          h('div', { style: { flex: '1 1 auto', minWidth: 0 } }, '在画布面板中查看'),
-          h('button', { type: 'button', className: 'dshcv-btn', onClick: () => selectPanel(PANEL_KEY) }, '打开画布'),
+          React.Fragment,
+          null,
+          h(Styles),
+          h(
+            'div',
+            { className: 'dshcv-card' },
+            glyph,
+            h('div', { style: { flex: '1 1 auto', minWidth: 0 } }, '在画布面板中查看'),
+            h('button', { type: 'button', className: 'dshcv-btn', onClick: () => selectPanel(PANEL_KEY) }, '打开'),
+          ),
         );
       }
       return h(
-        'div',
-        { className: 'dshcv-card' },
-        h('span', { style: { fontSize: 13 } }, '🖼'),
+        React.Fragment,
+        null,
+        h(Styles),
         h(
           'div',
-          { style: { flex: '1 1 auto', minWidth: 0 } },
-          h('div', { className: 'dshcv-path' }, path),
-          h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, '已在画布面板中打开 / opened in the canvas panel'),
-        ),
-        h(
-          'button',
-          { type: 'button', className: 'dshcv-btn', onClick: () => { openDoc({ path, view: args && args.view }); selectPanel(PANEL_KEY); } },
-          '查看',
+          { className: 'dshcv-card' },
+          glyph,
+          h(
+            'div',
+            { style: { flex: '1 1 auto', minWidth: 0 } },
+            h('div', { className: 'dshcv-path' }, path),
+            h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, '已在画布面板中打开'),
+          ),
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'dshcv-btn',
+              onClick: () => {
+                openDoc({ path, view: args && args.view });
+                selectPanel(PANEL_KEY);
+              },
+            },
+            '查看',
+          ),
         ),
       );
     }
@@ -994,7 +1043,7 @@ window.__ModuleLoader__.load({
       return h(
         'div',
         { className: 'dshcv-root' },
-        h(Styles),
+        h(Styles, { panel: true }),
         h(
           'div',
           { className: 'dshcv-head' },
@@ -1110,15 +1159,34 @@ window.__ModuleLoader__.load({
             { name: 'conversation.session.header.utilities', id: 'canvas-panel-open', order: 60 },
             function OpenCanvasButton() {
               return h(
-                'button',
-                {
-                  type: 'button',
-                  className: 'dshcv-btn',
-                  'data-quiet': '1',
-                  title: '打开画布面板 / Open canvas panel',
-                  onClick: () => selectPanel(PANEL_KEY),
-                },
-                '画布',
+                React.Fragment,
+                null,
+                h(Styles),
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dshcv-btn',
+                    'data-quiet': '1',
+                    title: '画布面板 / Canvas panel',
+                    'aria-label': '画布面板',
+                    onClick: () => selectPanel(PANEL_KEY),
+                  },
+                  h(
+                    'svg',
+                    {
+                      width: 14,
+                      height: 14,
+                      viewBox: '0 0 16 16',
+                      fill: 'none',
+                      'aria-hidden': true,
+                      style: { flex: '0 0 auto' },
+                    },
+                    h('rect', { x: 2.25, y: 2.75, width: 11.5, height: 10.5, rx: 2.25, stroke: 'currentColor', strokeWidth: 1.4 }),
+                    h('path', { d: 'M6.6 3.2v9.6', stroke: 'currentColor', strokeWidth: 1.4 }),
+                  ),
+                  '画布',
+                ),
               );
             },
           ),
