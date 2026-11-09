@@ -1154,6 +1154,15 @@ window.__ModuleLoader__.load({
     const PICKER_SCRIPT = [
       '(function(){',
       'var box=null,dwellEl=null,dwellTimer=null,spotEl=null,paused=false,armed=false;',
+      // Freeze JS frame loops too: queue requestAnimationFrame callbacks while
+      // frozen and release them on resume, so rAF-driven motion stops with the
+      // rest of the timeline (a loop that captured the original function and
+      // never reads window.requestAnimationFrame again stays out of reach).
+      'var origRaf=window.requestAnimationFrame,origCaf=window.cancelAnimationFrame,rafQueue=[],rafSeq=0;',
+      'window.requestAnimationFrame=function(cb){if(!paused)return origRaf.call(window,cb);rafSeq+=1;rafQueue.push({id:rafSeq,cb:cb});return rafSeq;};',
+      'window.cancelAnimationFrame=function(id){for(var i=0;i<rafQueue.length;i++){if(rafQueue[i].id===id){rafQueue.splice(i,1);return;}}return origCaf?origCaf.call(window,id):undefined;};',
+      'function releaseRaf(){var queue=rafQueue;rafQueue=[];for(var i=0;i<queue.length;i++){try{origRaf.call(window,queue[i].cb);}catch(e){}}}',
+      'function runOneRaf(){var next=rafQueue.shift();if(!next)return false;try{next.cb(performance.now());}catch(e){}return true;}',
       'function overlay(){if(box)return box;box=document.createElement("div");',
       'box.style.cssText="position:fixed;pointer-events:none;z-index:2147483647;border:2px solid #2f6feb;background:rgba(47,111,235,.12);border-radius:2px;display:none";',
       'document.documentElement.appendChild(box);return box;}',
@@ -1175,14 +1184,19 @@ window.__ModuleLoader__.load({
       'function pauseAll(){var list=anims();for(var i=0;i<list.length;i++){try{list[i].pause();}catch(e){}}',
       'var roots=svgRoots();for(var j=0;j<roots.length;j++){try{roots[j].pauseAnimations&&roots[j].pauseAnimations();}catch(e){}}paused=true;report();}',
       'function resumeAll(){var list=anims();for(var i=0;i<list.length;i++){try{list[i].play();}catch(e){}}',
-      'var roots=svgRoots();for(var j=0;j<roots.length;j++){try{roots[j].unpauseAnimations&&roots[j].unpauseAnimations();}catch(e){}}paused=false;report();}',
+      'var roots=svgRoots();for(var j=0;j<roots.length;j++){try{roots[j].unpauseAnimations&&roots[j].unpauseAnimations();}catch(e){}}paused=false;releaseRaf();report();}',
       'function seek(ms){var at=Math.max(0,Number(ms)||0);var list=anims();',
       'for(var i=0;i<list.length;i++){try{var a=list[i],end=1e9;var t=a.effect&&a.effect.getComputedTiming?a.effect.getComputedTiming():null;if(t&&t.endTime)end=t.endTime;a.currentTime=Math.min(at,end);}catch(e){}}',
       'var roots=svgRoots();for(var j=0;j<roots.length;j++){try{roots[j].setCurrentTime&&roots[j].setCurrentTime(at/1000);}catch(e){}}report();}',
+      'function stepFrame(dir){var delta=(dir||1)*16;var list=anims();',
+      'for(var i=0;i<list.length;i++){try{var a=list[i],d=Number(a.currentTime)||0;a.pause();a.currentTime=Math.max(0,d+delta);}catch(e){}}',
+      'var roots=svgRoots();for(var j=0;j<roots.length;j++){try{var root=roots[j];root.pauseAnimations&&root.pauseAnimations();',
+      'var now=root.getCurrentTime?root.getCurrentTime():0;root.setCurrentTime&&root.setCurrentTime(Math.max(0,now+delta/1000));}catch(e){}}',
+      'if((dir||1)>0)runOneRaf();paused=true;report();}',
       'function report(){var list=anims(),duration=0,current=0;',
       'for(var i=0;i<list.length;i++){try{var a=list[i];var t=a.effect&&a.effect.getComputedTiming?a.effect.getComputedTiming():null;',
       'var end=t&&t.endTime?t.endTime:0;if(isFinite(end)&&end>duration)duration=end;var c=Number(a.currentTime)||0;if(isFinite(c)&&c>current)current=c;}catch(e){}}',
-      'parent.postMessage({source:"dshcv-anim",state:{paused:paused,armed:armed,duration:Math.round(duration),current:Math.round(current),count:list.length}},"*");}',
+      'parent.postMessage({source:"dshcv-anim",state:{paused:paused,armed:armed,duration:Math.round(duration),current:Math.round(current),count:list.length,raf:rafQueue.length}},"*");}',
       // pointer behaviour
       'document.addEventListener("mousemove",function(e){var el=e.target;if(!el||el.nodeType!==1)return;',
       'var b=overlay();var r=el.getBoundingClientRect();b.style.display="block";b.style.left=r.left+"px";b.style.top=r.top+"px";b.style.width=r.width+"px";b.style.height=r.height+"px";',
@@ -1201,6 +1215,7 @@ window.__ModuleLoader__.load({
       'else if(e.key==="p"||e.key==="P"){paused?resumeAll():pauseAll();}},true);',
       'window.addEventListener("message",function(e){var d=e.data;if(!d||d.source!=="dshcv-cmd")return;',
       'if(d.cmd==="pause")pauseAll();else if(d.cmd==="resume")resumeAll();else if(d.cmd==="seek")seek(d.time);',
+      'else if(d.cmd==="step")stepFrame(d.dir||1);',
       'else if(d.cmd==="arm"){armed=!!d.on;report();}else if(d.cmd==="state")report();},false);',
       'setTimeout(report,300);',
       '})();',
@@ -1225,14 +1240,22 @@ window.__ModuleLoader__.load({
     // scrub the timeline, and step single frames. Every control clamps to the
     // same span, so stepping cannot leave the timeline.
     function AnimBar(props) {
-      const { anim, onPause, onResume, onSeek, onArm } = props;
+      const { anim, onPause, onResume, onSeek, onArm, onStep } = props;
       const finite = Number.isFinite(anim.duration) && anim.duration > 0 ? anim.duration : 0;
       // Looping animations report no finite end, so the span grows with the
       // elapsed time instead of collapsing to a meaningless value.
       const span = Math.max(finite, Math.min(30000, Math.max(1000, anim.current || 0)));
       const current = Math.min(Math.max(0, anim.current || 0), span);
       const clamp = (value) => Math.min(span, Math.max(0, Math.round(value)));
-      const step = (delta) => onSeek(clamp(current + delta));
+      const step = (delta) => {
+        if (onStep) {
+          onStep(delta > 0 ? 1 : -1);
+          return;
+        }
+        onSeek(clamp(current + delta));
+      };
+      const canBack = current > 0;
+      const canForward = Boolean(onStep) || current < span;
       return h(
         'div',
         { className: 'dshcv-tools' },
@@ -1267,9 +1290,9 @@ window.__ModuleLoader__.load({
           'span',
           { className: 'dshcv-msg' },
           anim.paused
-            ? Math.round(current) + ' ms / ' + Math.round(span) + ' ms'
-            : anim.count
-              ? anim.count + ' 个动画'
+            ? Math.round(current) + ' ms / ' + Math.round(span) + ' ms' + (anim.raf ? ' · JS 帧 ' + anim.raf : '')
+            : anim.count || anim.raf
+              ? (anim.count || 0) + ' 个动画' + (anim.raf ? ' · JS 帧 ' + anim.raf : '')
               : '无动画',
         ),
         anim.paused
@@ -1279,8 +1302,8 @@ window.__ModuleLoader__.load({
                 type: 'button',
                 className: 'dshcv-btn',
                 'data-icon': '1',
-                title: '后退一帧',
-                disabled: current <= 0,
+                title: '后退一帧（JS 帧无法回退）',
+                disabled: !canBack,
                 onClick: () => step(-16),
               },
               '−',
@@ -1293,8 +1316,8 @@ window.__ModuleLoader__.load({
                 type: 'button',
                 className: 'dshcv-btn',
                 'data-icon': '1',
-                title: '前进一帧',
-                disabled: current >= span,
+                title: onStep ? '前进一帧（含一个 JS 帧）' : '前进一帧',
+                disabled: !canForward,
                 onClick: () => step(16),
               },
               '+',
@@ -1380,6 +1403,7 @@ window.__ModuleLoader__.load({
           onPause: () => post('pause'),
           onResume: () => post('resume'),
           onSeek: (time) => post('seek', { time }),
+          onStep: (dir) => post('step', { dir }),
           onArm: (on) => post('arm', { on }),
         }),
         h('iframe', {
