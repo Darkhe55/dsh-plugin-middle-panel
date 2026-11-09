@@ -455,6 +455,20 @@ window.__ModuleLoader__.load({
       '.dshcv-outline li{padding:5px 0;border-bottom:1px solid var(--dsw-alias-border-l1);display:flex;gap:8px;align-items:baseline}',
       '.dshcv-outline .dshcv-tcaption{margin:0;flex:0 0 auto;min-width:70px}',
       '.dshcv-md{font-size:13px;line-height:1.7;padding:12px 16px;overflow-wrap:anywhere}',
+      // Empty state: one primary action, three numbered steps, then facts.
+      '.dshcv-guide{flex:1 1 auto;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:14px;padding:26px 24px}',
+      '.dshcv-guidehead{display:flex;flex-direction:column;gap:6px}',
+      '.dshcv-guidetitle{font-size:15px;font-weight:600;letter-spacing:-.2px}',
+      '.dshcv-guidesub{font-size:12px;line-height:1.7;color:var(--dsw-alias-label-secondary);max-width:52ch}',
+      '.dshcv-guideactions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}',
+      '.dshcv-guidehint{font-size:11px;color:var(--dsw-alias-label-secondary)}',
+      '.dshcv-steps{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px;max-width:62ch}',
+      '.dshcv-steps li{position:relative;padding:9px 12px 9px 12px;border:1px solid var(--dsw-alias-border-l1);border-radius:9px;background:var(--dsw-alias-bg-layer-1);font-size:12px;line-height:1.75;color:var(--dsw-alias-label-secondary)}',
+      '.dshcv-steps b{color:var(--dsw-alias-label-primary);font-weight:600}',
+      '.dshcv-guidefoot{display:flex;gap:10px;align-items:flex-start;font-size:11px;max-width:62ch}',
+      '.dshcv-guidesec{flex:0 0 auto;color:var(--dsw-alias-label-secondary);padding-top:2px}',
+      '.dshcv-tags{display:flex;flex-wrap:wrap;gap:4px}',
+      '.dshcv-tag{padding:1px 6px;border-radius:5px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);font-size:10.5px;line-height:16px}',
       '.dshcv-md>:first-child{margin-top:0}',
       '.dshcv-md h1{font-size:19px;margin:16px 0 8px}',
       '.dshcv-md h2{font-size:16px;margin:14px 0 6px}',
@@ -4759,16 +4773,74 @@ window.__ModuleLoader__.load({
                           : h(TextDoc, { key: active.id + '-text', doc: active, sessionId: store.sessionId })
                 : h(
                     'div',
-                    { className: 'dshcv-empty' },
-                    h('div', { style: { fontSize: 13 } }, '这里显示交付物'),
-                    h('div', null, '模型用 canvas 工具打开文件后，它出现在这里；'),
-                    h('div', null, '划选文字、点选页面元素或框选图片区域，会生成编号标注，发送回对话即可。'),
+                    { className: 'dshcv-guide' },
                     h(
-                      'button',
-                      { type: 'button', className: 'dshcv-btn', style: { marginTop: 8 }, onClick: () => setPickerOpen(true) },
-                      '打开文件…',
+                      'div',
+                      { className: 'dshcv-guidehead' },
+                      h('div', { className: 'dshcv-guidetitle' }, '画布 · 还没有打开交付物'),
+                      h(
+                        'div',
+                        { className: 'dshcv-guidesub' },
+                        '在这里预览文件并逐处标注；每条标注自动编号，可一次性写回对话。',
+                      ),
                     ),
-                    h('div', { style: { marginTop: 4, fontSize: 11 } }, store.sessionId ? '当前会话已连接' : '等待会话…'),
+                    h(
+                      'div',
+                      { className: 'dshcv-guideactions' },
+                      h(
+                        'button',
+                        { type: 'button', className: 'dshcv-btn', 'data-primary': '1', onClick: () => setPickerOpen(true) },
+                        '打开工作区文件',
+                      ),
+                      h(
+                        'span',
+                        { className: 'dshcv-guidehint' },
+                        store.sessionId
+                          ? '或让模型调用 canvas 工具，打开的文件会自动出现在这里'
+                          : '等待会话连接后即可打开文件…',
+                      ),
+                    ),
+                    h(
+                      'ol',
+                      { className: 'dshcv-steps' },
+                      h('li', null, h('b', null, '打开'), '　点左上「打开工作区文件」，或由模型工具打开；同一文件只保留一个标签。'),
+                      h(
+                        'li',
+                        null,
+                        h('b', null, '选取'),
+                        '　文本划选行、HTML 点选元素、图片框选区域、表格点选单元格、三维点选三角面、DXF 点选图元、PSD 点取样像素。',
+                      ),
+                      h(
+                        'li',
+                        null,
+                        h('b', null, '发送'),
+                        '　在下方标注里写意见 → 点「发送标注」，按编号写入输入框；「清空」从 1 重新编号。',
+                      ),
+                    ),
+                    h(
+                      'div',
+                      { className: 'dshcv-guidefoot' },
+                      h('span', { className: 'dshcv-guidesec' }, '支持'),
+                      h(
+                        'span',
+                        { className: 'dshcv-tags' },
+                        ['md', 'txt', 'html', 'svg', 'png/jpg', 'pdf', 'docx', 'xlsx', 'pptx', 'csv', 'stl/obj/ply', '3mf/glb', 'dxf', 'psd', 'sketch'].map((tag) =>
+                          h('span', { key: tag, className: 'dshcv-tag' }, tag),
+                        ),
+                      ),
+                    ),
+                    h(
+                      'div',
+                      { className: 'dshcv-guidefoot' },
+                      h('span', { className: 'dshcv-guidesec' }, '快捷键'),
+                      h(
+                        'span',
+                        { className: 'dshcv-tags' },
+                        ['空格 暂停/继续', 'Ctrl+F 搜索', 'Ctrl+Tab 切换标签', '? 全部键位'].map((tag) =>
+                          h('span', { key: tag, className: 'dshcv-tag' }, tag),
+                        ),
+                      ),
+                    ),
                   ),
             store.marks.length
               ? h('div', {
