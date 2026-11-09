@@ -142,6 +142,7 @@ window.__ModuleLoader__.load({
       if (ext === 'pdf') return 'pdf';
       if (['stl', 'obj', 'glb', 'gltf'].includes(ext)) return 'model';
       if (ext === 'dxf') return 'cad';
+      if (['psd', 'ai', 'sketch', 'xd', 'fig', 'eps', 'afdesign'].includes(ext)) return 'design';
       if (['step', 'stp', 'iges', 'igs', 'dwg', 'fbx', '3ds', 'blend', 'skp', 'sldprt', 'ipt'].includes(ext)) return 'unsupported';
       if (['docx', 'xlsx', 'pptx', 'doc', 'xls', 'ppt', 'odt', 'ods', 'odp'].includes(ext)) return 'office';
       if (['csv', 'tsv'].includes(ext)) return 'sheet';
@@ -406,6 +407,11 @@ window.__ModuleLoader__.load({
       '.dshcv-cadwrap svg line,.dshcv-cadwrap svg polyline,.dshcv-cadwrap svg polygon,.dshcv-cadwrap svg circle,.dshcv-cadwrap svg path{fill:none;stroke:var(--dsw-alias-label-primary);stroke-width:.6;vector-effect:non-scaling-stroke}',
       '.dshcv-cadwrap svg polygon{fill:color-mix(in srgb,var(--dsw-alias-brand-primary) 12%,transparent)}',
       '.dshcv-cadwrap svg text{fill:var(--dsw-alias-label-secondary);stroke:none}',
+      '.dshcv-canvaswrap{flex:1 1 auto;min-height:0;overflow:auto;display:flex;align-items:flex-start;justify-content:center;padding:12px;background:var(--dsw-alias-bg-layer-1)}',
+      '.dshcv-bitmap{max-width:100%;height:auto;image-rendering:auto;box-shadow:0 6px 24px rgba(0,0,0,.22);border:1px solid var(--dsw-alias-border-l1)}',
+      '.dshcv-outline{margin:8px 0 0;padding:0;list-style:none;font-size:12px}',
+      '.dshcv-outline li{padding:5px 0;border-bottom:1px solid var(--dsw-alias-border-l1);display:flex;gap:8px;align-items:baseline}',
+      '.dshcv-outline .dshcv-tcaption{margin:0;flex:0 0 auto;min-width:70px}',
       '.dshcv-md{font-size:13px;line-height:1.7;padding:12px 16px;overflow-wrap:anywhere}',
       '.dshcv-md>:first-child{margin-top:0}',
       '.dshcv-md h1{font-size:19px;margin:16px 0 8px}',
@@ -2011,6 +2017,232 @@ window.__ModuleLoader__.load({
       );
     }
 
+    // ---------------- design files ----------------
+    // PSD: read the flattened composite at the end of the file (raw or RLE), so a
+    // quick look works without a full layer engine. .sketch / .xd are zip+JSON,
+    // so their structure and copy can be listed. A .ai that carries a PDF
+    // compatibility stream opens in the PDF viewer.
+    const unpackBits = (data, offset, expected) => {
+      const out = new Uint8Array(expected);
+      let written = 0;
+      let cursor = offset;
+      while (written < expected && cursor < data.length) {
+        const header = data[cursor];
+        cursor += 1;
+        if (header < 128) {
+          const count = header + 1;
+          for (let index = 0; index < count && written < expected; index += 1) out[written++] = data[cursor + index];
+          cursor += count;
+        } else if (header > 128) {
+          const count = 257 - header;
+          const value = data[cursor];
+          cursor += 1;
+          for (let index = 0; index < count && written < expected; index += 1) out[written++] = value;
+        }
+      }
+      return out;
+    };
+
+    const parsePsd = (bytes) => {
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      if (bytes.length < 26 || view.getUint32(0, false) !== 0x38425053) throw new Error('不是有效的 PSD 文件');
+      const channels = view.getUint16(12, false);
+      const height = view.getUint32(14, false);
+      const width = view.getUint32(18, false);
+      const depth = view.getUint16(22, false);
+      const mode = view.getUint16(24, false);
+      if (depth !== 8) throw new Error('仅支持 8 位/通道的 PSD（当前 ' + depth + ' 位）');
+      if (![1, 3].includes(mode)) throw new Error('仅支持 RGB / 灰度 PSD（当前色彩模式 ' + mode + '）');
+      let offset = 26;
+      offset += 4 + view.getUint32(offset, false);
+      offset += 4 + view.getUint32(offset, false);
+      offset += 4 + view.getUint32(offset, false);
+      const compression = view.getUint16(offset, false);
+      offset += 2;
+      const plane = width * height;
+      const planes = [];
+      if (compression === 0) {
+        for (let channel = 0; channel < channels; channel += 1) {
+          planes.push(bytes.subarray(offset + channel * plane, offset + channel * plane + plane));
+        }
+      } else if (compression === 1) {
+        const rows = height * channels;
+        const counts = [];
+        for (let row = 0; row < rows; row += 1) counts.push(view.getUint16(offset + row * 2, false));
+        let cursor = offset + rows * 2;
+        for (let channel = 0; channel < channels; channel += 1) {
+          const data = new Uint8Array(plane);
+          for (let row = 0; row < height; row += 1) {
+            const count = counts[channel * height + row];
+            data.set(unpackBits(bytes, cursor, width), row * width);
+            cursor += count;
+          }
+          planes.push(data);
+        }
+      } else {
+        throw new Error('不支持的 PSD 压缩方式：' + compression);
+      }
+      const rgba = new Uint8ClampedArray(plane * 4);
+      for (let index = 0; index < plane; index += 1) {
+        const red = planes[0] ? planes[0][index] : 0;
+        const green = mode === 3 && planes[1] ? planes[1][index] : red;
+        const blue = mode === 3 && planes[2] ? planes[2][index] : red;
+        const alpha = planes[3] ? planes[3][index] : 255;
+        rgba[index * 4] = red;
+        rgba[index * 4 + 1] = green;
+        rgba[index * 4 + 2] = blue;
+        rgba[index * 4 + 3] = mode === 3 ? alpha : red;
+      }
+      return { width, height, rgba, channels };
+    };
+
+    const sketchOutline = async (zip) => {
+      const pages = zip.entries.map((entry) => entry.name).filter((name) => /^(pages|artboards)\/.*\.json$/.test(name));
+      const found = [];
+      for (const name of pages.slice(0, 20)) {
+        try {
+          const json = JSON.parse(await zip.text(name));
+          const walk = (node, depth) => {
+            if (!node || typeof node !== 'object' || depth > 6) return;
+            const label = node.name || (node.attributedString && node.attributedString.string) || '';
+            if (label && String(label).trim()) found.push({ path: name, label: String(label).trim().slice(0, 120) });
+            for (const key of ['layers', 'children']) {
+              if (Array.isArray(node[key])) for (const child of node[key]) walk(child, depth + 1);
+            }
+          };
+          walk(json, 0);
+        } catch {
+          /* a page that does not parse is skipped */
+        }
+      }
+      return found;
+    };
+
+    const xdOutline = async (zip) => {
+      const entry = zip.entries.find((candidate) => /graphicContent\.agc$/.test(candidate.name));
+      if (!entry) return [];
+      const json = JSON.parse(new TextDecoder('utf-8', { fatal: false }).decode(await zip.read(entry)));
+      const found = [];
+      const walk = (node, depth) => {
+        if (!node || typeof node !== 'object' || depth > 8) return;
+        if (node.name || node.label) found.push({ path: 'artboards', label: String(node.name || node.label).slice(0, 120) });
+        if (node.text && node.text.rawText) found.push({ path: 'text', label: String(node.text.rawText).slice(0, 120) });
+        for (const key of ['children', 'artboards', 'resources']) {
+          if (Array.isArray(node[key])) for (const child of node[key]) walk(child, depth + 1);
+        }
+      };
+      walk(json, 0);
+      return found;
+    };
+
+    function DesignDoc(props) {
+      const { doc, sessionId } = props;
+      const [state, setState] = React.useState({ status: 'idle', error: '', mode: '', bitmap: null, outline: [], info: '' });
+      const canvasRef = React.useRef(null);
+
+      React.useEffect(() => {
+        if (!sessionId) return undefined;
+        const controller = new AbortController();
+        let cancelled = false;
+        setState({ status: 'loading', error: '', mode: '', bitmap: null, outline: [], info: '' });
+        const match = /\.([a-z0-9]+)$/i.exec(doc.path);
+        const extension = match ? match[1].toLowerCase() : '';
+        readBytesFile(sessionId, doc.path, controller.signal)
+          .then(async (bytes) => {
+            if (cancelled || !bytes) return;
+            if (extension === 'psd') {
+              const bitmap = parsePsd(bytes);
+              if (cancelled) return;
+              setState({
+                status: 'ready',
+                error: '',
+                mode: 'bitmap',
+                bitmap,
+                outline: [],
+                info: bitmap.width + ' × ' + bitmap.height + ' · 合成图 · ' + bitmap.channels + ' 通道',
+              });
+              return;
+            }
+            if (extension === 'ai') {
+              const head = new TextDecoder('utf-8', { fatal: false }).decode(bytes.subarray(0, 5));
+              if (head !== '%PDF-') {
+                throw new Error('该 .ai 不含 PDF 兼容数据（可能是纯 EPS），请另存为 PDF 后再预览');
+              }
+              const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+              if (cancelled) return;
+              setState({ status: 'ready', error: '', mode: 'pdf', bitmap: null, outline: [], info: url });
+              return;
+            }
+            if (extension === 'sketch' || extension === 'xd') {
+              const zip = await openZip(bytes);
+              if (cancelled) return;
+              const outline = extension === 'sketch' ? await sketchOutline(zip) : await xdOutline(zip);
+              if (cancelled) return;
+              setState({ status: 'ready', error: '', mode: 'outline', bitmap: null, outline, info: outline.length + ' 个图层/文本' });
+              return;
+            }
+            throw new Error('该设计格式是私有封装，暂不支持解析，请导出为 PNG / PDF / .psd');
+          })
+          .catch((error) => {
+            if (!cancelled) setState({ status: 'failed', error: errText(error), mode: '', bitmap: null, outline: [], info: '' });
+          });
+        return () => {
+          cancelled = true;
+          controller.abort();
+        };
+      }, [doc.path, sessionId]);
+
+      React.useEffect(() => {
+        if (state.mode !== 'bitmap' || !state.bitmap) return undefined;
+        const canvas = canvasRef.current;
+        if (!canvas) return undefined;
+        const { width, height, rgba } = state.bitmap;
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext('2d');
+        if (!context) return undefined;
+        const image = new ImageData(rgba, width, height);
+        context.putImageData(image, 0, 0);
+        return undefined;
+      }, [state.mode, state.bitmap]);
+
+      if (state.status === 'failed') return h('div', { className: 'dshcv-empty' }, h('div', null, '无法预览该设计文件'), h('div', null, state.error));
+      if (state.status !== 'ready') return h('div', { className: 'dshcv-empty' }, h('div', null, '解析设计文件…'));
+      const header = h('div', { className: 'dshcv-tools' }, h('span', { className: 'dshcv-msg' }, state.info));
+      if (state.mode === 'bitmap') {
+        return h(
+          'div',
+          { style: { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' } },
+          header,
+          h('div', { className: 'dshcv-canvaswrap' }, h('canvas', { ref: canvasRef, className: 'dshcv-bitmap' })),
+        );
+      }
+      if (state.mode === 'pdf') {
+        return h(
+          'div',
+          { style: { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' } },
+          header,
+          h('iframe', {
+            title: 'canvas ai preview',
+            src: state.info,
+            style: { flex: '1 1 auto', minHeight: 0, width: '100%', border: '0', background: '#fff' },
+          }),
+        );
+      }
+      return h(
+        'div',
+        { className: 'dshcv-docwrap' },
+        header,
+        state.outline.length
+          ? h(
+              'ul',
+              { className: 'dshcv-outline' },
+              state.outline.slice(0, 400).map((item, index) => h('li', { key: index }, h('span', { className: 'dshcv-tcaption' }, item.path), ' ', item.label)),
+            )
+          : h('div', { className: 'dshcv-msg' }, '没有解析到图层或文本'),
+      );
+    }
+
     // ---------------- 3d models: triangle soup in, WebGL out ----------------
     const parseStl = (bytes) => {
       if (bytes.length >= 84) {
@@ -3161,6 +3393,8 @@ window.__ModuleLoader__.load({
                           ? h(CadDoc, { key: active.id + '-cad', doc: active, sessionId: store.sessionId })
                           : active.view === 'unsupported'
                             ? h(UnsupportedDoc, { key: active.id + '-unsupported', doc: active })
+                            : active.view === 'design'
+                              ? h(DesignDoc, { key: active.id + '-design', doc: active, sessionId: store.sessionId })
                             : active.view === 'office'
                         ? h(OfficeDoc, { key: active.id + '-office', doc: active, sessionId: store.sessionId })
                         : active.view === 'sheet'
