@@ -46,7 +46,7 @@
           "source": {
             "type": "git",
             "url": "https://github.com/Darkhe55/dsh-plugin-middle-panel",
-            "commit": "6707e376df0395cf67e542c3b41ad32e1c14a6a4"
+            "commit": "64787961040c55665411a03d787393aca7414f54"
           },
           "engines": {
             "dsh": ">=0.2.2-rc.1 <0.3.0"
