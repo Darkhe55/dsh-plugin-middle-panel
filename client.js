@@ -1181,7 +1181,7 @@ window.__ModuleLoader__.load({
       'var roots=svgRoots();for(var j=0;j<roots.length;j++){try{roots[j].setCurrentTime&&roots[j].setCurrentTime(at/1000);}catch(e){}}report();}',
       'function report(){var list=anims(),duration=0,current=0;',
       'for(var i=0;i<list.length;i++){try{var a=list[i];var t=a.effect&&a.effect.getComputedTiming?a.effect.getComputedTiming():null;',
-      'var end=t&&t.endTime?t.endTime:0;if(end>duration)duration=end;var c=Number(a.currentTime)||0;if(c>current)current=c;}catch(e){}}',
+      'var end=t&&t.endTime?t.endTime:0;if(isFinite(end)&&end>duration)duration=end;var c=Number(a.currentTime)||0;if(isFinite(c)&&c>current)current=c;}catch(e){}}',
       'parent.postMessage({source:"dshcv-anim",state:{paused:paused,armed:armed,duration:Math.round(duration),current:Math.round(current),count:list.length}},"*");}',
       // pointer behaviour
       'document.addEventListener("mousemove",function(e){var el=e.target;if(!el||el.nodeType!==1)return;',
@@ -1222,10 +1222,17 @@ window.__ModuleLoader__.load({
     };
 
     // Shared animation transport bar: pause, capture the next interaction,
-    // scrub the timeline, and step single frames.
+    // scrub the timeline, and step single frames. Every control clamps to the
+    // same span, so stepping cannot leave the timeline.
     function AnimBar(props) {
-      const { anim, onPause, onResume, onSeek, onStep, onArm } = props;
-      const max = Math.max(1000, anim.duration || 0);
+      const { anim, onPause, onResume, onSeek, onArm } = props;
+      const finite = Number.isFinite(anim.duration) && anim.duration > 0 ? anim.duration : 0;
+      // Looping animations report no finite end, so the span grows with the
+      // elapsed time instead of collapsing to a meaningless value.
+      const span = Math.max(finite, Math.min(30000, Math.max(1000, anim.current || 0)));
+      const current = Math.min(Math.max(0, anim.current || 0), span);
+      const clamp = (value) => Math.min(span, Math.max(0, Math.round(value)));
+      const step = (delta) => onSeek(clamp(current + delta));
       return h(
         'div',
         { className: 'dshcv-tools' },
@@ -1250,17 +1257,17 @@ window.__ModuleLoader__.load({
               type: 'range',
               className: 'dshcv-range',
               min: 0,
-              max,
+              max: span,
               step: 16,
-              value: Math.min(Math.max(0, anim.current || 0), max),
-              onChange: (event) => onSeek(Number(event.target.value)),
+              value: current,
+              onChange: (event) => onSeek(clamp(Number(event.target.value))),
             })
           : null,
         h(
           'span',
           { className: 'dshcv-msg' },
           anim.paused
-            ? Math.round(anim.current || 0) + ' ms / ' + Math.round(max) + ' ms'
+            ? Math.round(current) + ' ms / ' + Math.round(span) + ' ms'
             : anim.count
               ? anim.count + ' 个动画'
               : '无动画',
@@ -1268,14 +1275,28 @@ window.__ModuleLoader__.load({
         anim.paused
           ? h(
               'button',
-              { type: 'button', className: 'dshcv-btn', 'data-icon': '1', title: '后退一帧', onClick: () => onStep(-16) },
+              {
+                type: 'button',
+                className: 'dshcv-btn',
+                'data-icon': '1',
+                title: '后退一帧',
+                disabled: current <= 0,
+                onClick: () => step(-16),
+              },
               '−',
             )
           : null,
         anim.paused
           ? h(
               'button',
-              { type: 'button', className: 'dshcv-btn', 'data-icon': '1', title: '前进一帧', onClick: () => onStep(16) },
+              {
+                type: 'button',
+                className: 'dshcv-btn',
+                'data-icon': '1',
+                title: '前进一帧',
+                disabled: current >= span,
+                onClick: () => step(16),
+              },
               '+',
             )
           : null,
@@ -1359,7 +1380,6 @@ window.__ModuleLoader__.load({
           onPause: () => post('pause'),
           onResume: () => post('resume'),
           onSeek: (time) => post('seek', { time }),
-          onStep: (delta) => post('seek', { time: Math.max(0, (anim.current || 0) + delta) }),
           onArm: (on) => post('arm', { on }),
         }),
         h('iframe', {
@@ -1529,7 +1549,6 @@ window.__ModuleLoader__.load({
           onPause: pause,
           onResume: resume,
           onSeek: seek,
-          onStep: (delta) => seek((anim.current || 0) + delta),
           onArm: (on) => {
             armedRef.current = on;
             setAnim((previous) => Object.assign({}, previous, { armed: on }));
