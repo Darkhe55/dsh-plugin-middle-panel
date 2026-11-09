@@ -256,6 +256,20 @@ window.__ModuleLoader__.load({
       persist();
     };
 
+    const activateDoc = (id) => {
+      if (!id || id === store.activeId) return;
+      mutate({ activeId: id });
+      persist();
+    };
+
+    const cycleDoc = (delta) => {
+      const docs = store.docs;
+      if (docs.length < 2) return;
+      const index = docs.findIndex((doc) => doc.id === store.activeId);
+      const next = ((index < 0 ? 0 : index) + delta + docs.length) % docs.length;
+      activateDoc(docs[next].id);
+    };
+
     const buildMarkdown = () => {
       const marks = store.marks.slice().sort((a, b) => a.n - b.n);
       if (!marks.length) return '';
@@ -333,6 +347,16 @@ window.__ModuleLoader__.load({
       '.dshcv-chip{display:inline-flex;align-items:center;height:24px;padding:0 9px;border:0;border-radius:7px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:1;cursor:pointer;white-space:nowrap;transition:background-color .12s ease,color .12s ease}',
       '.dshcv-chip:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}',
       '.dshcv-chip[data-active="1"]{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}',
+      '.dshcv-layers{display:inline-flex;gap:4px;flex-wrap:wrap;align-items:center;max-width:100%}',
+      '.dshcv-chip[data-on="0"]{opacity:.45;text-decoration:line-through}',
+      '.dshcv-help{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:60;min-width:300px;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l1);border-radius:12px;padding:14px 18px;box-shadow:0 18px 48px rgba(0,0,0,.3);font-size:12px;line-height:2}',
+      '.dshcv-help kbd{display:inline-block;min-width:52px;padding:0 6px;border-radius:5px;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l1);font:inherit;text-align:center;margin-right:8px}',
+      '.dshcv-search{display:inline-flex;align-items:center;gap:6px}',
+      '.dshcv-searchinput{height:24px;width:140px;padding:0 8px;border-radius:7px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;outline:none}',
+      '.dshcv-searchinput:focus{border-color:var(--dsw-alias-brand-primary)}',
+      '.dshcv-linehit{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 10%,transparent)}',
+      '.dshcv-linehitcur{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 22%,transparent)}',
+      '.dshcv-mark{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 45%,transparent);color:inherit;border-radius:3px;padding:0 1px}',
       '.dshcv-badge{flex:0 0 auto;min-width:18px;height:18px;border-radius:9px;background:var(--dsw-alias-brand-primary);color:#fff;font-size:11px;line-height:18px;text-align:center;padding:0 5px;font-variant-numeric:tabular-nums}',
       '.dshcv-note{width:100%;box-sizing:border-box;font:inherit;font-size:12px;line-height:1.5;padding:5px 8px;border-radius:7px;border:1px solid transparent;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);resize:vertical;transition:border-color .12s ease}',
       '.dshcv-note:hover{border-color:var(--dsw-alias-border-l1)}',
@@ -976,6 +1000,68 @@ window.__ModuleLoader__.load({
         return state.text.split('\n');
       }, [state]);
 
+      const [searchOpen, setSearchOpen] = React.useState(false);
+      const [searchQuery, setSearchQuery] = React.useState('');
+      const [searchIndex, setSearchIndex] = React.useState(-1);
+
+      const searchHits = React.useMemo(() => {
+        const needle = searchQuery.trim().toLowerCase();
+        if (!needle) return [];
+        const hits = [];
+        for (let index = 0; index < lineElements.length; index += 1) {
+          if (lineElements[index] && lineElements[index].toLowerCase().includes(needle)) hits.push(index + 1);
+          if (hits.length >= 2000) break;
+        }
+        return hits;
+      }, [lineElements, searchQuery]);
+
+      const highlight = (line, query) => {
+        const needle = String(query || '').trim();
+        if (!needle || !line) return line || ' ';
+        const lower = line.toLowerCase();
+        const target = needle.toLowerCase();
+        const pieces = [];
+        let from = 0;
+        let at = lower.indexOf(target);
+        let guard = 0;
+        while (at >= 0 && guard < 200) {
+          if (at > from) pieces.push(line.slice(from, at));
+          pieces.push(h('mark', { key: 'm' + at + '-' + guard, className: 'dshcv-mark' }, line.slice(at, at + needle.length)));
+          from = at + needle.length;
+          at = lower.indexOf(target, from);
+          guard += 1;
+        }
+        if (from < line.length) pieces.push(line.slice(from));
+        return pieces.length ? pieces : line;
+      };
+
+      React.useEffect(() => {
+        if (searchIndex < 0 || !searchHits.length) return;
+        const line = searchHits[Math.min(searchIndex, searchHits.length - 1)];
+        const host = scrollRef.current;
+        const node = host && host.querySelector('[data-line="' + line + '"]');
+        if (node && typeof node.scrollIntoView === 'function') node.scrollIntoView({ block: 'center' });
+      }, [searchIndex, searchHits]);
+
+      React.useEffect(() => {
+        const onKey = (event) => {
+          if (!ownsKeyboard(event, scrollRef.current)) return;
+          if ((event.ctrlKey || event.metaKey) && (event.key === 'f' || event.key === 'F')) {
+            event.preventDefault();
+            setSearchOpen(true);
+            return;
+          }
+          if (event.key === 'Escape' && searchOpen) {
+            setSearchOpen(false);
+            setSearchQuery('');
+            setSearchIndex(-1);
+          }
+        };
+        window.addEventListener('keydown', onKey, true);
+        return () => window.removeEventListener('keydown', onKey, true);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [searchOpen]);
+
       const clampNode = (node) => {
         let element = node && node.nodeType === 3 ? node.parentElement : node;
         while (element && !(element.dataset && element.dataset.line)) element = element.parentElement;
@@ -1095,6 +1181,29 @@ window.__ModuleLoader__.load({
             )
           : null,
         h('span', { className: 'dshcv-spacer' }),
+        searchOpen
+          ? h(
+              'span',
+              { className: 'dshcv-search' },
+              h('input', {
+                type: 'search',
+                className: 'dshcv-searchinput',
+                value: searchQuery,
+                placeholder: '查找…',
+                onChange: (event) => {
+                  setSearchQuery(event.target.value);
+                  setSearchIndex(0);
+                },
+                onKeyDown: (event) => {
+                  if (event.key !== 'Enter') return;
+                  event.preventDefault();
+                  if (!searchHits.length) return;
+                  setSearchIndex((value) => ((Math.max(0, value) + (event.shiftKey ? -1 : 1)) % searchHits.length + searchHits.length) % searchHits.length);
+                },
+              }),
+              h('span', { className: 'dshcv-msg' }, searchHits.length ? Math.max(0, searchIndex) + 1 + '/' + searchHits.length : '无匹配'),
+            )
+          : null,
         state.truncated
           ? h(
               'button',
@@ -1163,9 +1272,13 @@ window.__ModuleLoader__.load({
             lineElements.map((line, index) =>
               h(
                 'div',
-                { key: index, className: 'dshcv-line', 'data-line': index + 1 },
+                {
+                  key: index,
+                  className: 'dshcv-line' + (searchHits.includes(index + 1) ? ' dshcv-linehit' : '') + (searchIndex >= 0 && searchHits[searchIndex] === index + 1 ? ' dshcv-linehitcur' : ''),
+                  'data-line': index + 1,
+                },
                 h('span', { className: 'dshcv-num' }, String(index + 1)),
-                h('span', { className: 'dshcv-text' }, line || ' '),
+                h('span', { className: 'dshcv-text' }, highlight(line, searchQuery)),
               ),
             ),
           ),
@@ -2883,7 +2996,7 @@ window.__ModuleLoader__.load({
     function ModelDoc(props) {
       const { doc, sessionId } = props;
       const [state, setState] = React.useState({ status: 'idle', error: '', info: '', stats: null });
-      const [options, setOptions] = React.useState({ wireframe: false, fog: true, axes: true });
+      const [options, setOptions] = React.useState({ wireframe: false, fog: true, axes: true, normals: false });
       const [notice, setNotice] = React.useState('');
       const [progress, setProgress] = React.useState(0);
       const canvasRef = React.useRef(null);
@@ -2924,6 +3037,50 @@ window.__ModuleLoader__.load({
             }
           const size = [maxX - minX, maxY - minY, maxZ - minZ];
           const radius = Math.max(size[0], size[1], size[2], 1e-6) / 2;
+          // Area and signed volume are cheap one-pass integrals; the watertight
+          // check needs an edge census, which is skipped on very large meshes.
+          let area = 0;
+          let volume = 0;
+          for (let index = 0; index + 8 < positions.length; index += 9) {
+            const ax = positions[index];
+            const ay = positions[index + 1];
+            const az = positions[index + 2];
+            const bx = positions[index + 3];
+            const by = positions[index + 4];
+            const bz = positions[index + 5];
+            const cx = positions[index + 6];
+            const cy = positions[index + 7];
+            const cz = positions[index + 8];
+            const ux = bx - ax;
+            const uy = by - ay;
+            const uz = bz - az;
+            const vx = cx - ax;
+            const vy = cy - ay;
+            const vz = cz - az;
+            area += 0.5 * Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx);
+            volume += (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)) / 6;
+          }
+          let watertight = null;
+          if (positions.length / 9 <= 200000) {
+            const edges = new Map();
+            const keyOf = (x, y, z) => x.toFixed(4) + ',' + y.toFixed(4) + ',' + z.toFixed(4);
+            for (let index = 0; index + 8 < positions.length; index += 9) {
+              const keys = [0, 1, 2].map((corner) =>
+                keyOf(positions[index + corner * 3], positions[index + corner * 3 + 1], positions[index + corner * 3 + 2]),
+              );
+              for (const [left, right] of [[0, 1], [1, 2], [2, 0]]) {
+                const edge = keys[left] < keys[right] ? keys[left] + '|' + keys[right] : keys[right] + '|' + keys[left];
+                edges.set(edge, (edges.get(edge) || 0) + 1);
+              }
+            }
+            watertight = true;
+            for (const count of edges.values()) {
+              if (count !== 2) {
+                watertight = false;
+                break;
+              }
+            }
+          }
           viewRef.current.center = [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2];
           viewRef.current.radius = radius;
           viewRef.current.distance = radius / Math.tan(Math.PI / 8) + radius;
@@ -2936,6 +3093,9 @@ window.__ModuleLoader__.load({
               triangles: positions.length / 9,
               vertices: positions.length / 3,
               size,
+              area,
+              volume: Math.abs(volume),
+              watertight,
             },
           });
         };
@@ -3001,8 +3161,9 @@ window.__ModuleLoader__.load({
             'void main(){vec4 world=uModel*vec4(aPosition,1.0);vec4 eye=uView*world;vNormal=normalize(mat3(uModel)*aNormal);' +
             'vEye=normalize(-eye.xyz);vDepth=length(eye.xyz);gl_Position=uMvp*vec4(aPosition,1.0);}',
           'precision mediump float;varying vec3 vNormal;varying vec3 vEye;varying float vDepth;' +
-            'uniform vec3 uColor;uniform float uFog;uniform float uFar;' +
+            'uniform vec3 uColor;uniform float uFog;uniform float uFar;uniform float uNormalView;' +
             'void main(){vec3 n=normalize(vNormal);if(!gl_FrontFacing)n=-n;' +
+            'if(uNormalView>0.5){gl_FragColor=vec4(n*0.5+0.5,1.0);return;}' +
             'vec3 key=normalize(vec3(0.45,0.72,0.55));vec3 fill=normalize(vec3(-0.55,-0.25,-0.6));' +
             'float keyDiff=max(dot(n,key),0.0);float fillDiff=max(dot(n,fill),0.0)*0.35;' +
             'vec3 halfKey=normalize(key+vEye);float spec=pow(max(dot(n,halfKey),0.0),48.0)*0.35;' +
@@ -3049,6 +3210,7 @@ window.__ModuleLoader__.load({
             color: gl.getUniformLocation(solid, 'uColor'),
             fog: gl.getUniformLocation(solid, 'uFog'),
             far: gl.getUniformLocation(solid, 'uFar'),
+            normals: gl.getUniformLocation(solid, 'uNormalView'),
           },
           lines: { mvp: gl.getUniformLocation(lines, 'uMvp'), color: gl.getUniformLocation(lines, 'uColor') },
         };
@@ -3097,6 +3259,7 @@ window.__ModuleLoader__.load({
             gl.uniform3f(uniforms.solid.color, 0.62, 0.72, 0.9);
             gl.uniform1f(uniforms.solid.fog, options.fog ? 1 : 0);
             gl.uniform1f(uniforms.solid.far, distance);
+            gl.uniform1f(uniforms.solid.normals, options.normals ? 1 : 0);
             gl.drawArrays(gl.TRIANGLES, 0, solidCount);
           }
 
@@ -3164,7 +3327,24 @@ window.__ModuleLoader__.load({
         const onWheel = (event) => {
           event.preventDefault();
           const view = viewRef.current;
-          view.distance = Math.max(view.radius * 0.05, Math.min(view.radius * 400, view.distance * (1 + Math.sign(event.deltaY) * 0.12)));
+          const rect = canvas.getBoundingClientRect();
+          const nx = (event.clientX - rect.left) / Math.max(1, rect.width) - 0.5;
+          const ny = (event.clientY - rect.top) / Math.max(1, rect.height) - 0.5;
+          const factor = 1 + Math.sign(event.deltaY) * 0.12;
+          // Keep the point under the cursor roughly fixed while zooming.
+          view.panX += nx * view.distance * (factor - 1) * 0.55;
+          view.panY -= ny * view.distance * (factor - 1) * 0.55;
+          view.distance = Math.max(view.radius * 0.05, Math.min(view.radius * 400, view.distance * factor));
+          render();
+        };
+        const onDoubleClick = (event) => {
+          const view = viewRef.current;
+          const rect = canvas.getBoundingClientRect();
+          const nx = (event.clientX - rect.left) / Math.max(1, rect.width) - 0.5;
+          const ny = (event.clientY - rect.top) / Math.max(1, rect.height) - 0.5;
+          view.panX += nx * view.distance;
+          view.panY -= ny * view.distance;
+          view.distance = Math.max(view.radius * 0.1, view.distance * 0.72);
           render();
         };
         const onContext = (event) => event.preventDefault();
@@ -3174,6 +3354,7 @@ window.__ModuleLoader__.load({
         canvas.addEventListener('pointerup', onUp);
         canvas.addEventListener('pointercancel', onUp);
         canvas.addEventListener('wheel', onWheel, { passive: false });
+        canvas.addEventListener('dblclick', onDoubleClick);
         canvas.addEventListener('contextmenu', onContext);
         const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(() => render()) : null;
         if (observer) observer.observe(canvas);
@@ -3184,6 +3365,7 @@ window.__ModuleLoader__.load({
           canvas.removeEventListener('pointerup', onUp);
           canvas.removeEventListener('pointercancel', onUp);
           canvas.removeEventListener('wheel', onWheel);
+          canvas.removeEventListener('dblclick', onDoubleClick);
           canvas.removeEventListener('contextmenu', onContext);
           if (observer) observer.disconnect();
           gl.deleteBuffer(solidBuffer);
@@ -3192,13 +3374,32 @@ window.__ModuleLoader__.load({
         };
       }, [state.status, options, doc.path]);
 
-      // F resets the camera, Shift+F frames the model again.
+      // F resets the camera, Shift+F frames the model again, 1-7 pick a view.
       React.useEffect(() => {
+        const PRESETS = {
+          '1': [0, 0],
+          '2': [Math.PI, 0],
+          '3': [Math.PI / 2, 0],
+          '4': [-Math.PI / 2, 0],
+          '5': [0, 1.5],
+          '6': [0, -1.5],
+          '7': [0.72, 0.42],
+        };
         const onKey = (event) => {
           if (!ownsKeyboard(event, rootRef.current)) return;
+          const view = viewRef.current;
+          if (Object.prototype.hasOwnProperty.call(PRESETS, event.key)) {
+            event.preventDefault();
+            view.yaw = PRESETS[event.key][0];
+            view.pitch = PRESETS[event.key][1];
+            view.panX = 0;
+            view.panY = 0;
+            view.distance = view.radius / Math.tan(Math.PI / 8) + view.radius;
+            drawRef.current();
+            return;
+          }
           if (event.key !== 'f' && event.key !== 'F') return;
           event.preventDefault();
-          const view = viewRef.current;
           view.panX = 0;
           view.panY = 0;
           if (event.shiftKey) {
@@ -3258,18 +3459,23 @@ window.__ModuleLoader__.load({
           stats
             ? h(
                 'span',
-                { className: 'dshcv-msg' },
-                '尺寸 ' + stats.size.map((value) => value.toFixed(2)).join(' × ') + ' · 顶点 ' + stats.vertices.toLocaleString(),
+                { className: 'dshcv-msg', title: '包围盒尺寸 / 表面积 / 体积 / 封闭性' },
+                '尺寸 ' + stats.size.map((value) => value.toFixed(2)).join(' × ') +
+                  ' · 面积 ' + stats.area.toFixed(2) +
+                  ' · 体积 ' + stats.volume.toFixed(2) +
+                  (stats.watertight === null ? '' : stats.watertight ? ' · 封闭' : ' · 有破面') +
+                  ' · 顶点 ' + stats.vertices.toLocaleString(),
               )
             : null,
           h('button', { type: 'button', className: 'dshcv-btn', 'data-primary': options.wireframe ? '1' : '0', onClick: () => toggle('wireframe') }, '线框'),
+          h('button', { type: 'button', className: 'dshcv-btn', 'data-primary': options.normals ? '1' : '0', title: '按法线方向着色', onClick: () => toggle('normals') }, '法线'),
           h('button', { type: 'button', className: 'dshcv-btn', 'data-primary': options.fog ? '1' : '0', onClick: () => toggle('fog') }, '雾'),
           h('button', { type: 'button', className: 'dshcv-btn', 'data-primary': options.axes ? '1' : '0', onClick: () => toggle('axes') }, '坐标轴'),
           h('button', { type: 'button', className: 'dshcv-btn', onClick: exportObj }, '导出 OBJ'),
           notice ? h('span', { className: 'dshcv-msg' }, notice) : null,
         ),
         h('div', { className: 'dshcv-canvaswrap', style: { padding: 0 } }, h('canvas', { ref: canvasRef, className: 'dshcv-canvas3d' })),
-        h('div', { className: 'dshcv-tools' }, h('span', { className: 'dshcv-msg' }, '左键旋转 · 右键/Shift 拖动平移 · 滚轮缩放 · F 复位取景')),
+        h('div', { className: 'dshcv-tools' }, h('span', { className: 'dshcv-msg' }, '左键旋转 · 右键/Shift 拖动平移 · 滚轮缩放 · 双击居中 · 1-5 前/后/右/左/顶 · 6 底 · 7 等轴测 · F 复位')),
       );
     }
 
@@ -3295,7 +3501,10 @@ window.__ModuleLoader__.load({
           }
           continue;
         }
-        if (current && value !== '') current.values.push([code, rawValue]);
+        if (current && value !== '') {
+          if (code === '8') current.layer = rawValue;
+          current.values.push([code, rawValue]);
+        }
       }
       if (current && current.type) entities.push(current);
       return entities.filter((entity) => ['LINE', 'LWPOLYLINE', 'POLYLINE', 'CIRCLE', 'ARC', 'TEXT', 'MTEXT', 'POINT', 'SOLID'].includes(entity.type));
@@ -3303,12 +3512,14 @@ window.__ModuleLoader__.load({
 
     const dxfToShapes = (entities) => {
       const shapes = [];
+      const layerOf = (entity) => (entity.layer && String(entity.layer).trim()) || '0';
       const numbers = (entity) => entity.values.filter(([code]) => code === '10' || code === '20' || code === '11' || code === '21' || code === '40' || code === '50' || code === '51' || code === '42');
       const first = (entity, code) => {
         const hit = entity.values.find(([candidate]) => candidate === code);
         return hit ? Number(hit[1]) : 0;
       };
       for (const entity of entities) {
+        const before = shapes.length;
         if (entity.type === 'LINE') {
           shapes.push({ kind: 'line', a: [first(entity, '10'), first(entity, '20')], b: [first(entity, '11'), first(entity, '21')] });
         } else if (entity.type === 'CIRCLE' || entity.type === 'ARC') {
@@ -3340,6 +3551,7 @@ window.__ModuleLoader__.load({
         } else if (entity.type === 'POINT') {
           shapes.push({ kind: 'point', at: [first(entity, '10'), first(entity, '20')] });
         }
+        for (let index = before; index < shapes.length; index += 1) shapes[index].layer = layerOf(entity);
         void numbers;
       }
       return shapes;
@@ -3348,23 +3560,21 @@ window.__ModuleLoader__.load({
     function CadDoc(props) {
       const { doc, sessionId } = props;
       const [state, setState] = React.useState({ status: 'idle', error: '', shapes: [], info: '' });
-      const [zoom, setZoom] = React.useState({ scale: 1, x: 0, y: 0 });
+      const [zoom, setZoom] = React.useState({ scale: 1, panX: 0, panY: 0 });
+      const [hidden, setHidden] = React.useState(() => new Set());
+      const wrapRef = React.useRef(null);
+      const dragRef = React.useRef(null);
 
       React.useEffect(() => {
         if (!sessionId) return undefined;
         const controller = new AbortController();
         let cancelled = false;
-        readTextPages(sessionId, doc.path, controller.signal)
+        readTextPages(sessionId, doc.path, controller.signal, 40)
           .then((page) => {
             if (cancelled) return;
             const entities = parseDxf(page.text);
             const shapes = dxfToShapes(entities);
-            setState({
-              status: 'ready',
-              error: '',
-              shapes,
-              info: entities.length + ' 个实体 · ' + shapes.length + ' 个可绘制元素',
-            });
+            setState({ status: 'ready', error: '', shapes, info: entities.length + ' 个实体 · ' + shapes.length + ' 个可绘制元素' });
           })
           .catch((error) => {
             if (!cancelled) setState({ status: 'failed', error: errText(error), shapes: [], info: '' });
@@ -3375,42 +3585,94 @@ window.__ModuleLoader__.load({
         };
       }, [doc.path, sessionId]);
 
+      const extents = React.useMemo(() => {
+        let minX = Infinity;
+        let minY = Infinity;
+        let maxX = -Infinity;
+        let maxY = -Infinity;
+        const visit = (x, y) => {
+          if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        };
+        for (const shape of state.shapes) {
+          if (shape.points) for (const [x, y] of shape.points) visit(x, y);
+          if (shape.a) visit(shape.a[0], shape.a[1]);
+          if (shape.b) visit(shape.b[0], shape.b[1]);
+          if (shape.center) {
+            visit(shape.center[0] - shape.radius, shape.center[1] - shape.radius);
+            visit(shape.center[0] + shape.radius, shape.center[1] + shape.radius);
+          }
+          if (shape.at) visit(shape.at[0], shape.at[1]);
+        }
+        if (!Number.isFinite(minX)) return { x: -1, y: -1, width: 2, height: 2 };
+        const pad = Math.max((maxX - minX) * 0.05, (maxY - minY) * 0.05, 1);
+        return { x: minX - pad, y: -maxY - pad, width: Math.max(maxX - minX + pad * 2, 1e-3), height: Math.max(maxY - minY + pad * 2, 1e-3) };
+      }, [state.shapes]);
+
+      const layers = React.useMemo(() => {
+        const found = [];
+        for (const shape of state.shapes) {
+          const layer = shape.layer || '0';
+          if (!found.includes(layer)) found.push(layer);
+        }
+        return found;
+      }, [state.shapes]);
+
+      const fit = () => setZoom({ scale: 1, panX: 0, panY: 0 });
+
+      // Pan and zoom work in drawing units so the cursor stays over its point.
+      const toUnits = (pixels, along, box) => (pixels * (along === 'x' ? extents.width : extents.height)) / Math.max(1, box.width || box.height);
+
+      const onPointerDown = (event) => {
+        dragRef.current = { x: event.clientX, y: event.clientY };
+        if (event.currentTarget && event.currentTarget.setPointerCapture) event.currentTarget.setPointerCapture(event.pointerId);
+      };
+      const onPointerMove = (event) => {
+        const drag = dragRef.current;
+        const box = wrapRef.current ? wrapRef.current.getBoundingClientRect() : null;
+        if (!drag || !box) return;
+        const dx = event.clientX - drag.x;
+        const dy = event.clientY - drag.y;
+        dragRef.current = { x: event.clientX, y: event.clientY };
+        setZoom((value) => Object.assign({}, value, {
+          panX: value.panX - toUnits(dx, 'x', box) / value.scale,
+          panY: value.panY - toUnits(dy, 'y', box) / value.scale,
+        }));
+      };
+      const onPointerUp = () => {
+        dragRef.current = null;
+      };
+      const onWheel = (event) => {
+        if (!wrapRef.current) return;
+        event.preventDefault();
+        const box = wrapRef.current.getBoundingClientRect();
+        const nx = (event.clientX - box.left) / Math.max(1, box.width) - 0.5;
+        const ny = (event.clientY - box.top) / Math.max(1, box.height) - 0.5;
+        setZoom((value) => {
+          const factor = Math.sign(event.deltaY) > 0 ? 1 / 1.18 : 1.18;
+          const scale = Math.max(0.15, Math.min(60, value.scale * factor));
+          const ratio = (value.scale / scale) - 1;
+          return {
+            scale,
+            panX: value.panX + nx * extents.width * ratio,
+            panY: value.panY + ny * extents.height * ratio,
+          };
+        });
+      };
+
       if (state.status === 'failed') return h('div', { className: 'dshcv-empty' }, h('div', null, '无法读取该图纸'), h('div', null, state.error));
       if (state.status !== 'ready') return h('div', { className: 'dshcv-empty' }, h('div', null, '解析图纸…'));
 
-      let minX = Infinity;
-      let minY = Infinity;
-      let maxX = -Infinity;
-      let maxY = -Infinity;
-      const visit = (x, y) => {
-        if (!Number.isFinite(x) || !Number.isFinite(y)) return;
-        minX = Math.min(minX, x);
-        maxX = Math.max(maxX, x);
-        minY = Math.min(minY, y);
-        maxY = Math.max(maxY, y);
-      };
-      for (const shape of state.shapes) {
-        if (shape.points) for (const [x, y] of shape.points) visit(x, y);
-        if (shape.a) visit(shape.a[0], shape.a[1]);
-        if (shape.b) visit(shape.b[0], shape.b[1]);
-        if (shape.center) {
-          visit(shape.center[0] - shape.radius, shape.center[1] - shape.radius);
-          visit(shape.center[0] + shape.radius, shape.center[1] + shape.radius);
-        }
-        if (shape.at) visit(shape.at[0], shape.at[1]);
-      }
-      if (!Number.isFinite(minX)) {
-        minX = 0;
-        minY = 0;
-        maxX = 1;
-        maxY = 1;
-      }
-      const pad = Math.max((maxX - minX) * 0.05, (maxY - minY) * 0.05, 1);
-      const width = Math.max(maxX - minX + pad * 2, 1);
-      const height = Math.max(maxY - minY + pad * 2, 1);
-      const viewBox = [minX - pad, -maxY - pad, width, height];
-      const scale = zoom.scale;
-      const box = [viewBox[0] + zoom.x, viewBox[1] + zoom.y, viewBox[2] / scale, viewBox[3] / scale];
+      const viewBox = [
+        extents.x + zoom.panX,
+        extents.y + zoom.panY,
+        extents.width / zoom.scale,
+        extents.height / zoom.scale,
+      ];
+      const visible = state.shapes.filter((shape) => !hidden.has(shape.layer || '0'));
       return h(
         'div',
         { style: { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' } },
@@ -3418,31 +3680,64 @@ window.__ModuleLoader__.load({
           'div',
           { className: 'dshcv-tools' },
           h('span', { className: 'dshcv-msg' }, state.info),
-          h('button', { type: 'button', className: 'dshcv-btn', onClick: () => setZoom({ scale: 1, x: 0, y: 0 }) }, '适应窗口'),
+          h('button', { type: 'button', className: 'dshcv-btn', onClick: fit }, '适应窗口'),
           h('button', { type: 'button', className: 'dshcv-btn', onClick: () => setZoom((value) => Object.assign({}, value, { scale: value.scale * 1.4 })) }, '放大'),
-          h('button', { type: 'button', className: 'dshcv-btn', onClick: () => setZoom((value) => Object.assign({}, value, { scale: Math.max(0.2, value.scale / 1.4) })) }, '缩小'),
+          h('button', { type: 'button', className: 'dshcv-btn', onClick: () => setZoom((value) => Object.assign({}, value, { scale: Math.max(0.15, value.scale / 1.4) })) }, '缩小'),
+          layers.length > 1
+            ? h(
+                'span',
+                { className: 'dshcv-layers' },
+                layers.slice(0, 12).map((layer) =>
+                  h(
+                    'button',
+                    {
+                      key: layer,
+                      type: 'button',
+                      className: 'dshcv-chip',
+                      'data-on': hidden.has(layer) ? '0' : '1',
+                      title: hidden.has(layer) ? '显示该图层' : '隐藏该图层',
+                      onClick: () =>
+                        setHidden((value) => {
+                          const next = new Set(value);
+                          if (next.has(layer)) next.delete(layer);
+                          else next.add(layer);
+                          return next;
+                        }),
+                    },
+                    layer,
+                  ),
+                ),
+              )
+            : null,
         ),
         h(
           'div',
-          { className: 'dshcv-cadwrap' },
+          {
+            ref: wrapRef,
+            className: 'dshcv-cadwrap',
+            onPointerDown,
+            onPointerMove,
+            onPointerUp,
+            onPointerCancel: onPointerUp,
+            onWheel,
+            onDoubleClick: fit,
+          },
           h(
             'svg',
-            { viewBox: box.join(' '), preserveAspectRatio: 'xMidYMid meet' },
-            state.shapes.map((shape, index) => {
+            { viewBox: viewBox.join(' '), preserveAspectRatio: 'xMidYMid meet' },
+            visible.map((shape, index) => {
               if (shape.kind === 'line') {
                 return h('line', { key: index, x1: shape.a[0], y1: -shape.a[1], x2: shape.b[0], y2: -shape.b[1] });
               }
               if (shape.kind === 'polyline') {
                 const points = shape.points.map(([x, y]) => x + ',' + -y).join(' ');
-                return shape.closed
-                  ? h('polygon', { key: index, points })
-                  : h('polyline', { key: index, points });
+                return shape.closed ? h('polygon', { key: index, points }) : h('polyline', { key: index, points });
               }
               if (shape.kind === 'circle') {
                 return h('circle', { key: index, cx: shape.center[0], cy: -shape.center[1], r: shape.radius });
               }
               if (shape.kind === 'arc') {
-                const sweep = ((shape.end - shape.start) % 360 + 360) % 360 || 360;
+                const sweep = (((shape.end - shape.start) % 360) + 360) % 360 || 360;
                 const startRad = (shape.start * Math.PI) / 180;
                 const endRad = ((shape.start + sweep) * Math.PI) / 180;
                 const x1 = shape.center[0] + shape.radius * Math.cos(startRad);
@@ -3451,8 +3746,7 @@ window.__ModuleLoader__.load({
                 const y2 = -(shape.center[1] + shape.radius * Math.sin(endRad));
                 return h('path', {
                   key: index,
-                  d:
-                    'M ' + x1 + ' ' + y1 + ' A ' + shape.radius + ' ' + shape.radius + ' 0 ' + (sweep > 180 ? 1 : 0) + ' 0 ' + x2 + ' ' + y2,
+                  d: 'M ' + x1 + ' ' + y1 + ' A ' + shape.radius + ' ' + shape.radius + ' 0 ' + (sweep > 180 ? 1 : 0) + ' 0 ' + x2 + ' ' + y2,
                 });
               }
               if (shape.kind === 'text') {
@@ -3462,6 +3756,7 @@ window.__ModuleLoader__.load({
             }),
           ),
         ),
+        h('div', { className: 'dshcv-tools' }, h('span', { className: 'dshcv-msg' }, '拖动平移 · 滚轮朝光标缩放 · 双击适应窗口')),
       );
     }
 
@@ -3679,14 +3974,18 @@ window.__ModuleLoader__.load({
 
     function CanvasPanel(props) {
       useVersion();
+      const ratioKey = 'dsh.canvas.ratio.' + (store.sessionId || 'none');
       const [ratio, setRatio] = React.useState(() => {
         try {
-          const saved = parseFloat(localStorage.getItem('dsh.canvas.ratio') || '');
+          // The split is remembered per session, falling back to the old global key.
+          const saved = parseFloat(localStorage.getItem(ratioKey) || localStorage.getItem('dsh.canvas.ratio') || '');
           return saved > 0.2 && saved < 0.8 ? saved : 0.52;
         } catch {
           return 0.52;
         }
       });
+      const [helpOpen, setHelpOpen] = React.useState(false);
+      const panelRef = React.useRef(null);
       const [toast, setToast] = React.useState('');
       const [pickerOpen, setPickerOpen] = React.useState(false);
       const [closing, setClosing] = React.useState(false);
@@ -3845,6 +4144,33 @@ window.__ModuleLoader__.load({
         };
       }, []);
 
+      React.useEffect(() => {
+        const onKey = (event) => {
+          if (!ownsKeyboard(event, panelRef.current)) return;
+          const ctrl = event.ctrlKey || event.metaKey;
+          if (ctrl && event.key === 'Tab') {
+            event.preventDefault();
+            cycleDoc(event.shiftKey ? -1 : 1);
+            return;
+          }
+          if (event.altKey && (event.key === 'w' || event.key === 'W')) {
+            // Alt+W rather than Ctrl+W: the shell owns the window accelerator.
+            event.preventDefault();
+            if (store.activeId) closeDoc(store.activeId);
+            return;
+          }
+          if (event.key === '?' || (event.shiftKey && event.key === '/')) {
+            event.preventDefault();
+            setHelpOpen((value) => !value);
+            return;
+          }
+          if (event.key === 'Escape' && helpOpen) setHelpOpen(false);
+        };
+        window.addEventListener('keydown', onKey, true);
+        return () => window.removeEventListener('keydown', onKey, true);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [helpOpen]);
+
       const startDrag = (event) => {
         event.preventDefault();
         const host = bodyRef.current;
@@ -3865,7 +4191,7 @@ window.__ModuleLoader__.load({
           window.removeEventListener('pointerup', up);
           setRatio((current) => {
             try {
-              localStorage.setItem('dsh.canvas.ratio', String(current));
+              localStorage.setItem(ratioKey, String(current));
             } catch {
               /* ignore */
             }
@@ -3888,7 +4214,7 @@ window.__ModuleLoader__.load({
 
       return h(
         'div',
-        { className: 'dshcv-root' },
+        { className: 'dshcv-root', ref: panelRef },
         h(Styles, { panel: true }),
         h(
           'div',
@@ -4021,6 +4347,22 @@ window.__ModuleLoader__.load({
           ),
         ),
         toast ? h('div', { className: 'dshcv-toast' }, toast) : null,
+        helpOpen
+          ? h(
+              'div',
+              { className: 'dshcv-help' },
+              h('div', { style: { fontWeight: 600, marginBottom: 4 } }, '快捷键'),
+              ...[
+                ['空格', '暂停 / 继续（鼠标停在面板上即可）'],
+                ['← →', '逐帧步进（Shift 为 100ms）'],
+                ['F', '复位取景（Shift+F 也复位视角）'],
+                ['1-7', '前 / 后 / 右 / 左 / 顶 / 底 / 等轴测'],
+                ['Ctrl+Tab', '切换标签（加 Shift 反向）'],
+                ['Alt+W', '关闭当前标签'],
+                ['?', '显示 / 隐藏本帮助'],
+              ].map(([key, label]) => h('div', { key }, h('kbd', null, key), label)),
+            )
+          : null,
       );
     }
 
