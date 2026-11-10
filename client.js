@@ -47,7 +47,6 @@ seq: 0,
 restored: false,
 reportedBridge: false,
 reportedBlock: false,
-selected: [],
 };
 const notify = () => {
 version += 1;
@@ -666,7 +665,7 @@ const CSS_PANEL = [
 '.dshcv-markrow-on{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 10%,transparent);border-radius:6px}',
 '.dshcv-template-menu{position:absolute;z-index:20;top:26px;left:0;width:260px;max-height:220px;overflow:auto;overscroll-behavior:contain;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:8px;box-shadow:0 10px 28px rgba(0,0,0,.24);padding:4px;display:flex;flex-direction:column;gap:4px}',
 '.dshcv-template-list{display:flex;flex-direction:column;gap:2px}',
-'.dshcv-template-save{justify-content:flex-start;text-align:left;border:1px dashed color-mix(in srgb,var(--dsw-alias-brand-primary) 55%,transparent);color:var(--dsw-alias-brand-primary);background:color-mix(in srgb,var(--dsw-alias-brand-primary) 8%,transparent)}',
+'.dshcv-template-save{justify-content:flex-start;text-align:left;height:32px;padding:0 10px;border:1px dashed color-mix(in srgb,var(--dsw-alias-brand-primary) 55%,transparent);border-radius:7px;color:var(--dsw-alias-brand-primary);background:color-mix(in srgb,var(--dsw-alias-brand-primary) 8%,transparent);font-size:12px;line-height:1.4}',
 '.dshcv-template-rule{height:1px;background:var(--dsw-alias-border-l1);margin:2px 0}',
 '.dshcv-template-row{display:flex;align-items:center;gap:4px}',
 '.dshcv-template-tag{flex:0 0 auto;font-size:9px;line-height:14px;padding:0 3px;border-radius:3px;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l1)}',
@@ -2010,31 +2009,6 @@ return;
 fallback();
 };
 const copyMark = (mark) => copyText(markToBlock(mark));
-const toggleSelected = (id) => {
-const current = store.selected || [];
-const next = current.includes(id) ? current.filter((value) => value !== id) : current.concat([id]);
-mutate({ selected: next });
-};
-const clearSelected = () => mutate({ selected: [] });
-const selectedMarks = () =>
-(store.selected || [])
-.map((id) => store.marks.find((mark) => mark.id === id))
-.filter(Boolean)
-.sort((a, b) => a.n - b.n);
-const removeSelected = () => {
-const doomed = new Set(store.selected || []);
-if (!doomed.size) return;
-mutate({ marks: store.marks.filter((mark) => !doomed.has(mark.id)), selected: [] });
-persist();
-};
-const sendSelected = () => {
-const marks = selectedMarks();
-if (!marks.length) return 'empty';
-const text =
-'以下是我在画布面板中选出的标注（共 ' + marks.length + ' 条），请按编号逐条处理：\n\n' +
-marks.map((mark) => markToBlock(mark)).join('\n\n');
-return insertIntoComposer(text + '\n') === 'ok' ? 'ok' : 'failed';
-};
 const DEFAULT_TEMPLATES = ['这段太啰嗦，请精简', '改成主动语态', '术语前后不一致，请统一', '补上异常分支'];
 const loadTemplates = () => {
 try {
@@ -2095,18 +2069,6 @@ className: 'dshcv-mark' + (store.hoverId === mark.id ? ' dshcv-markrow-on' : '')
 onMouseEnter: () => setHoverMark(mark.id),
 onMouseLeave: () => setHoverMark(undefined),
 },
-h(
-'button',
-{
-type: 'button',
-className: 'dshcv-btn',
-'data-quiet': '1',
-'data-primary': (store.selected || []).includes(mark.id) ? '1' : '0',
-title: '勾选后可批量发送或删除',
-onClick: () => toggleSelected(mark.id),
-},
-(store.selected || []).includes(mark.id) ? '▣' : '▢',
-),
 h('span', { className: 'dshcv-badge' }, String(mark.n)),
 markStale(mark)
 ? h('span', { className: 'dshcv-stale', title: '文件已改动，这条标注的位置可能已偏移' }, '⚠')
@@ -6105,49 +6067,6 @@ onClick: () => setFollowHover(!followHover.on),
 },
 '跟随',
 )
-: null,
-(store.selected || []).length
-? h(
-'span',
-{ className: 'dshcv-msg' },
-'已选 ' + store.selected.length,
-)
-: null,
-(store.selected || []).length
-? h(
-'button',
-{
-type: 'button',
-className: 'dshcv-btn',
-'data-primary': '1',
-title: '只把勾选的标注发送到对话框',
-onClick: () => {
-const result = sendSelected();
-setToast(result === 'ok' ? '已发送选中的标注' : '发送失败');
-setTimeout(() => setToast(''), 2200);
-},
-},
-'发送选中',
-)
-: null,
-(store.selected || []).length
-? h(
-'button',
-{
-type: 'button',
-className: 'dshcv-btn',
-title: '删除勾选的标注',
-onClick: () => {
-removeSelected();
-setToast('已删除选中的标注');
-setTimeout(() => setToast(''), 2200);
-},
-},
-'删除选中',
-)
-: null,
-(store.selected || []).length
-? h('button', { type: 'button', className: 'dshcv-btn', 'data-quiet': '1', onClick: clearSelected }, '取消选择')
 : null,
 store.marks.length
 ? h(
