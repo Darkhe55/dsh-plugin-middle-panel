@@ -372,6 +372,13 @@ marks: store.marks.map((mark) => (mark.id === id ? Object.assign({}, mark, { not
 });
 persist();
 };
+const toggleDone = (id) => {
+mutate({
+marks: store.marks.map((mark) => (mark.id === id ? Object.assign({}, mark, { done: !mark.done }) : mark)),
+});
+persist();
+};
+const pendingMarks = () => store.marks.filter((mark) => !mark.done);
 const removeMark = (id) => {
 mutate({ marks: store.marks.filter((mark) => mark.id !== id) });
 persist();
@@ -459,10 +466,16 @@ lines.push('   意见：' + (mark.note && mark.note.trim() ? mark.note.trim() : 
 return lines.join('\n');
 };
 const buildMarkdown = () => {
-const marks = store.marks.slice().sort((a, b) => a.n - b.n);
+const marks = store.marks.filter((mark) => !mark.done).sort((a, b) => a.n - b.n);
 if (!marks.length) return '';
 const lines = ['以下是我在画布面板中的标注（共 ' + marks.length + ' 条），请按编号逐条处理：', ''];
+let currentFile = '';
 for (const mark of marks) {
+if (mark.path !== currentFile) {
+currentFile = mark.path;
+lines.push('### `' + currentFile + '`');
+lines.push('');
+}
 lines.push(markToBlock(mark));
 lines.push('');
 }
@@ -754,6 +767,8 @@ const CSS_PANEL = [
 '.dshcv-line.dshcv-spot{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 18%,transparent);outline:none}',
 '.dshcv-docp.dshcv-spot,.dshcv-slide.dshcv-spot{box-shadow:0 0 0 1px color-mix(in srgb,var(--dsw-alias-brand-primary) 55%,transparent)}',
 '.dshcv-table td.dshcv-spot,.dshcv-table th.dshcv-spot{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 26%,transparent);outline:1px solid color-mix(in srgb,var(--dsw-alias-brand-primary) 60%,transparent)}',
+'.dshcv-mark-done{opacity:.55}',
+'.dshcv-badge-done{background:color-mix(in srgb,#2ea043 22%,transparent);color:color-mix(in srgb,#2ea043 82%,var(--dsw-alias-label-primary))}',
 '.dshcv-markrow-on{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 10%,transparent);border-radius:6px}',
 '.dshcv-template-menu{position:absolute;z-index:20;top:26px;left:0;width:260px;max-height:220px;overflow:auto;overscroll-behavior:contain;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:8px;box-shadow:0 10px 28px rgba(0,0,0,.24);padding:4px;display:flex;flex-direction:column;gap:4px}',
 '.dshcv-template-list{display:flex;flex-direction:column;gap:2px}',
@@ -2239,7 +2254,10 @@ h(
 'div',
 {
 key: mark.id,
-className: 'dshcv-mark' + (store.hoverId === mark.id ? ' dshcv-markrow-on' : ''),
+className:
+'dshcv-mark' +
+(store.hoverId === mark.id ? ' dshcv-markrow-on' : '') +
+(mark.done ? ' dshcv-mark-done' : ''),
 onMouseEnter: () => setHoverMark(mark.id),
 onMouseLeave: () => setHoverMark(undefined),
 tabIndex: 0,
@@ -2256,7 +2274,16 @@ note.focus();
 }
 },
 },
-h('span', { className: 'dshcv-badge' }, String(mark.n)),
+h(
+'button',
+{
+type: 'button',
+className: 'dshcv-badge' + (mark.done ? ' dshcv-badge-done' : ''),
+title: mark.done ? '已处理，点击撤销' : '标记为已处理',
+onClick: () => toggleDone(mark.id),
+},
+mark.done ? '✓' : String(mark.n),
+),
 markStale(mark)
 ? h('span', { className: 'dshcv-stale', title: '文件已改动，这条标注的位置可能已偏移' }, '⚠')
 : mark.relocated
@@ -5684,21 +5711,18 @@ const hexOf = (pixel) =>
 .map((value) => Number(value || 0).toString(16).padStart(2, '0'))
 .join('')
 .toUpperCase();
-const copyCrop = async () => {
+const cropBlob = async () => {
 const image = imageRef.current;
 const rect = marqueeRef.current;
 const box = naturalRect();
-if (!image || !rect || !box) {
-setNotice('先框选一块区域');
-return;
-}
+if (!image || !rect || !box) return null;
 const width = Math.max(1, Math.round(rect.width * box.factor));
 const height = Math.max(1, Math.round(rect.height * box.factor));
 const canvas = document.createElement('canvas');
 canvas.width = width;
 canvas.height = height;
 const context = canvas.getContext('2d');
-if (!context) return;
+if (!context) return null;
 context.drawImage(
 image,
 Math.round(rect.left * box.factor),
@@ -5710,12 +5734,60 @@ height,
 width,
 height,
 );
-try {
 const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
-await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-flash('已复制 ' + width + ' × ' + height + ' 的图像');
+return blob ? { blob, width, height } : null;
+};
+const copyCrop = async () => {
+const cropped = await cropBlob();
+if (!cropped) {
+setNotice('先框选一块区域');
+return;
+}
+try {
+await navigator.clipboard.write([new ClipboardItem({ 'image/png': cropped.blob })]);
+flash('已复制 ' + cropped.width + ' × ' + cropped.height + ' 的图像');
 } catch {
 setNotice('复制失败：当前环境不允许写剪贴板');
+}
+};
+const saveCrop = async () => {
+const cropped = await cropBlob();
+if (!cropped) {
+setNotice('先框选一块区域');
+return;
+}
+const base64 = await new Promise((resolve) => {
+const reader = new FileReader();
+reader.onload = () => {
+const result = String(reader.result || '');
+resolve(result.slice(result.indexOf(',') + 1));
+};
+reader.onerror = () => resolve('');
+reader.readAsDataURL(cropped.blob);
+});
+if (!base64) {
+setNotice('无法编码图像');
+return;
+}
+setNotice('正在保存…');
+try {
+const response = await fetch(saveUrl(), {
+method: 'POST',
+mode: 'cors',
+headers: { 'content-type': 'application/json' },
+body: JSON.stringify({
+sessionId: store.sessionId,
+path: doc.path.replace(/(\.[^.\/]+)?$/, '.crop.png'),
+content: base64,
+encoding: 'base64',
+}),
+});
+const payload = await response.json().catch(() => ({}));
+if (!response.ok) throw new Error(payload && payload.error ? payload.error : 'HTTP ' + response.status);
+flash('已保存 ' + cropped.width + ' × ' + cropped.height + ' 的裁剪');
+setNotice('');
+} catch (error) {
+setNotice('保存失败：' + errText(error));
 }
 };
 const onImageClick = (event) => {
@@ -5822,6 +5894,18 @@ title: '把框选区域复制为 PNG',
 onClick: () => copyCrop(),
 },
 '复制区域',
+)
+: null,
+marquee
+? h(
+'button',
+{
+type: 'button',
+className: 'dshcv-btn',
+title: '把框选区域保存为 <文件名>.crop.png',
+onClick: () => saveCrop(),
+},
+'保存区域',
 )
 : null,
 notice ? h('span', { className: 'dshcv-msg' }, notice) : null,
@@ -6036,6 +6120,7 @@ window.addEventListener('pointermove', move);
 window.addEventListener('pointerup', up);
 };
 const [toast, setToast] = React.useState('');
+const doneCount = store.marks.filter((mark) => mark.done).length;
 const [pickerOpen, setPickerOpen] = React.useState(false);
 const [closing, setClosing] = React.useState(false);
 const reducedMotion = () =>
@@ -6316,8 +6401,14 @@ onClick: () => setFollowHover(!followHover.on),
 store.marks.length
 ? h(
 'button',
-{ type: 'button', className: 'dshcv-btn', 'data-kind': 'primary', onClick: send },
-'发送标注 (' + store.marks.length + ')',
+{
+type: 'button',
+className: 'dshcv-btn',
+'data-kind': 'primary',
+onClick: send,
+title: doneCount ? '已处理 ' + doneCount + ' 条不参与发送' : '把全部标注发送到对话框',
+},
+'发送标注 (' + pendingMarks().length + ')',
 )
 : null,
 store.marks.length

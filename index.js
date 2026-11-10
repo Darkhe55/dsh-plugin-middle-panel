@@ -233,6 +233,9 @@ export function apply(ctx) {
         const sessionId = String(body.sessionId || '')
         const requested = normalize(body.absolutePath || body.path || '')
         const content = typeof body.content === 'string' ? body.content : undefined
+        // Images arrive as base64; text stays a plain string. Both are size-checked
+        // against the decoded length so a base64 payload cannot slip past the cap.
+        const binary = body.encoding === 'base64'
         if (!requested) return reply(400, { error: 'path is required' })
         if (content === undefined) return reply(400, { error: 'content is required' })
 
@@ -278,13 +281,21 @@ export function apply(ctx) {
               size: Number(before.size) || 0,
             })
           }
-          // The composed filesystem fences writes by an explicit policy; without
-          // one the default mode denies a path this route has already confined.
-          await ctx.fs.writeText(target, content, undefined, undefined, {
-            mode: 'workspace-write',
-            workspaceRoot: root,
-            sessionId,
-          })
+          if (binary) {
+            const bytes = Buffer.from(content, 'base64')
+            if (bytes.length > MAX_SAVE_BYTES) return reply(413, { error: 'file is too large' })
+            // The path is already confined above; binary has no text channel, so it
+            // goes straight through node's fs instead of the text-only sandbox API.
+            await fs.writeFile(absolute, bytes)
+          } else {
+            // The composed filesystem fences writes by an explicit policy; without
+            // one the default mode denies a path this route has already confined.
+            await ctx.fs.writeText(target, content, undefined, undefined, {
+              mode: 'workspace-write',
+              workspaceRoot: root,
+              sessionId,
+            })
+          }
           let after = null
           if (fs) {
             try {
@@ -296,9 +307,9 @@ export function apply(ctx) {
           return reply(200, {
             ok: true,
             path: absolute,
-            bytes: content.length,
+            bytes: binary ? Buffer.from(content, 'base64').length : content.length,
             mtimeMs: after ? Number(after.mtimeMs) || 0 : 0,
-            size: after ? Number(after.size) || 0 : content.length,
+            size: after ? Number(after.size) || 0 : binary ? Buffer.from(content, 'base64').length : content.length,
           })
         } catch (error) {
           return reply(500, { error: error && error.message ? error.message : String(error) })

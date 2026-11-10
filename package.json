@@ -60,7 +60,7 @@
     }
   },
   "scripts": {
-    "test": "node scripts/build.cjs && node test/markdown.test.cjs && node test/facemark.test.cjs && node test/diff.test.cjs && node test/collada.test.cjs && node test/relocate.test.cjs && node test/spot-relocate.test.cjs && node test/conflict.test.cjs && node test/sending.test.cjs && node test/controls.test.cjs && node test/smoke.test.cjs && node test/panel-render.test.cjs",
+    "test": "node scripts/build.cjs && node test/markdown.test.cjs && node test/facemark.test.cjs && node test/diff.test.cjs && node test/collada.test.cjs && node test/relocate.test.cjs && node test/spot-relocate.test.cjs && node test/conflict.test.cjs && node test/sending.test.cjs && node test/receipt.test.cjs && node test/controls.test.cjs && node test/smoke.test.cjs && node test/panel-render.test.cjs",
     "build": "node scripts/build.cjs",
     "prepublishOnly": "node scripts/build.cjs"
   }
