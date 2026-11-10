@@ -519,16 +519,37 @@ return 'failed';
 }
 };
 const CSS_BASE = [
-'.dshcv-btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;height:26px;padding:0 9px;border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:1;cursor:pointer;white-space:nowrap;transition:background-color .12s ease,color .12s ease}',
-'.dshcv-btn:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}',
-'.dshcv-btn:active{background:var(--dsw-alias-bg-layer-1)}',
-'.dshcv-btn:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
-'.dshcv-btn[data-primary="1"]{background:var(--dsw-alias-brand-primary);color:#fff}',
-'.dshcv-btn[data-primary="1"]:hover{color:#fff;filter:brightness(1.06)}',
-'.dshcv-btn[data-quiet="1"]{color:var(--dsw-alias-label-secondary)}',
+':root{--dshcv-ink:var(--dsw-alias-label-primary);--dshcv-ink-2:var(--dsw-alias-label-secondary);--dshcv-line:color-mix(in srgb,var(--dsw-alias-label-primary) 12%,transparent);--dshcv-line-strong:color-mix(in srgb,var(--dsw-alias-label-primary) 24%,transparent);--dshcv-tint:color-mix(in srgb,var(--dsw-alias-label-primary) 8%,transparent);--dshcv-wash:color-mix(in srgb,var(--dsw-alias-label-primary) 6%,transparent);--dshcv-primary-bg:color-mix(in srgb,#4f8cff 16%,var(--dsw-alias-bg-layer-1));--dshcv-primary-wave:color-mix(in srgb,#4f8cff 26%,transparent);--dshcv-on:#2ea043;--dshcv-off:#d1242f}',
+'.dshcv-btn{position:relative;display:inline-flex;align-items:center;justify-content:center;gap:4px;height:28px;padding:0 10px;border:1px solid var(--dshcv-line);border-radius:8px;background:transparent;color:var(--dshcv-ink);font:inherit;font-size:12px;line-height:1;cursor:pointer;white-space:nowrap;overflow:hidden;transition:background-color .12s ease,color .12s ease,border-color .12s ease,box-shadow .16s ease}',
+'.dshcv-btn:hover{background:var(--dshcv-wash);border-color:var(--dshcv-line-strong)}',
+'.dshcv-btn:active{background:var(--dshcv-tint)}',
+'.dshcv-btn:focus-visible{outline:2px solid var(--dshcv-ink);outline-offset:1px}',
+'.dshcv-btn[data-kind="quiet"]{border-color:transparent;color:var(--dshcv-ink-2);height:26px;padding:0 7px}',
+'.dshcv-btn[data-kind="quiet"]:hover{background:var(--dshcv-wash);color:var(--dshcv-ink)}',
+'.dshcv-btn[data-kind="quiet"][data-danger="1"]:hover{color:var(--dshcv-off);background:color-mix(in srgb,var(--dshcv-off) 10%,transparent)}',
+'.dshcv-btn[data-kind="primary"]{height:30px;padding:0 14px;border-color:color-mix(in srgb,#4f8cff 42%,transparent);background:var(--dshcv-primary-bg);color:var(--dsw-alias-label-primary);font-weight:600;box-shadow:0 1px 0 color-mix(in srgb,#4f8cff 18%,transparent)}',
+'.dshcv-btn[data-kind="primary"]::before,.dshcv-btn[data-kind="primary"]::after{content:"";position:absolute;inset:0;pointer-events:none;background-image:repeating-linear-gradient(115deg,transparent 0 14px,var(--dshcv-primary-wave) 14px 20px);background-size:200% 100%;opacity:.55}',
+'.dshcv-btn[data-kind="primary"]::before{animation:dshcv-wave-left 6s linear infinite}',
+'.dshcv-btn[data-kind="primary"]::after{animation:dshcv-wave-right 8s linear infinite;opacity:.3}',
+'.dshcv-btn[data-kind="primary"]>span,.dshcv-btn[data-kind="primary"]{isolation:isolate}',
+'.dshcv-btn[data-kind="primary"]:hover{filter:saturate(1.15) brightness(1.02)}',
+'@keyframes dshcv-wave-left{from{background-position-x:0}to{background-position-x:-200px}}',
+'@keyframes dshcv-wave-right{from{background-position-x:0}to{background-position-x:200px}}',
+'@media (prefers-reduced-motion: reduce){.dshcv-btn[data-kind="primary"]::before,.dshcv-btn[data-kind="primary"]::after{animation:none}}',
+'.dshcv-toggle{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border:1px solid var(--dshcv-off);border-radius:8px;background:color-mix(in srgb,var(--dshcv-off) 8%,transparent);color:color-mix(in srgb,var(--dshcv-off) 82%,var(--dshcv-ink));font:inherit;font-size:12px;line-height:1;cursor:pointer;white-space:nowrap;box-shadow:inset 0 2px 5px color-mix(in srgb,var(--dshcv-off) 38%,transparent);transition:all .16s ease}',
+'.dshcv-toggle::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.55}',
+'.dshcv-toggle:hover{background:color-mix(in srgb,var(--dshcv-off) 14%,transparent)}',
+'.dshcv-toggle[aria-pressed="true"]{border-color:var(--dshcv-on);border-radius:14px;background:color-mix(in srgb,var(--dshcv-on) 12%,transparent);color:color-mix(in srgb,var(--dshcv-on) 85%,var(--dshcv-ink));box-shadow:0 0 8px color-mix(in srgb,var(--dshcv-on) 45%,transparent),0 0 2px color-mix(in srgb,var(--dshcv-on) 60%,transparent)}',
+'.dshcv-toggle[aria-pressed="true"]::before{opacity:1}',
+'.dshcv-toggle:focus-visible{outline:2px solid var(--dshcv-ink);outline-offset:1px}',
+'.dshcv-toggle[disabled]{opacity:.5;cursor:default}',
+'.dshcv-seg{display:inline-flex;border:1px solid var(--dshcv-line);border-radius:8px;overflow:hidden}',
+'.dshcv-seg .dshcv-btn{border:0;border-radius:0;height:26px;padding:0 10px;color:var(--dshcv-ink-2)}',
+'.dshcv-seg .dshcv-btn+.dshcv-btn{border-left:1px solid var(--dshcv-line)}',
+'.dshcv-seg .dshcv-btn[aria-pressed="true"]{background:var(--dshcv-tint);color:var(--dshcv-ink);font-weight:600}',
 '.dshcv-btn[data-icon="1"]{width:26px;padding:0}',
-'.dshcv-btn[disabled]{opacity:.55;cursor:default}',
-'.dshcv-btn[disabled]:hover{background:transparent;color:var(--dsw-alias-label-secondary)}',
+'.dshcv-btn[disabled]{opacity:.45;cursor:default}',
+'.dshcv-btn[disabled]:hover{background:transparent;border-color:var(--dshcv-line);color:var(--dshcv-ink-2)}',
 '.dshcv-chip{display:inline-flex;align-items:center;height:24px;padding:0 9px;border:0;border-radius:7px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:1;cursor:pointer;white-space:nowrap;transition:background-color .12s ease,color .12s ease}',
 '.dshcv-chip:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}',
 '.dshcv-chip[data-active="1"]{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}',
@@ -1801,18 +1822,40 @@ const toolbar = h(
 h('button', { type: 'button', className: 'dshcv-btn', onClick: editing ? cancelEdit : beginEdit }, editing ? '退出编辑' : '编辑'),
 isMarkdown
 ? h(
+'div',
+{ className: 'dshcv-seg', role: 'group', 'aria-label': '显示方式' },
+h(
 'button',
 {
 type: 'button',
 className: 'dshcv-btn',
-title: rendered ? '显示 Markdown 原文' : '显示渲染结果',
+'aria-pressed': rendered ? 'true' : 'false',
+title: '按渲染结果阅读',
 onMouseDown: (event) => event.preventDefault(),
 onClick: () => {
+if (rendered) return;
 scrollPos.current = scrollRef.current ? scrollRef.current.scrollTop : 0;
-setRendered(!rendered);
+setRendered(true);
 },
 },
-rendered ? '原文' : '渲染',
+'渲染',
+),
+h(
+'button',
+{
+type: 'button',
+className: 'dshcv-btn',
+'aria-pressed': rendered ? 'false' : 'true',
+title: '看 Markdown 原文，便于按行标注',
+onMouseDown: (event) => event.preventDefault(),
+onClick: () => {
+if (!rendered) return;
+scrollPos.current = scrollRef.current ? scrollRef.current.scrollTop : 0;
+setRendered(false);
+},
+},
+'原文',
+),
 )
 : null,
 h('span', { className: 'dshcv-spacer' }),
@@ -1855,28 +1898,28 @@ message ? h('span', { className: 'dshcv-msg' }, message) : null,
 editing
 ? h(
 'button',
-{ type: 'button', className: 'dshcv-btn', 'data-quiet': '1', title: '回到上一个快照', onClick: undoDraft },
+{ type: 'button', className: 'dshcv-btn', 'data-kind': 'quiet', title: '回到上一个快照', onClick: undoDraft },
 '撤销',
 )
 : null,
 editing && draft !== baseline
 ? h(
 'button',
-{ type: 'button', className: 'dshcv-btn', 'data-quiet': '1', title: '丢弃修改，恢复打开时的内容', onClick: () => setDraft(baseline) },
+{ type: 'button', className: 'dshcv-btn', 'data-kind': 'quiet', title: '丢弃修改，恢复打开时的内容', onClick: () => setDraft(baseline) },
 '回滚',
 )
 : null,
 editing
 ? h(
 'button',
-{ type: 'button', className: 'dshcv-btn dshcv-opt', 'data-quiet': '1', title: '与打开时的内容逐行对比', onClick: compareWithBaseline },
+{ type: 'button', className: 'dshcv-btn dshcv-opt', 'data-kind': 'quiet', title: '与打开时的内容逐行对比', onClick: compareWithBaseline },
 '对比',
 )
 : null,
 editing
 ? h(
 'button',
-{ type: 'button', className: 'dshcv-btn', 'data-primary': '1', disabled: saving, onClick: () => save(false) },
+{ type: 'button', className: 'dshcv-btn', 'data-kind': 'primary', disabled: saving, onClick: () => save(false) },
 saving ? '保存中…' : '保存',
 )
 : null,
@@ -1894,7 +1937,7 @@ h(
 null,
 '文件已被外部修改' + (conflict.size ? '（磁盘上 ' + conflict.size.toLocaleString() + ' 字节）' : '') + '，直接保存会覆盖对方的改动。',
 ),
-h('button', { type: 'button', className: 'dshcv-btn', 'data-primary': '1', disabled: saving, onClick: () => save(true) }, '仍然覆盖'),
+h('button', { type: 'button', className: 'dshcv-btn', 'data-kind': 'primary', disabled: saving, onClick: () => save(true) }, '仍然覆盖'),
 h('button', { type: 'button', className: 'dshcv-btn', onClick: compareWithDisk }, '查看差异'),
 h('button', { type: 'button', className: 'dshcv-btn', onClick: reloadFromDisk }, '放弃我的修改并重读'),
 ),
@@ -1906,7 +1949,7 @@ const pickButton = picked
 {
 type: 'button',
 className: 'dshcv-btn dshcv-pick',
-'data-primary': '1',
+'data-kind': 'primary',
 style: { top: picked.top, left: picked.left },
 onMouseDown: (event) => event.preventDefault(),
 onClick: commit,
@@ -2098,7 +2141,7 @@ h(
 {
 type: 'button',
 className: 'dshcv-btn',
-'data-quiet': '1',
+'data-kind': 'quiet',
 title: '插入常用意见',
 onClick: () => setMenuFor(menuFor === mark.id ? null : mark.id),
 },
@@ -2156,7 +2199,7 @@ h(
 {
 type: 'button',
 className: 'dshcv-btn dshcv-template-remove',
-'data-quiet': '1',
+'data-kind': 'quiet',
 title: '删除这条模板',
 onClick: () => saveTemplates((store.templates || DEFAULT_TEMPLATES).filter((item) => item !== template)),
 },
@@ -2174,7 +2217,7 @@ h(
 {
 type: 'button',
 className: 'dshcv-btn',
-'data-quiet': '1',
+'data-kind': 'quiet',
 title: '复制这一条的 Markdown',
 onClick: () => copyMark(mark),
 },
@@ -2185,7 +2228,7 @@ h(
 {
 type: 'button',
 className: 'dshcv-btn',
-'data-quiet': '1',
+'data-kind': 'quiet',
 title: '只把这一条发送到对话框',
 onClick: () => sendOneMark(mark),
 },
@@ -2196,7 +2239,7 @@ h(
 {
 type: 'button',
 className: 'dshcv-btn',
-'data-quiet': '1',
+'data-kind': 'quiet',
 title: '删除标记',
 onClick: () => removeMark(mark.id),
 },
@@ -2214,7 +2257,7 @@ h(
 {
 type: 'button',
 className: 'dshcv-chip',
-'data-primary': railScope.mode === 'all' ? '1' : '0',
+'aria-pressed': railScope.mode === 'all' ? 'true' : 'false',
 onClick: () => setRailScope('all'),
 },
 '全部 ' + store.marks.length,
@@ -2225,7 +2268,7 @@ activePath
 {
 type: 'button',
 className: 'dshcv-chip',
-'data-primary': railScope.mode === 'active' ? '1' : '0',
+'aria-pressed': railScope.mode === 'active' ? 'true' : 'false',
 disabled: !activeCount,
 title: activeCount ? '只看当前文件的标注' : '当前文件还没有标注',
 onClick: () => setRailScope('active'),
@@ -3251,7 +3294,7 @@ h(
 {
 type: 'button',
 className: 'dshcv-btn',
-'data-primary': '1',
+'data-kind': 'primary',
 onClick: () =>
 addMark({ kind: 'spot', path: doc.path, label: '第 ' + page + ' 页', quote: '', page }),
 },
@@ -4391,7 +4434,7 @@ const solid = link(
 'void main(){vec4 world=uModel*vec4(aPosition,1.0);vec4 eye=uView*world;vNormal=normalize(mat3(uModel)*aNormal);' +
 'vEye=normalize(-eye.xyz);vDepth=length(eye.xyz);gl_Position=uMvp*vec4(aPosition,1.0);}',
 'precision mediump float;varying vec3 vNormal;varying vec3 vEye;varying float vDepth;' +
-'uniform vec3 uColor;uniform float uFog;uniform float uFar;uniform float uNormalView;' +
+'uniform vec3 uColor;uniform float uFog;uniform float uFar;uniform float uNormalView;uniform float uDim;' +
 'void main(){vec3 n=normalize(vNormal);if(!gl_FrontFacing)n=-n;' +
 'if(uNormalView>0.5){gl_FragColor=vec4(n*0.5+0.5,1.0);return;}' +
 'vec3 key=normalize(vec3(0.45,0.72,0.55));vec3 fill=normalize(vec3(-0.55,-0.25,-0.6));' +
@@ -4399,7 +4442,10 @@ const solid = link(
 'vec3 halfKey=normalize(key+vEye);float spec=pow(max(dot(n,halfKey),0.0),48.0)*0.35;' +
 'vec3 base=uColor*(0.18+0.82*keyDiff+fillDiff)+vec3(spec);' +
 'float fog=uFog>0.5?clamp((vDepth-uFar*0.55)/(uFar*0.75),0.0,0.85):0.0;' +
-'gl_FragColor=vec4(mix(base,vec3(0.09,0.11,0.14),fog),1.0);}',
+'vec3 shaded=mix(base,vec3(0.09,0.11,0.14),fog);' +
+'gl_FragColor=vec4(shaded,1.0);' +
+'gl_FragColor.a=mix(1.0,0.16,uDim);' +
+'gl_FragColor.rgb*=mix(1.0,0.55,uDim);}',
 );
 const lines = link(
 'attribute vec3 aPosition;uniform mat4 uMvp;void main(){gl_Position=uMvp*vec4(aPosition,1.0);}',
@@ -4445,6 +4491,7 @@ color: gl.getUniformLocation(solid, 'uColor'),
 fog: gl.getUniformLocation(solid, 'uFog'),
 far: gl.getUniformLocation(solid, 'uFar'),
 normals: gl.getUniformLocation(solid, 'uNormalView'),
+dim: gl.getUniformLocation(solid, 'uDim'),
 },
 lines: { mvp: gl.getUniformLocation(lines, 'uMvp'), color: gl.getUniformLocation(lines, 'uColor') },
 };
@@ -4479,6 +4526,9 @@ target[2] + distance * Math.cos(view.pitch) * Math.cos(view.yaw),
 const projection = perspective(Math.PI / 4, width / height, distance / 500, distance * 40);
 const camera = lookAt(eye, target, [0, 1, 0]);
 const mvp = multiplyMatrix(new Float32Array(projection), camera);
+const spotMark = hoveredMarkFor(doc.path);
+const spotTriangle = spotMark && spotMark.kind === 'spot' && typeof spotMark.triangle === 'number' ? spotMark.triangle : -1;
+const dimming = spotTriangle >= 0;
 if (options.faces) {
 gl.useProgram(solid);
 gl.bindBuffer(gl.ARRAY_BUFFER, solidBuffer);
@@ -4493,7 +4543,17 @@ gl.uniform3f(uniforms.solid.color, 0.62, 0.72, 0.9);
 gl.uniform1f(uniforms.solid.fog, options.fog ? 1 : 0);
 gl.uniform1f(uniforms.solid.far, distance);
 gl.uniform1f(uniforms.solid.normals, options.normals ? 1 : 0);
+gl.uniform1f(uniforms.solid.dim, dimming ? 1 : 0);
+if (dimming) {
+gl.enable(gl.BLEND);
+gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+gl.depthMask(false);
+}
 gl.drawArrays(gl.TRIANGLES, 0, solidCount);
+if (dimming) {
+gl.depthMask(true);
+gl.disable(gl.BLEND);
+}
 if (attributes.solid.normal >= 0) gl.disableVertexAttribArray(attributes.solid.normal);
 }
 if (options.edges && lineBuffer) {
@@ -4505,7 +4565,13 @@ gl.bindBuffer(gl.ARRAY_BUFFER, lineBuffer);
 gl.enableVertexAttribArray(attributes.lines.position);
 gl.vertexAttribPointer(attributes.lines.position, 3, gl.FLOAT, false, 12, 0);
 gl.uniformMatrix4fv(uniforms.lines.mvp, false, mvp);
-gl.uniform3f(uniforms.lines.color, options.faces ? 0.28 : 0.72, options.faces ? 0.34 : 0.82, 1.0);
+const edgeFade = dimming ? 0.35 : 1;
+gl.uniform3f(
+uniforms.lines.color,
+(options.faces ? 0.28 : 0.72) * edgeFade,
+(options.faces ? 0.34 : 0.82) * edgeFade,
+1.0 * edgeFade,
+);
 gl.drawArrays(gl.LINES, 0, lineVertexCount);
 if (seeThrough) gl.enable(gl.DEPTH_TEST);
 gl.depthFunc(gl.LESS);
@@ -4553,15 +4619,36 @@ gl.uniform3f(uniforms.lines.color, 0.98, 0.62, 0.16);
 gl.drawArrays(gl.LINES, 0, marks.length / 3);
 gl.depthFunc(gl.LESS);
 }
-const hoverMark = hoveredMarkFor(doc.path);
-if (hoverMark && hoverMark.kind === 'spot' && typeof hoverMark.triangle === 'number') {
-const start = hoverMark.triangle * 9;
+if (spotTriangle >= 0) {
+const start = spotTriangle * 9;
 if (start >= 0 && start + 8 < positions.length) {
 const outline = new Float32Array([
 positions[start], positions[start + 1], positions[start + 2],
 positions[start + 3], positions[start + 4], positions[start + 5],
 positions[start + 6], positions[start + 7], positions[start + 8],
 ]);
+if (options.faces) {
+gl.useProgram(solid);
+gl.bindBuffer(gl.ARRAY_BUFFER, axisBuffer);
+gl.bufferData(gl.ARRAY_BUFFER, outline, gl.STREAM_DRAW);
+gl.enableVertexAttribArray(attributes.solid.position);
+gl.vertexAttribPointer(attributes.solid.position, 3, gl.FLOAT, false, 12, 0);
+if (attributes.solid.normal >= 0) gl.disableVertexAttribArray(attributes.solid.normal);
+gl.uniformMatrix4fv(uniforms.solid.mvp, false, mvp);
+gl.uniformMatrix4fv(uniforms.solid.view, false, camera);
+gl.uniformMatrix4fv(uniforms.solid.model, false, identity);
+gl.uniform3f(uniforms.solid.color, 1.0, 0.78, 0.24);
+gl.uniform1f(uniforms.solid.fog, 0);
+gl.uniform1f(uniforms.solid.far, distance);
+gl.uniform1f(uniforms.solid.normals, 0);
+gl.uniform1f(uniforms.solid.dim, 0);
+gl.enable(gl.BLEND);
+gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+gl.depthMask(false);
+gl.drawArrays(gl.TRIANGLES, 0, 3);
+gl.depthMask(true);
+gl.disable(gl.BLEND);
+}
 gl.useProgram(lines);
 gl.bindBuffer(gl.ARRAY_BUFFER, axisBuffer);
 gl.bufferData(gl.ARRAY_BUFFER, outline, gl.STREAM_DRAW);
@@ -4850,8 +4937,8 @@ h(
 'button',
 {
 type: 'button',
-className: 'dshcv-btn',
-'data-primary': options.faces ? '1' : '0',
+className: 'dshcv-toggle',
+'aria-pressed': options.faces ? 'true' : 'false',
 title: '显示实体面（关掉后只看线框）',
 onClick: () => toggle('faces'),
 },
@@ -4861,8 +4948,8 @@ h(
 'button',
 {
 type: 'button',
-className: 'dshcv-btn',
-'data-primary': options.edges ? '1' : '0',
+className: 'dshcv-toggle',
+'aria-pressed': options.edges ? 'true' : 'false',
 title: '显示三角边',
 onClick: () => toggle('edges'),
 },
@@ -4872,8 +4959,8 @@ h(
 'button',
 {
 type: 'button',
-className: 'dshcv-btn',
-'data-primary': options.hiddenLine ? '1' : '0',
+className: 'dshcv-toggle',
+'aria-pressed': options.hiddenLine ? 'true' : 'false',
 disabled: options.faces,
 title: options.faces ? '仅在线框模式下可用：隐藏被面挡住的边' : '隐藏被挡住的边（关闭则透视显示整个线架）',
 onClick: () => toggle('hiddenLine'),
@@ -4881,11 +4968,14 @@ onClick: () => toggle('hiddenLine'),
 '消隐',
 ),
 h(
+'div',
+{ className: 'dshcv-seg', role: 'group', 'aria-label': '测量模式' },
+h(
 'button',
 {
 type: 'button',
 className: 'dshcv-btn',
-'data-primary': measure.mode === 'distance' ? '1' : '0',
+'aria-pressed': measure.mode === 'distance' ? 'true' : 'false',
 title: '点两处测量距离',
 onClick: () => setMeasure({ mode: measure.mode === 'distance' ? '' : 'distance', points: [], result: '' }),
 },
@@ -4896,11 +4986,12 @@ h(
 {
 type: 'button',
 className: 'dshcv-btn',
-'data-primary': measure.mode === 'angle' ? '1' : '0',
+'aria-pressed': measure.mode === 'angle' ? 'true' : 'false',
 title: '点三处测量夹角（中间点为顶点）',
 onClick: () => setMeasure({ mode: measure.mode === 'angle' ? '' : 'angle', points: [], result: '' }),
 },
 '测角',
+),
 ),
 measure.result
 ? h(
@@ -4927,11 +5018,11 @@ quote: measure.points.map((point) => point.map((value) => value.toFixed(3)).join
 )
 : null,
 measure.points.length
-? h('button', { type: 'button', className: 'dshcv-btn', 'data-quiet': '1', onClick: () => setMeasure({ mode: measure.mode, points: [], result: '' }) }, '清除测量')
+? h('button', { type: 'button', className: 'dshcv-btn', 'data-kind': 'quiet', onClick: () => setMeasure({ mode: measure.mode, points: [], result: '' }) }, '清除测量')
 : null,
-h('button', { type: 'button', className: 'dshcv-btn dshcv-opt', 'data-primary': options.normals ? '1' : '0', title: '按法线方向着色', onClick: () => toggle('normals') }, '法线'),
-h('button', { type: 'button', className: 'dshcv-btn dshcv-opt', 'data-primary': options.fog ? '1' : '0', title: '远近雾化', onClick: () => toggle('fog') }, '雾'),
-h('button', { type: 'button', className: 'dshcv-btn dshcv-opt', 'data-primary': options.axes ? '1' : '0', title: '显示世界坐标轴', onClick: () => toggle('axes') }, '坐标轴'),
+h('button', { type: 'button', className: 'dshcv-toggle dshcv-opt', 'aria-pressed': options.normals ? 'true' : 'false', title: '按法线方向着色', onClick: () => toggle('normals') }, '法线'),
+h('button', { type: 'button', className: 'dshcv-toggle dshcv-opt', 'aria-pressed': options.fog ? 'true' : 'false', title: '远近雾化', onClick: () => toggle('fog') }, '雾'),
+h('button', { type: 'button', className: 'dshcv-toggle dshcv-opt', 'aria-pressed': options.axes ? 'true' : 'false', title: '显示世界坐标轴', onClick: () => toggle('axes') }, '坐标轴'),
 h('button', { type: 'button', className: 'dshcv-btn dshcv-opt2', title: '把当前网格导出为工作区里的 OBJ', onClick: exportObj }, '导出 OBJ'),
 diag.error
 ? h(
@@ -5528,7 +5619,7 @@ return h(
 h(
 'div',
 { style: { display: 'flex', gap: 8, alignItems: 'center', padding: '6px 12px', borderBottom: '1px solid var(--dsw-alias-border-l1)' } },
-h('button', { type: 'button', className: 'dshcv-btn', 'data-primary': selecting ? '1' : '0', onClick: () => setSelecting(!selecting) }, selecting ? '框选中…' : '框选区域'),
+h('button', { type: 'button', className: 'dshcv-toggle', 'aria-pressed': selecting ? 'true' : 'false', onClick: () => setSelecting(!selecting) }, selecting ? '框选中…' : '框选区域'),
 h('button', { type: 'button', className: 'dshcv-btn', onClick: () => setZoom(Math.max(0.25, zoom - 0.25)) }, '−'),
 h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, Math.round(zoom * 100) + '%'),
 h('button', { type: 'button', className: 'dshcv-btn', onClick: () => setZoom(Math.min(4, zoom + 0.25)) }, '+'),
@@ -5538,8 +5629,8 @@ h(
 'button',
 {
 type: 'button',
-className: 'dshcv-btn',
-'data-primary': ruler.on ? '1' : '0',
+className: 'dshcv-toggle',
+'aria-pressed': ruler.on ? 'true' : 'false',
 title: '点两处量像素距离',
 onClick: () => setRuler({ on: !ruler.on, points: [] }),
 },
@@ -5554,7 +5645,7 @@ sample
 {
 type: 'button',
 className: 'dshcv-btn dshcv-opt',
-'data-quiet': '1',
+'data-kind': 'quiet',
 title: '复制这个颜色的 HEX',
 onClick: () => {
 copyText(hexOf(sample));
@@ -5728,7 +5819,7 @@ String((error && error.message) || error),
 h(
 'div',
 { style: { display: 'flex', gap: '8px', marginTop: '4px' } },
-h('button', { type: 'button', className: 'dshcv-btn', 'data-primary': '1', onClick: () => this.setState({ error: null }) }, '重试'),
+h('button', { type: 'button', className: 'dshcv-btn', 'data-kind': 'primary', onClick: () => this.setState({ error: null }) }, '重试'),
 h(
 'button',
 {
@@ -6060,8 +6151,8 @@ store.marks.length
 'button',
 {
 type: 'button',
-className: 'dshcv-btn dshcv-opt',
-'data-primary': followHover.on ? '1' : '0',
+className: 'dshcv-toggle dshcv-opt',
+'aria-pressed': followHover.on ? 'true' : 'false',
 title: '悬停标注时自动滚动到对应内容',
 onClick: () => setFollowHover(!followHover.on),
 },
@@ -6071,17 +6162,17 @@ onClick: () => setFollowHover(!followHover.on),
 store.marks.length
 ? h(
 'button',
-{ type: 'button', className: 'dshcv-btn', 'data-primary': '1', onClick: send },
+{ type: 'button', className: 'dshcv-btn', 'data-kind': 'primary', onClick: send },
 '发送标注 (' + store.marks.length + ')',
 )
 : null,
 store.marks.length
-? h('button', { type: 'button', className: 'dshcv-btn', 'data-quiet': '1', onClick: clearMarks }, '清空')
+? h('button', { type: 'button', className: 'dshcv-btn', 'data-kind': 'quiet', onClick: clearMarks }, '清空')
 : null,
 store.marks.length
 ? h(
 'button',
-{ type: 'button', className: 'dshcv-btn dshcv-opt', 'data-quiet': '1', title: '导出标注为 JSON', onClick: () => exportMarks() },
+{ type: 'button', className: 'dshcv-btn dshcv-opt', 'data-kind': 'quiet', title: '导出标注为 JSON', onClick: () => exportMarks() },
 '导出',
 )
 : null,
@@ -6090,7 +6181,7 @@ h(
 {
 type: 'button',
 className: 'dshcv-btn dshcv-opt',
-'data-quiet': '1',
+'data-kind': 'quiet',
 title: '导入标注 JSON（相同位置复用原编号）',
 onClick: () => {
 if (importInputRef.current) importInputRef.current.click();
@@ -6120,8 +6211,8 @@ store.marks.length
 'button',
 {
 type: 'button',
-className: 'dshcv-btn dshcv-opt',
-'data-primary': sendPrefs.autoClear ? '1' : '0',
+className: 'dshcv-toggle dshcv-opt',
+'aria-pressed': sendPrefs.autoClear ? 'true' : 'false',
 title: '发送标注后自动清空列表（Ctrl+Enter 也能发送）',
 onClick: toggleAutoClear,
 },
@@ -6171,7 +6262,7 @@ h(
 {
 type: 'button',
 className: 'dshcv-btn',
-'data-quiet': '1',
+'data-kind': 'quiet',
 style: { padding: '0 5px', lineHeight: '16px' },
 title: '关闭该交付物',
 onClick: () => closeDoc(doc.id),
@@ -6228,7 +6319,7 @@ h(
 { className: 'dshcv-guideactions' },
 h(
 'button',
-{ type: 'button', className: 'dshcv-btn', 'data-primary': '1', onClick: () => setPickerOpen(true) },
+{ type: 'button', className: 'dshcv-btn', 'data-kind': 'primary', onClick: () => setPickerOpen(true) },
 '打开工作区文件',
 ),
 h(
@@ -6341,8 +6432,8 @@ h(
 'button',
 {
 type: 'button',
-className: 'dshcv-btn',
-'data-primary': debugRender() ? '1' : '0',
+className: 'dshcv-toggle',
+'aria-pressed': debugRender() ? 'true' : 'false',
 onClick: toggleDebugRender,
 },
 debugRender() ? '渲染调试计数：开' : '渲染调试计数：关',
@@ -6356,8 +6447,8 @@ h(
 'button',
 {
 type: 'button',
-className: 'dshcv-btn',
-'data-primary': injectScriptAllowed() ? '1' : '0',
+className: 'dshcv-toggle',
+'aria-pressed': injectScriptAllowed() ? 'true' : 'false',
 title: '关闭后预览不再运行插件的标注脚本，元素点选将不可用',
 onClick: toggleInjectScript,
 },
@@ -6399,7 +6490,7 @@ h(
 {
 type: 'button',
 className: 'dshcv-btn',
-'data-quiet': '1',
+'data-kind': 'quiet',
 title: '画布面板 / Canvas panel',
 'aria-label': '画布面板',
 onClick: () => selectPanel(PANEL_KEY),
