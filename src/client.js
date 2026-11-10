@@ -469,6 +469,19 @@ window.__ModuleLoader__.load({
       if (mark.quote) {
         for (const quoteLine of String(mark.quote).split('\n').slice(0, 6)) lines.push('   > ' + quoteLine);
       }
+      // A 3D face needs more than an index: the index is only meaningful inside the
+      // exact file version that produced it, while the corners and normal let the
+      // reader locate the same face again.
+      if (mark.kind === 'spot' && Array.isArray(mark.vertices) && mark.vertices.length === 3) {
+        const point = (value) => '(' + value.map((item) => Number(item).toFixed(3)).join(', ') + ')';
+        lines.push('   > 顶点 ' + mark.vertices.map(point).join(' '));
+        const bits = [];
+        if (Array.isArray(mark.normal)) bits.push('法线 ' + point(mark.normal));
+        if (typeof mark.area === 'number') bits.push('面积 ' + mark.area.toFixed(3));
+        if (mark.place) bits.push('位于模型 ' + mark.place);
+        if (typeof mark.triangles === 'number') bits.push('该模型共 ' + Number(mark.triangles).toLocaleString() + ' 个三角面');
+        if (bits.length) lines.push('   > ' + bits.join(' · '));
+      }
       lines.push('   意见：' + (mark.note && mark.note.trim() ? mark.note.trim() : '（未填写，请按引用判断）'));
       return lines.join('\n');
     };
@@ -5573,12 +5586,55 @@ h(
               repaintRef.current();
               return;
             }
+            // A triangle index alone means nothing outside this exact file version, so
+            // the mark carries the face itself: three corners, normal, area and a coarse
+            // place in the bounding box.
+            const soup = meshRef.current;
+            const base = hit.triangle * 9;
+            const details = { triangle: hit.triangle };
+            if (soup && base >= 0 && base + 8 < soup.length) {
+              const corner = (offset) => [soup[base + offset * 3], soup[base + offset * 3 + 1], soup[base + offset * 3 + 2]];
+              const corners = [corner(0), corner(1), corner(2)];
+              const edgeA = [corners[1][0] - corners[0][0], corners[1][1] - corners[0][1], corners[1][2] - corners[0][2]];
+              const edgeB = [corners[2][0] - corners[0][0], corners[2][1] - corners[0][1], corners[2][2] - corners[0][2]];
+              const cross = [
+                edgeA[1] * edgeB[2] - edgeA[2] * edgeB[1],
+                edgeA[2] * edgeB[0] - edgeA[0] * edgeB[2],
+                edgeA[0] * edgeB[1] - edgeA[1] * edgeB[0],
+              ];
+              const length = Math.hypot(cross[0], cross[1], cross[2]);
+              const centroid = [
+                (corners[0][0] + corners[1][0] + corners[2][0]) / 3,
+                (corners[0][1] + corners[1][1] + corners[2][1]) / 3,
+                (corners[0][2] + corners[1][2] + corners[2][2]) / 3,
+              ];
+              const middle = viewRef.current.center;
+              const span = Math.max(1e-6, viewRef.current.radius || 1);
+              const side = (value, axis) => {
+                const delta = value - middle[axis];
+                return delta < -span * 0.18 ? -1 : delta > span * 0.18 ? 1 : 0;
+              };
+              const axisWord = (() => {
+                const x = ['左', '中', '右'][side(centroid[0], 0) + 1];
+                const y = ['下', '中', '上'][side(centroid[1], 1) + 1];
+                const z = ['后', '中', '前'][side(centroid[2], 2) + 1];
+                return x + '·' + y + '·' + z;
+              })();
+              Object.assign(details, {
+                vertices: corners.map((point) => point.map((value) => Math.round(value * 1000) / 1000)),
+                normal: length > 0 ? cross.map((value) => Math.round((value / length) * 1000) / 1000) : [0, 0, 1],
+                area: Math.round((length / 2) * 10000) / 10000,
+                centroid: centroid.map((value) => Math.round(value * 1000) / 1000),
+                place: axisWord,
+                triangles: Math.round(soup.length / 9),
+              });
+            }
             addMark({
               kind: 'spot',
               path: doc.path,
-              label: '三角形 #' + hit.triangle,
+              label: '三角面 #' + hit.triangle + (details.triangles ? '（共 ' + details.triangles.toLocaleString() + ' 面）' : ''),
               quote: hit.point.map((value) => value.toFixed(3)).join(', '),
-              triangle: hit.triangle,
+              ...details,
             });
           },
         })),
