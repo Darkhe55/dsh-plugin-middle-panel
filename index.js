@@ -231,6 +231,24 @@ export function apply(ctx) {
 
         try {
           const target = await ctx.fs.resolve(absolute)
+          // Optimistic concurrency: the client sends the mtime it edited against.
+          // A mismatch means someone else touched the file, so the write is
+          // refused instead of silently discarding one of the two versions.
+          const expected = Number(body.expectedMtime) || 0
+          const force = body.force === true
+          let before = null
+          try {
+            before = await ctx.fs.stat(target)
+          } catch {
+            before = null
+          }
+          if (before && before.isFile && expected && !force && Math.abs(Number(before.mtimeMs) - expected) > 1) {
+            return reply(409, {
+              error: 'file changed on disk',
+              mtimeMs: Number(before.mtimeMs) || 0,
+              size: Number(before.size) || 0,
+            })
+          }
           // The composed filesystem fences writes by an explicit policy; without
           // one the default mode denies a path this route has already confined.
           await ctx.fs.writeText(target, content, undefined, undefined, {
@@ -238,7 +256,19 @@ export function apply(ctx) {
             workspaceRoot: root,
             sessionId,
           })
-          return reply(200, { ok: true, path: absolute, bytes: content.length })
+          let after = null
+          try {
+            after = await ctx.fs.stat(target)
+          } catch {
+            after = null
+          }
+          return reply(200, {
+            ok: true,
+            path: absolute,
+            bytes: content.length,
+            mtimeMs: after ? Number(after.mtimeMs) || 0 : 0,
+            size: after ? Number(after.size) || 0 : content.length,
+          })
         } catch (error) {
           return reply(500, { error: error && error.message ? error.message : String(error) })
         }

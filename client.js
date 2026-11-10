@@ -78,6 +78,19 @@ window.__ModuleLoader__.load({
 
     const storageKey = () => STORAGE_PREFIX + (store.sessionId || 'none');
 
+    // Last mtime seen per file: it stamps new marks and detects marks that the
+    // file has since outgrown.
+    const fileVersions = new Map();
+    const noteFileVersion = (path, version) => {
+      const key = pathKey(path);
+      const stamp = Number(version) || 0;
+      if (!key || !stamp) return;
+      if (fileVersions.get(key) === stamp) return;
+      fileVersions.set(key, stamp);
+      notify();
+    };
+    const fileVersionOf = (path) => fileVersions.get(pathKey(path)) || 0;
+
     // Hovering a mark in the rail spotlights the same spot in the viewer. This is
     // transient UI state: it is never persisted and never leaves the panel.
     const setHoverMark = (id) => {
@@ -93,6 +106,11 @@ window.__ModuleLoader__.load({
     const useHoverMark = (path) => {
       useVersion();
       return hoveredMarkFor(path);
+    };
+    // A mark is stale once the file it points into reports a different mtime.
+    const markStale = (mark) => {
+      const current = fileVersionOf(mark.path);
+      return Boolean(mark.mtimeMs && current && Math.abs(mark.mtimeMs - current) > 1);
     };
 
     const persist = () => {
@@ -223,7 +241,13 @@ window.__ModuleLoader__.load({
 
     const addMark = (partial) => {
       if (!partial || !partial.path) return 0;
-      return upsertMark(Object.assign({}, partial, { path: normalizePath(partial.path) }));
+      const path = normalizePath(partial.path);
+      // Stamp the file version the mark was made against, so a later edit can be
+      // reported as "this annotation may have moved" instead of mismarking quietly.
+      const known = fileVersionOf(path);
+      const stamped = Object.assign({}, partial, { path });
+      if (known && !stamped.mtimeMs) stamped.mtimeMs = known;
+      return upsertMark(stamped);
     };
 
     const setMarkNote = (id, note) => {
@@ -494,6 +518,8 @@ window.__ModuleLoader__.load({
       '.dshcv-docp.dshcv-spot,.dshcv-slide.dshcv-spot{box-shadow:0 0 0 1px color-mix(in srgb,var(--dsw-alias-brand-primary) 55%,transparent)}',
       '.dshcv-table td.dshcv-spot,.dshcv-table th.dshcv-spot{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 26%,transparent);outline:1px solid color-mix(in srgb,var(--dsw-alias-brand-primary) 60%,transparent)}',
       '.dshcv-markrow-on{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 10%,transparent);border-radius:6px}',
+      '.dshcv-stale{flex:0 0 auto;font-size:11px;color:var(--dsw-alias-warning,#c28b00);align-self:flex-start}',
+      '.dshcv-conflict{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:6px 12px;font-size:11px;background:color-mix(in srgb,var(--dsw-alias-warning,#c28b00) 14%,transparent);border-bottom:1px solid var(--dsw-alias-border-l1)}',
       '.dshcv-md>:first-child{margin-top:0}',
       '.dshcv-md h1{font-size:19px;margin:16px 0 8px}',
       '.dshcv-md h2{font-size:16px;margin:14px 0 6px}',
@@ -952,7 +978,10 @@ window.__ModuleLoader__.load({
         if (!response.ok) return null;
         const body = await response.json();
         if (!body || typeof body.size !== 'number') return null;
-        return { size: body.size, mtimeMs: Number(body.mtimeMs) || 0 };
+        const info = { size: body.size, mtimeMs: Number(body.mtimeMs) || 0 };
+        // Every probe doubles as a version stamp for mark staleness.
+        if (info.mtimeMs) noteFileVersion(path, info.mtimeMs);
+        return info;
       } catch {
         return null;
       }
@@ -1016,6 +1045,8 @@ window.__ModuleLoader__.load({
       const [draft, setDraft] = React.useState('');
       const [saving, setSaving] = React.useState(false);
       const [message, setMessage] = React.useState('');
+      const [conflict, setConflict] = React.useState(null);
+      const [reloadTick, setReloadTick] = React.useState(0);
       const isMarkdown = doc.view === 'markdown';
       const [rendered, setRendered] = React.useState(isMarkdown);
       const scrollPos = React.useRef(0);
@@ -1040,6 +1071,7 @@ window.__ModuleLoader__.load({
           try {
             const page = await readTextPages(sessionId, doc.path, controller.signal, pageBudget);
             if (cancelled) return;
+            noteFileVersion(doc.path, page.version);
             setState({
               status: 'ready',
               text: page.text,
@@ -1058,7 +1090,7 @@ window.__ModuleLoader__.load({
           cancelled = true;
           controller.abort();
         };
-      }, [doc.path, sessionId, pageBudget]);
+      }, [doc.path, sessionId, pageBudget, reloadTick]);
 
       React.useEffect(() => {
         if (!message) return undefined;
@@ -1193,12 +1225,13 @@ window.__ModuleLoader__.load({
         setMessage('');
       };
 
-      const save = async () => {
+      const save = async (force) => {
         if (!state.absolutePath) {
           setMessage('未取得文件绝对路径，无法保存');
           return;
         }
         setSaving(true);
+        setConflict(null);
         setMessage('保存中…');
         try {
           const response = await fetch(saveUrl(), {
@@ -1210,11 +1243,20 @@ window.__ModuleLoader__.load({
               path: doc.path,
               absolutePath: state.absolutePath,
               content: draft,
+              expectedMtime: state.version || 0,
+              force: force === true,
             }),
           });
           const payload = await response.json().catch(() => ({}));
+          if (response.status === 409) {
+            setConflict({ mtimeMs: payload && payload.mtimeMs ? payload.mtimeMs : 0, size: payload && payload.size ? payload.size : 0 });
+            setMessage('文件已被外部修改');
+            return;
+          }
           if (!response.ok) throw new Error(payload && payload.error ? payload.error : 'HTTP ' + response.status);
-          setState(Object.assign({}, state, { text: draft, version: payload.version }));
+          const nextVersion = payload && payload.mtimeMs ? payload.mtimeMs : state.version;
+          noteFileVersion(doc.path, nextVersion);
+          setState(Object.assign({}, state, { text: draft, version: nextVersion }));
           setEditing(false);
           setMessage('已保存');
         } catch (error) {
@@ -1222,6 +1264,13 @@ window.__ModuleLoader__.load({
         } finally {
           setSaving(false);
         }
+      };
+
+      const reloadFromDisk = () => {
+        setConflict(null);
+        setEditing(false);
+        setMessage('已重新读取');
+        setReloadTick((value) => value + 1);
       };
 
       if (state.status === 'failed') {
@@ -1291,14 +1340,31 @@ window.__ModuleLoader__.load({
         editing
           ? h(
               'button',
-              { type: 'button', className: 'dshcv-btn', 'data-primary': '1', disabled: saving, onClick: save },
+              { type: 'button', className: 'dshcv-btn', 'data-primary': '1', disabled: saving, onClick: () => save(false) },
               saving ? '保存中…' : '保存',
             )
           : null,
       );
 
-      // The pick button is shared by both views; it used to live only in the
-      // source branch, so a selection in rendered markdown never showed it.
+      // Save conflict: the file moved on disk while this editor was open.
+      const toolbarWithBanner = conflict
+        ? h(
+            React.Fragment,
+            null,
+            toolbar,
+            h(
+              'div',
+              { className: 'dshcv-conflict' },
+              h(
+                'span',
+                null,
+                '文件已被外部修改' + (conflict.size ? '（磁盘上 ' + conflict.size.toLocaleString() + ' 字节）' : '') + '，直接保存会覆盖对方的改动。',
+              ),
+              h('button', { type: 'button', className: 'dshcv-btn', 'data-primary': '1', disabled: saving, onClick: () => save(true) }, '仍然覆盖'),
+              h('button', { type: 'button', className: 'dshcv-btn', onClick: reloadFromDisk }, '放弃我的修改并重读'),
+            ),
+          )
+        : toolbar;
       const pickButton = picked
         ? h(
             'button',
@@ -1318,7 +1384,7 @@ window.__ModuleLoader__.load({
         return h(
           React.Fragment,
           null,
-          toolbar,
+          toolbarWithBanner,
           h(
             'div',
             { className: 'dshcv-scroll', ref: scrollRef, onMouseUp: onMouseUp },
@@ -1332,7 +1398,7 @@ window.__ModuleLoader__.load({
         return h(
           React.Fragment,
           null,
-          toolbar,
+          toolbarWithBanner,
           h('textarea', {
             className: 'dshcv-editor',
             value: draft,
@@ -1351,7 +1417,7 @@ window.__ModuleLoader__.load({
       return h(
         React.Fragment,
         null,
-        toolbar,
+        toolbarWithBanner,
         h(
           'div',
           { className: 'dshcv-scroll', ref: scrollRef, onMouseUp: onMouseUp },
@@ -1406,6 +1472,9 @@ window.__ModuleLoader__.load({
                 onMouseLeave: () => setHoverMark(undefined),
               },
               h('span', { className: 'dshcv-badge' }, String(mark.n)),
+              markStale(mark)
+                ? h('span', { className: 'dshcv-stale', title: '文件已改动，这条标注的位置可能已偏移' }, '⚠')
+                : null,
               h(
                 'div',
                 { className: 'dshcv-markbody' },
@@ -2439,7 +2508,8 @@ window.__ModuleLoader__.load({
 
     function PdfDoc(props) {
       const { doc, sessionId } = props;
-      const [state, setState] = React.useState({ status: 'idle', url: '', size: 0, error: '' });
+      const [state, setState] = React.useState({ status: 'idle', url: '', size: 0, error: '', pages: 0 });
+      const [page, setPage] = React.useState(1);
       React.useEffect(() => {
         if (!sessionId) return undefined;
         const controller = new AbortController();
@@ -2449,7 +2519,11 @@ window.__ModuleLoader__.load({
           .then((bytes) => {
             if (cancelled || !bytes) return;
             objectUrl = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
-            setState({ status: 'ready', url: objectUrl, size: bytes.length, error: '' });
+            // Page objects are usually plain text in the file, which is enough to
+            // offer page-numbered annotations without shipping a full renderer.
+            const raw = new TextDecoder('latin1').decode(bytes.slice(0, Math.min(bytes.length, 8 * 1024 * 1024)));
+            const found = (raw.match(/\/Type\s*\/Page[^s]/g) || []).length;
+            setState({ status: 'ready', url: objectUrl, size: bytes.length, error: '', pages: found });
           })
           .catch((error) => {
             if (!cancelled) setState({ status: 'failed', url: '', size: 0, error: errText(error) });
@@ -2477,7 +2551,32 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'dshcv-tools' },
-          h('span', { className: 'dshcv-msg' }, Math.round(state.size / 1024) + ' KB · 页码标记需要自渲染阅读器，当前阅读器无法拦截点击'),
+          h(
+            'span',
+            { className: 'dshcv-msg' },
+            Math.round(state.size / 1024) + ' KB · ' + (state.pages ? '共 ' + state.pages + ' 页' : '页数未知（压缩流）') + ' · 阅读器在进程外，点击位置无法拦截',
+          ),
+          h('input', {
+            type: 'number',
+            min: 1,
+            max: state.pages || 9999,
+            value: page,
+            title: '页码',
+            style: { width: '58px' },
+            className: 'dshcv-searchinput',
+            onChange: (event) => setPage(Math.max(1, Math.min(Number(event.target.value) || 1, state.pages || 9999))),
+          }),
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'dshcv-btn',
+              'data-primary': '1',
+              onClick: () =>
+                addMark({ kind: 'spot', path: doc.path, label: '第 ' + page + ' 页', quote: '', page }),
+            },
+            '标记此页',
+          ),
           h(
             'button',
             {
