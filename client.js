@@ -120,6 +120,24 @@ window.__ModuleLoader__.load({
       useHoverVersion();
       return hoveredMarkFor(path);
     };
+    // Following a hovered mark by scrolling is a preference, remembered per install.
+    const followHover = { on: true };
+    try {
+      const saved = localStorage.getItem('dsh.canvas.follow');
+      if (saved === '0' || saved === '1') followHover.on = saved === '1';
+    } catch {
+      /* storage is best effort */
+    }
+    const followHoverOn = () => followHover.on;
+    const setFollowHover = (on) => {
+      followHover.on = Boolean(on);
+      try {
+        localStorage.setItem('dsh.canvas.follow', followHover.on ? '1' : '0');
+      } catch {
+        /* storage is best effort */
+      }
+      notify();
+    };
     // A mark is stale once the file it points into reports a different mtime.
     const markStale = (mark) => {
       const current = fileVersionOf(mark.path);
@@ -331,34 +349,71 @@ window.__ModuleLoader__.load({
       activateDoc(docs[next].id);
     };
 
+    // Where a mark points, in words. Shared by the outline and the per-mark copy.
+    const markWhere = (mark) =>
+      mark.kind === 'text'
+        ? mark.lines && mark.lines[0] === mark.lines[1]
+          ? '第 ' + mark.lines[0] + ' 行'
+          : '第 ' + mark.lines[0] + '-' + mark.lines[1] + ' 行'
+        : mark.kind === 'paragraph'
+          ? '第 ' + mark.paragraph + ' 段'
+          : mark.kind === 'spot'
+            ? mark.label || '选取'
+            : mark.kind === 'element'
+              ? '元素 `' + mark.selector + '`'
+              : mark.kind === 'layer'
+                ? '图层 `' + mark.selector + '`'
+                : '区域 (' + (mark.rect || []).join(', ') + ')';
+
+    const markToBlock = (mark) => {
+      const lines = [mark.n + '. `' + mark.path + '` — ' + markWhere(mark)];
+      if (mark.quote) {
+        for (const quoteLine of String(mark.quote).split('\n').slice(0, 6)) lines.push('   > ' + quoteLine);
+      }
+      lines.push('   意见：' + (mark.note && mark.note.trim() ? mark.note.trim() : '（未填写，请按引用判断）'));
+      return lines.join('\n');
+    };
+
     const buildMarkdown = () => {
       const marks = store.marks.slice().sort((a, b) => a.n - b.n);
       if (!marks.length) return '';
       const lines = ['以下是我在画布面板中的标注（共 ' + marks.length + ' 条），请按编号逐条处理：', ''];
       for (const mark of marks) {
-        const where =
-          mark.kind === 'text'
-            ? mark.lines && mark.lines[0] === mark.lines[1]
-              ? '第 ' + mark.lines[0] + ' 行'
-              : '第 ' + mark.lines[0] + '-' + mark.lines[1] + ' 行'
-            : mark.kind === 'paragraph'
-              ? '第 ' + mark.paragraph + ' 段'
-              : mark.kind === 'spot'
-                ? mark.label || '选取'
-                : mark.kind === 'element'
-              ? '元素 `' + mark.selector + '`'
-              : mark.kind === 'layer'
-                ? '图层 `' + mark.selector + '`'
-                : '区域 (' + (mark.rect || []).join(', ') + ')';
-        lines.push(mark.n + '. `' + mark.path + '` — ' + where);
-        if (mark.quote) {
-          const quoteLines = String(mark.quote).split('\n').slice(0, 6);
-          for (const quoteLine of quoteLines) lines.push('   > ' + quoteLine);
-        }
-        lines.push('   意见：' + (mark.note && mark.note.trim() ? mark.note.trim() : '（未填写，请按引用判断）'));
+        lines.push(markToBlock(mark));
         lines.push('');
       }
       return lines.join('\n').slice(0, 12000);
+    };
+
+    // Insert arbitrary text into the composer, sharing one path with sendMarks.
+    const insertIntoComposer = (text) => {
+      const actions = store.actions;
+      if (actions && typeof actions.captureInsertion === 'function' && typeof actions.insertText === 'function') {
+        try {
+          const captured = actions.captureInsertion();
+          const span = captured && captured.span !== undefined ? captured.span : captured;
+          actions.insertText(text, span);
+          return 'ok';
+        } catch (error) {
+          devlog('insert-failed', [errText(error)]);
+        }
+      }
+      if (actions && typeof actions.setDraft === 'function') {
+        try {
+          actions.setDraft(text);
+          return 'ok';
+        } catch (error) {
+          devlog('insert-draft-failed', [errText(error)]);
+        }
+      }
+      return 'failed';
+    };
+
+    // One mark straight to the composer, for the ⟶ button on a rail row.
+    const sendOneMark = (mark) => {
+      const result = insertIntoComposer(markToBlock(mark) + '\n');
+      if (result !== 'ok') copyMark(mark);
+      return result;
     };
 
     const sendMarks = () => {
@@ -532,6 +587,8 @@ window.__ModuleLoader__.load({
       '.dshcv-table td.dshcv-spot,.dshcv-table th.dshcv-spot{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 26%,transparent);outline:1px solid color-mix(in srgb,var(--dsw-alias-brand-primary) 60%,transparent)}',
       '.dshcv-markrow-on{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 10%,transparent);border-radius:6px}',
       '.dshcv-stale{flex:0 0 auto;font-size:11px;color:var(--dsw-alias-warning,#c28b00);align-self:flex-start}',
+      '.dshcv-railhead{display:flex;gap:6px;align-items:center;padding:4px 0 6px;position:sticky;top:0;background:var(--dsw-alias-bg-layer-1);z-index:1}',
+      '.dshcv-railgroup{font-size:10.5px;color:var(--dsw-alias-label-secondary);padding:6px 0 2px;border-bottom:1px solid var(--dsw-alias-border-l1);margin-bottom:2px}',
       '.dshcv-conflict{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:6px 12px;font-size:11px;background:color-mix(in srgb,var(--dsw-alias-warning,#c28b00) 14%,transparent);border-bottom:1px solid var(--dsw-alias-border-l1)}',
       '.dshcv-md>:first-child{margin-top:0}',
       '.dshcv-md h1{font-size:19px;margin:16px 0 8px}',
@@ -547,7 +604,7 @@ window.__ModuleLoader__.load({
       '.dshcv-md a{color:var(--dsw-alias-brand-primary);text-decoration:none}',
       '.dshcv-md a:hover{text-decoration:underline}',
       '.dshcv-md hr{margin:16px 0;border:0;border-top:1px solid var(--dsw-alias-border-l1)}',
-      '.dshcv-code{font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;padding:6px 0}',
+      '.dshcv-code{font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;font-size:var(--dshcv-text-size,12px);padding:6px 0}',
       '.dshcv-line{display:flex;gap:10px;padding:0 12px;white-space:pre}',
       '.dshcv-line:hover{background:var(--dsw-alias-bg-layer-2)}',
       '.dshcv-num{color:var(--dsw-alias-label-secondary);user-select:none;text-align:right;min-width:42px;flex:0 0 auto;opacity:.75}',
@@ -1069,6 +1126,19 @@ window.__ModuleLoader__.load({
       const [message, setMessage] = React.useState('');
       const [conflict, setConflict] = React.useState(null);
       const [reloadTick, setReloadTick] = React.useState(0);
+      const [fontSize, setFontSize] = React.useState(() => {
+        const saved = Number(localStorage.getItem('dsh.canvas.fontsize'));
+        return saved >= 10 && saved <= 22 ? saved : 12;
+      });
+      const applyFontSize = (next) => {
+        const value = Math.max(10, Math.min(22, next));
+        setFontSize(value);
+        try {
+          localStorage.setItem('dsh.canvas.fontsize', String(value));
+        } catch {
+          /* storage is best effort */
+        }
+      };
       const isMarkdown = doc.view === 'markdown';
       const [rendered, setRendered] = React.useState(isMarkdown);
       const scrollPos = React.useRef(0);
@@ -1210,6 +1280,17 @@ window.__ModuleLoader__.load({
         const node = host && host.querySelector('[data-line="' + line + '"]');
         if (node && typeof node.scrollIntoView === 'function') node.scrollIntoView({ block: 'center' });
       }, [searchIndex, searchHits]);
+
+      // Rail hover scrolls the marked lines into view, unless following is off.
+      React.useEffect(() => {
+        const host = scrollRef.current;
+        if (!host || !hoverLines || !followHoverOn()) return;
+        const node = host.querySelector('[data-line="' + hoverLines.from + '"]');
+        if (node && typeof node.scrollIntoView === 'function') {
+          node.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [hovered && hovered.id]);
 
       React.useEffect(() => {
         const onKey = (event) => {
@@ -1452,7 +1533,7 @@ window.__ModuleLoader__.load({
           toolbarWithBanner,
           h(
             'div',
-            { className: 'dshcv-scroll', ref: scrollRef, onMouseUp: onMouseUp },
+            { className: 'dshcv-scroll', ref: scrollRef, onMouseUp: onMouseUp, style: { '--dshcv-text-size': fontSize + 'px' } },
             h(MarkdownBody, { text: state.text, hoverFrom: hoverLines && hoverLines.from, hoverTo: hoverLines && hoverLines.to }),
           ),
           pickButton,
@@ -1486,7 +1567,7 @@ window.__ModuleLoader__.load({
         toolbarWithBanner,
         h(
           'div',
-          { className: 'dshcv-scroll', ref: scrollRef, onMouseUp: onMouseUp },
+          { className: 'dshcv-scroll', ref: scrollRef, onMouseUp: onMouseUp, style: { '--dshcv-text-size': fontSize + 'px' } },
           h('div', { className: 'dshcv-code' }, rows),
         ),
         picked
@@ -1496,68 +1577,193 @@ window.__ModuleLoader__.load({
     }
 
     // ---------------- marks rail ----------------
+    // Marks grouped by file, optionally limited to the open file, with per-mark
+    // actions: copy one entry, delete, and hover-to-spotlight from the row.
+    const railScope = { mode: 'all' };
+    try {
+      const savedScope = localStorage.getItem('dsh.canvas.railscope');
+      if (savedScope === 'all' || savedScope === 'active') railScope.mode = savedScope;
+    } catch {
+      /* storage is best effort */
+    }
+    const setRailScope = (mode) => {
+      railScope.mode = mode === 'active' ? 'active' : 'all';
+      try {
+        localStorage.setItem('dsh.canvas.railscope', railScope.mode);
+      } catch {
+        /* storage is best effort */
+      }
+      notify();
+    };
+
+    const copyMark = (mark) => {
+      const text = markToBlock(mark);
+      const fallback = () => {
+        const area = document.createElement('textarea');
+        area.value = text;
+        area.style.position = 'fixed';
+        area.style.opacity = '0';
+        document.body.appendChild(area);
+        area.select();
+        try {
+          document.execCommand('copy');
+        } catch {
+          /* ignore */
+        }
+        document.body.removeChild(area);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).catch(fallback);
+        return;
+      }
+      fallback();
+    };
+
     function MarksRail(props) {
       useVersion();
       useHoverVersion();
+      const [query, setQuery] = React.useState('');
       if (!store.marks.length) return null;
+
+      const activeDoc = store.docs.find((doc) => doc.id === store.activeId);
+      const activePath = activeDoc ? activeDoc.path : '';
+      const activeCount = activePath ? store.marks.filter((mark) => sameFile(mark.path, activePath)).length : 0;
+      const needle = query.trim().toLowerCase();
+      const visible = store.marks
+        .filter((mark) => (railScope.mode === 'active' && activePath ? sameFile(mark.path, activePath) : true))
+        .filter((mark) => {
+          if (!needle) return true;
+          const haystack = (mark.path + ' ' + (mark.quote || '') + ' ' + (mark.note || '') + ' ' + (mark.label || '') + ' ' + markWhere(mark)).toLowerCase();
+          return haystack.includes(needle);
+        })
+        .sort((a, b) => a.n - b.n);
+      if (!visible.length) return null;
+
+      const groups = [];
+      for (const mark of visible) {
+        const key = pathKey(mark.path);
+        let group = groups.find((entry) => entry.key === key);
+        if (!group) {
+          group = { key, path: mark.path, marks: [] };
+          groups.push(group);
+        }
+        group.marks.push(mark);
+      }
+      const showGroupHeaders = groups.length > 1;
+
+      const renderMark = (mark) =>
+        h(
+          'div',
+          {
+            key: mark.id,
+            className: 'dshcv-mark' + (store.hoverId === mark.id ? ' dshcv-markrow-on' : ''),
+            onMouseEnter: () => setHoverMark(mark.id),
+            onMouseLeave: () => setHoverMark(undefined),
+          },
+          h('span', { className: 'dshcv-badge' }, String(mark.n)),
+          markStale(mark)
+            ? h('span', { className: 'dshcv-stale', title: '文件已改动，这条标注的位置可能已偏移' }, '⚠')
+            : null,
+          h(
+            'div',
+            { className: 'dshcv-markbody' },
+            h(
+              'div',
+              { className: 'dshcv-meta' },
+              showGroupHeaders ? markWhere(mark) : basename(mark.path) + ' · ' + markWhere(mark),
+            ),
+            mark.quote ? h('div', { className: 'dshcv-quote' }, mark.quote.split('\n').slice(0, 3).join('\n')) : null,
+            h('input', {
+              className: 'dshcv-note',
+              placeholder: '写修改意见，发送时按编号带上',
+              value: mark.note || '',
+              onChange: (event) => setMarkNote(mark.id, event.target.value),
+            }),
+          ),
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'dshcv-btn',
+              'data-quiet': '1',
+              title: '复制这一条的 Markdown',
+              onClick: () => copyMark(mark),
+            },
+            '⧉',
+          ),
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'dshcv-btn',
+              'data-quiet': '1',
+              title: '只把这一条发送到对话框',
+              onClick: () => sendOneMark(mark),
+            },
+            '↗',
+          ),
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'dshcv-btn',
+              'data-quiet': '1',
+              title: '删除标记',
+              onClick: () => removeMark(mark.id),
+            },
+            '×',
+          ),
+        );
+
       return h(
         'div',
         { className: 'dshcv-marks', style: props && props.style },
-        store.marks
-          .slice()
-          .sort((a, b) => a.n - b.n)
-          .map((mark) =>
-            h(
-              'div',
-              {
-                key: mark.id,
-                className: 'dshcv-mark' + (store.hoverId === mark.id ? ' dshcv-markrow-on' : ''),
-                onMouseEnter: () => setHoverMark(mark.id),
-                onMouseLeave: () => setHoverMark(undefined),
-              },
-              h('span', { className: 'dshcv-badge' }, String(mark.n)),
-              markStale(mark)
-                ? h('span', { className: 'dshcv-stale', title: '文件已改动，这条标注的位置可能已偏移' }, '⚠')
-                : null,
-              h(
-                'div',
-                { className: 'dshcv-markbody' },
-                h(
-                  'div',
-                  { className: 'dshcv-meta' },
-                  basename(mark.path) +
-                    ' · ' +
-                    (mark.kind === 'text'
-                      ? '第 ' + mark.lines[0] + (mark.lines[1] !== mark.lines[0] ? '-' + mark.lines[1] : '') + ' 行'
-                      : mark.kind === 'paragraph'
-                        ? '第 ' + mark.paragraph + ' 段'
-                        : mark.kind === 'spot'
-                          ? mark.label || '选取'
-                          : mark.kind === 'element'
-                          ? mark.selector
-                          : '区域'),
-                ),
-                mark.quote ? h('div', { className: 'dshcv-quote' }, mark.quote.split('\n').slice(0, 3).join('\n')) : null,
-                h('input', {
-                  className: 'dshcv-note',
-                  placeholder: '写修改意见，发送时按编号带上',
-                  value: mark.note || '',
-                  onChange: (event) => setMarkNote(mark.id, event.target.value),
-                }),
-              ),
-              h(
+        h(
+          'div',
+          { className: 'dshcv-railhead' },
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'dshcv-chip',
+              'data-primary': railScope.mode === 'all' ? '1' : '0',
+              onClick: () => setRailScope('all'),
+            },
+            '全部 ' + store.marks.length,
+          ),
+          activePath
+            ? h(
                 'button',
                 {
                   type: 'button',
-                  className: 'dshcv-btn',
-                  'data-quiet': '1',
-                  title: '删除标记',
-                  onClick: () => removeMark(mark.id),
+                  className: 'dshcv-chip',
+                  'data-primary': railScope.mode === 'active' ? '1' : '0',
+                  disabled: !activeCount,
+                  title: activeCount ? '只看当前文件的标注' : '当前文件还没有标注',
+                  onClick: () => setRailScope('active'),
                 },
-                '×',
-              ),
-            ),
+                basename(activePath) + ' ' + activeCount,
+              )
+            : null,
+          h('input', {
+            type: 'search',
+            className: 'dshcv-searchinput',
+            value: query,
+            placeholder: '搜索标注（跨文件）',
+            style: { flex: '1 1 auto', minWidth: '80px' },
+            onChange: (event) => setQuery(event.target.value),
+          }),
+        ),
+        ...groups.map((group) =>
+          h(
+            React.Fragment,
+            { key: group.key },
+            showGroupHeaders
+              ? h('div', { className: 'dshcv-railgroup' }, basename(group.path) + ' · ' + group.marks.length + ' 条')
+              : null,
+            group.marks.map((mark) => renderMark(mark)),
           ),
+        ),
       );
     }
 
@@ -2323,7 +2529,7 @@ window.__ModuleLoader__.load({
       };
       return h(
         'div',
-        { className: 'dshcv-tablewrap' },
+        { className: 'dshcv-tablewrap', 'data-sheet': sheet || undefined },
         caption ? h('div', { className: 'dshcv-tcaption' }, caption) : null,
         h(
           'table',
@@ -2363,6 +2569,30 @@ window.__ModuleLoader__.load({
       const { doc, sessionId } = props;
       const [state, setState] = React.useState({ status: 'idle', error: '', tables: [], slides: [], paragraphs: [], note: '' });
       const hoverSpot = useHoverMark(doc.path);
+      const officeScrollRef = React.useRef(null);
+      // Rail hover can bring the target into view; scrolling is not always wanted,
+      // so it follows the persisted toggle.
+      React.useEffect(() => {
+        const host = officeScrollRef.current;
+        if (!host || !hoverSpot || !followHoverOn()) return;
+        let node = null;
+        if (hoverSpot.kind === 'paragraph' && hoverSpot.paragraph) {
+          node = host.querySelector('[data-para="' + hoverSpot.paragraph + '"]');
+        } else if (hoverSpot.kind === 'spot' && typeof hoverSpot.slide === 'number') {
+          node = host.querySelector('[data-slide="' + (hoverSpot.slide + 1) + '"]');
+        } else if (hoverSpot.kind === 'spot' && typeof hoverSpot.row === 'number') {
+          node =
+            Array.from(host.querySelectorAll('[data-row][data-col]')).find(
+              (cell) =>
+                Number(cell.dataset.row) === hoverSpot.row &&
+                Number(cell.dataset.col) === hoverSpot.column &&
+                (!hoverSpot.sheet ||
+                  (cell.closest('[data-sheet]') && cell.closest('[data-sheet]').dataset.sheet === hoverSpot.sheet)),
+            ) || null;
+        }
+        if (node && typeof node.scrollIntoView === 'function') node.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [hoverSpot && hoverSpot.id]);
 
       React.useEffect(() => {
         if (!sessionId) return undefined;
@@ -2499,7 +2729,7 @@ window.__ModuleLoader__.load({
       }
       return h(
         'div',
-        { className: 'dshcv-docwrap' },
+        { className: 'dshcv-docwrap', ref: officeScrollRef },
         h('div', { className: 'dshcv-tools' }, h('span', { className: 'dshcv-msg' }, state.note || '已解析')),
         ...body,
       );
@@ -3462,6 +3692,26 @@ window.__ModuleLoader__.load({
       ]);
     };
 
+    // Distance and angle between picked surface points; values are in model units.
+    const describeMeasure = (mode, points) => {
+      const round = (value) => (Math.abs(value) >= 100 ? value.toFixed(2) : Math.abs(value) >= 10 ? value.toFixed(3) : value.toFixed(4));
+      if (mode === 'distance' && points.length === 2) {
+        const [a, b] = points;
+        return '距离 ' + round(Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]));
+      }
+      if (mode === 'angle' && points.length === 3) {
+        const [a, b, c] = points;
+        const u = [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+        const v = [c[0] - b[0], c[1] - b[1], c[2] - b[2]];
+        const lu = Math.hypot(u[0], u[1], u[2]);
+        const lv = Math.hypot(v[0], v[1], v[2]);
+        if (!lu || !lv) return '';
+        const cosine = Math.max(-1, Math.min(1, (u[0] * v[0] + u[1] * v[1] + u[2] * v[2]) / (lu * lv)));
+        return '夹角 ' + (Math.acos(cosine) * 180 / Math.PI).toFixed(1) + '°';
+      }
+      return '';
+    };
+
     function ModelDoc(props) {
       const { doc, sessionId } = props;
       const [state, setState] = React.useState({ status: 'idle', error: '', info: '', stats: null });
@@ -3470,6 +3720,9 @@ window.__ModuleLoader__.load({
       const [progress, setProgress] = React.useState(0);
       // Visible render diagnostics: triangle and line counts plus the last GL error.
       const [diag, setDiag] = React.useState({ triangles: 0, lineVertices: 0, error: 0 });
+      const [measure, setMeasure] = React.useState({ mode: '', points: [], result: '' });
+      const measurePointsRef = React.useRef([]);
+      measurePointsRef.current = measure.points;
       const diagRef = React.useRef({ triangles: 0, lineVertices: 0, error: 0 });
       const publishDiag = (patch) => {
         const next = Object.assign({}, diagRef.current, patch);
@@ -3825,6 +4078,31 @@ window.__ModuleLoader__.load({
             gl.drawArrays(gl.LINES, 4, 2);
           }
 
+          // Measurement overlay: segments between picked points plus a small cross
+          // at each point, drawn with the same line program as the axes.
+          const measurePoints = measurePointsRef.current;
+          if (measurePoints.length) {
+            const marks = [];
+            for (let index = 0; index + 1 < measurePoints.length; index += 1) {
+              marks.push(...measurePoints[index], ...measurePoints[index + 1]);
+            }
+            const arm = view.radius * 0.035;
+            for (const point of measurePoints) {
+              marks.push(point[0] - arm, point[1], point[2], point[0] + arm, point[1], point[2]);
+              marks.push(point[0], point[1] - arm, point[2], point[0], point[1] + arm, point[2]);
+              marks.push(point[0], point[1], point[2] - arm, point[0], point[1], point[2] + arm);
+            }
+            gl.useProgram(lines);
+            gl.bindBuffer(gl.ARRAY_BUFFER, axisBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(marks), gl.STREAM_DRAW);
+            gl.enableVertexAttribArray(attributes.lines.position);
+            gl.vertexAttribPointer(attributes.lines.position, 3, gl.FLOAT, false, 12, 0);
+            gl.depthFunc(gl.LEQUAL);
+            gl.uniform3f(uniforms.lines.color, 0.98, 0.62, 0.16);
+            gl.drawArrays(gl.LINES, 0, marks.length / 3);
+            gl.depthFunc(gl.LESS);
+          }
+
           // Rail hover outlines the picked triangle in place.
           const hoverMark = hoveredMarkFor(doc.path);
           if (hoverMark && hoverMark.kind === 'spot' && typeof hoverMark.triangle === 'number') {
@@ -4159,6 +4437,55 @@ window.__ModuleLoader__.load({
             },
             '消隐',
           ),
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'dshcv-btn',
+              'data-primary': measure.mode === 'distance' ? '1' : '0',
+              title: '点两处测量距离',
+              onClick: () => setMeasure({ mode: measure.mode === 'distance' ? '' : 'distance', points: [], result: '' }),
+            },
+            '测距',
+          ),
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'dshcv-btn',
+              'data-primary': measure.mode === 'angle' ? '1' : '0',
+              title: '点三处测量夹角（中间点为顶点）',
+              onClick: () => setMeasure({ mode: measure.mode === 'angle' ? '' : 'angle', points: [], result: '' }),
+            },
+            '测角',
+          ),
+          measure.result
+            ? h(
+                'span',
+                { className: 'dshcv-msg', title: '数值来自点击位置的世界坐标' },
+                measure.result,
+              )
+            : null,
+          measure.points.length
+            ? h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'dshcv-btn',
+                  onClick: () =>
+                    addMark({
+                      kind: 'spot',
+                      path: doc.path,
+                      label: measure.result || '测量',
+                      quote: measure.points.map((point) => point.map((value) => value.toFixed(3)).join(', ')).join('  →  '),
+                    }),
+                },
+                '标注测量',
+              )
+            : null,
+          measure.points.length
+            ? h('button', { type: 'button', className: 'dshcv-btn', 'data-quiet': '1', onClick: () => setMeasure({ mode: measure.mode, points: [], result: '' }) }, '清除测量')
+            : null,
           h('button', { type: 'button', className: 'dshcv-btn', 'data-primary': options.normals ? '1' : '0', title: '按法线方向着色', onClick: () => toggle('normals') }, '法线'),
           h('button', { type: 'button', className: 'dshcv-btn', 'data-primary': options.fog ? '1' : '0', onClick: () => toggle('fog') }, '雾'),
           h('button', { type: 'button', className: 'dshcv-btn', 'data-primary': options.axes ? '1' : '0', onClick: () => toggle('axes') }, '坐标轴'),
@@ -4180,6 +4507,14 @@ window.__ModuleLoader__.load({
             if (dragMovedRef.current) return;
             const hit = pickRef.current(event.clientX, event.clientY);
             if (!hit) return;
+            // While measuring, a click contributes a point instead of a triangle mark.
+            if (measure.mode) {
+              const cap = measure.mode === 'angle' ? 3 : 2;
+              const points = measure.points.concat([hit.point]).slice(-cap);
+              setMeasure({ mode: measure.mode, points, result: describeMeasure(measure.mode, points) });
+              repaintRef.current();
+              return;
+            }
             addMark({
               kind: 'spot',
               path: doc.path,
@@ -5198,6 +5533,19 @@ window.__ModuleLoader__.load({
           h('span', { className: 'dshcv-path' }, active ? active.path : '未打开交付物'),
           h('span', { className: 'dshcv-spacer' }),
           h('button', { type: 'button', className: 'dshcv-btn', onClick: () => setPickerOpen(!pickerOpen) }, '打开'),
+          store.marks.length
+            ? h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'dshcv-btn',
+                  'data-primary': followHover.on ? '1' : '0',
+                  title: '悬停标注时自动滚动到对应内容',
+                  onClick: () => setFollowHover(!followHover.on),
+                },
+                '跟随',
+              )
+            : null,
           store.marks.length
             ? h(
                 'button',
