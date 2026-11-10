@@ -92,11 +92,24 @@ window.__ModuleLoader__.load({
     const fileVersionOf = (path) => fileVersions.get(pathKey(path)) || 0;
 
     // Hovering a mark in the rail spotlights the same spot in the viewer. This is
-    // transient UI state: it is never persisted and never leaves the panel.
+    // transient UI state: it is never persisted and never leaves the panel. It also
+    // has its own subscription channel, so moving the mouse does not re-render
+    // components that only care about marks and documents.
+    const hoverListeners = new Set();
+    let hoverVersion = 0;
+    const notifyHover = () => {
+      hoverVersion += 1;
+      for (const listener of Array.from(hoverListeners)) listener();
+    };
+    const subscribeHover = (listener) => {
+      hoverListeners.add(listener);
+      return () => hoverListeners.delete(listener);
+    };
+    const useHoverVersion = () => React.useSyncExternalStore(subscribeHover, () => hoverVersion);
     const setHoverMark = (id) => {
       if (store.hoverId === id) return;
       store.hoverId = id;
-      notify();
+      notifyHover();
     };
     const hoveredMarkFor = (path) => {
       if (!store.hoverId) return null;
@@ -104,7 +117,7 @@ window.__ModuleLoader__.load({
       return mark && sameFile(mark.path, path) ? mark : null;
     };
     const useHoverMark = (path) => {
-      useVersion();
+      useHoverVersion();
       return hoveredMarkFor(path);
     };
     // A mark is stale once the file it points into reports a different mtime.
@@ -851,7 +864,7 @@ window.__ModuleLoader__.load({
       return nodes;
     };
 
-    const renderMarkdown = (text, hoverRange) => {
+    const parseMarkdown = (text) => {
       const source = String(text || '').split('\n');
       const blocks = [];
       let paragraph = [];
@@ -938,26 +951,35 @@ window.__ModuleLoader__.load({
         if (!paragraph.length) paragraphLine = lineNo;
         paragraph.push(line.trim());
       }
-      if (fence) push(h('pre', { key: 'c' + blocks.length }, h('code', null, fence.lines.join('\n'))), fence.line || source.length);
-      flushAll();
+      return blocks;
+    };
 
-      if (!hoverRange) return blocks;
+    // Hover classes are applied to an already parsed tree, so moving the mouse
+    // never re-parses the document.
+    const applyMarkdownHover = (blocks, from, to) => {
+      if (!from || !to) return blocks;
       const spans = blocks.map((block, index) => {
-        const from = Number(block.props['data-line']) || 0;
+        const start = Number(block.props['data-line']) || 0;
         const next = index + 1 < blocks.length ? Number(blocks[index + 1].props['data-line']) || 0 : 0;
-        return { from, to: next > from ? next - 1 : Infinity };
+        return { start, end: next > start ? next - 1 : Infinity };
       });
       return blocks.map((block, index) => {
         const span = spans[index];
-        const hit = span.from > 0 && hoverRange.from <= span.to && hoverRange.to >= span.from;
+        const hit = span.start > 0 && from <= span.end && to >= span.start;
         return React.cloneElement(block, {
           className: (block.props.className ? block.props.className + ' ' : '') + (hit ? 'dshcv-spot' : 'dshcv-dim'),
         });
       });
     };
 
-    const MarkdownBody = (props) =>
-      h('div', { className: 'dshcv-md' }, renderMarkdown(props.text, props.hoverRange));
+    const MarkdownBody = (props) => {
+      const blocks = React.useMemo(() => parseMarkdown(props.text), [props.text]);
+      const shown = React.useMemo(
+        () => applyMarkdownHover(blocks, props.hoverFrom, props.hoverTo),
+        [blocks, props.hoverFrom, props.hoverTo],
+      );
+      return h('div', { className: 'dshcv-md' }, shown);
+    };
 
     // ---------------- text viewer ----------------
     const SAVE_PATH = '/dsh-canvas/save';
@@ -1117,6 +1139,20 @@ window.__ModuleLoader__.load({
         }
         return hits;
       }, [lineElements, searchQuery]);
+
+      // Typing stays on the fast path: the query is deferred, so keystrokes are not
+      // blocked by highlighting thousands of lines.
+      const deferredQuery = React.useDeferredValue(searchQuery);
+      const deferredHits = React.useMemo(() => {
+        const needle = deferredQuery.trim().toLowerCase();
+        if (!needle) return searchHits;
+        const hits = [];
+        for (let index = 0; index < lineElements.length; index += 1) {
+          if (lineElements[index] && lineElements[index].toLowerCase().includes(needle)) hits.push(index + 1);
+          if (hits.length >= 2000) break;
+        }
+        return hits;
+      }, [lineElements, deferredQuery, searchHits]);
 
       const highlight = (line, query) => {
         const needle = String(query || '').trim();
@@ -1380,6 +1416,34 @@ window.__ModuleLoader__.load({
           )
         : null;
 
+      // Rows are rebuilt only when the content, the search or the spotlight change:
+      // a 12-page file is tens of thousands of nodes.
+      const hoverFrom = hoverLines ? hoverLines.from : 0;
+      const hoverTo = hoverLines ? hoverLines.to : 0;
+      const rows = React.useMemo(
+        () =>
+          lineElements.map((line, index) =>
+            h(
+              'div',
+              {
+                key: index,
+                className:
+                  'dshcv-line' +
+                  (deferredHits.includes(index + 1) ? ' dshcv-linehit' : '') +
+                  (searchIndex >= 0 && deferredHits[searchIndex] === index + 1 ? ' dshcv-linehitcur' : '') +
+                  (hoverFrom
+                    ? index + 1 >= hoverFrom && index + 1 <= hoverTo
+                      ? ' dshcv-spot'
+                      : ' dshcv-dim'
+                    : ''),
+                'data-line': index + 1,
+              },
+              h('span', { className: 'dshcv-num' }, String(index + 1)),
+              h('span', { className: 'dshcv-text' }, highlight(line, deferredQuery)),
+            ),
+          ),
+        [lineElements, deferredHits, searchIndex, deferredQuery, hoverFrom, hoverTo],
+      );
       if (isMarkdown && rendered && !editing) {
         return h(
           React.Fragment,
@@ -1388,7 +1452,7 @@ window.__ModuleLoader__.load({
           h(
             'div',
             { className: 'dshcv-scroll', ref: scrollRef, onMouseUp: onMouseUp },
-            h(MarkdownBody, { text: state.text, hoverRange: hoverLines }),
+            h(MarkdownBody, { text: state.text, hoverFrom: hoverLines && hoverLines.from, hoverTo: hoverLines && hoverLines.to }),
           ),
           pickButton,
         );
@@ -1414,6 +1478,7 @@ window.__ModuleLoader__.load({
         );
       }
 
+
       return h(
         React.Fragment,
         null,
@@ -1421,30 +1486,7 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'dshcv-scroll', ref: scrollRef, onMouseUp: onMouseUp },
-          h(
-            'div',
-            { className: 'dshcv-code' },
-            lineElements.map((line, index) =>
-              h(
-                'div',
-                {
-                  key: index,
-                  className:
-                    'dshcv-line' +
-                    (searchHits.includes(index + 1) ? ' dshcv-linehit' : '') +
-                    (searchIndex >= 0 && searchHits[searchIndex] === index + 1 ? ' dshcv-linehitcur' : '') +
-                    (hoverLines
-                      ? index + 1 >= hoverLines.from && index + 1 <= hoverLines.to
-                        ? ' dshcv-spot'
-                        : ' dshcv-dim'
-                      : ''),
-                  'data-line': index + 1,
-                },
-                h('span', { className: 'dshcv-num' }, String(index + 1)),
-                h('span', { className: 'dshcv-text' }, highlight(line, searchQuery)),
-              ),
-            ),
-          ),
+          h('div', { className: 'dshcv-code' }, rows),
         ),
         picked
           ? pickButton
@@ -1455,6 +1497,7 @@ window.__ModuleLoader__.load({
     // ---------------- marks rail ----------------
     function MarksRail(props) {
       useVersion();
+      useHoverVersion();
       if (!store.marks.length) return null;
       return h(
         'div',
@@ -3638,12 +3681,19 @@ window.__ModuleLoader__.load({
         // Edges are drawn as a plain vertex list: 32-bit indices need
         // OES_element_index_uint, and without it drawElements failed silently,
         // which is exactly why the wireframe button blanked the model.
-        const lineBuffer = gl.createBuffer();
-        const lineVertexCount = solidCount * 2;
-        {
+        // The list costs 72 bytes per triangle, so it is only built when edges are
+        // actually visible; a shaded 800k-triangle model would otherwise hold 57 MB
+        // of lines that no one can see.
+        const triangleCount = solidCount / 3;
+        const wantsLines = options.edges && (!options.faces || triangleCount <= 400000);
+        let lineBuffer = null;
+        let lineVertexCount = 0;
+        if (wantsLines) {
+          lineBuffer = gl.createBuffer();
+          lineVertexCount = solidCount * 2;
           const lines = new Float32Array(solidCount * 2 * 3);
           let write = 0;
-          for (let triangle = 0; triangle < solidCount / 3; triangle += 1) {
+          for (let triangle = 0; triangle < triangleCount; triangle += 1) {
             const base = triangle * 3;
             for (const [from, to] of [[0, 1], [1, 2], [2, 0]]) {
               for (const corner of [from, to]) {
@@ -3658,7 +3708,7 @@ window.__ModuleLoader__.load({
           gl.bindBuffer(gl.ARRAY_BUFFER, lineBuffer);
           gl.bufferData(gl.ARRAY_BUFFER, lines, gl.STATIC_DRAW);
         }
-        publishDiag({ triangles: solidCount / 3, lineVertices: lineVertexCount, error: 0 });
+        publishDiag({ triangles: triangleCount, lineVertices: lineVertexCount, error: 0 });
         // One reusable buffer for the axis overlay: allocating per frame made
         // every orbit step leave garbage behind.
         const axisBuffer = gl.createBuffer();
@@ -3731,7 +3781,7 @@ window.__ModuleLoader__.load({
             if (attributes.solid.normal >= 0) gl.disableVertexAttribArray(attributes.solid.normal);
           }
 
-          if (options.edges) {
+          if (options.edges && lineBuffer) {
             // Pure wireframe can either hide occluded edges (default) or show the
             // whole cage through the model, which is the usual "see-through" view.
             const seeThrough = !options.faces && !options.hiddenLine;
@@ -3970,7 +4020,7 @@ window.__ModuleLoader__.load({
           if (attributes.solid.position >= 0) gl.disableVertexAttribArray(attributes.solid.position);
           if (attributes.lines.position >= 0) gl.disableVertexAttribArray(attributes.lines.position);
           gl.deleteBuffer(solidBuffer);
-          gl.deleteBuffer(lineBuffer);
+          if (lineBuffer) gl.deleteBuffer(lineBuffer);
           gl.deleteBuffer(axisBuffer);
         };
       }, [state.status, options, doc.path]);
@@ -4117,6 +4167,9 @@ window.__ModuleLoader__.load({
             { className: 'dshcv-msg', title: '三角形数 · 线顶点数 · WebGL 错误码（0 为正常）' },
             '△ ' + diag.triangles.toLocaleString() + ' · ‖ ' + diag.lineVertices.toLocaleString() + (diag.error ? ' · GL ' + diag.error : ''),
           ),
+          options.edges && options.faces && diag.lineVertices === 0 && diag.triangles > 0
+            ? h('span', { className: 'dshcv-msg', title: '面数超过 40 万时不生成描边，切到线框仍会显示全部边' }, '描边已省略')
+            : null,
           notice ? h('span', { className: 'dshcv-msg' }, notice) : null,
         ),
         h('div', { className: 'dshcv-3dwrap' }, h('canvas', {
