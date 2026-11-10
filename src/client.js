@@ -629,7 +629,7 @@ window.__ModuleLoader__.load({
       // ---- control tokens ----
       // brand-primary is ink (black in light, white in dark), so it is used for text
       // and hairlines rather than as a fill; a tint carries the primary weight.
-      ':root{--dshcv-ink:var(--dsw-alias-label-primary);--dshcv-ink-2:var(--dsw-alias-label-secondary);--dshcv-line:color-mix(in srgb,var(--dsw-alias-label-primary) 12%,transparent);--dshcv-line-strong:color-mix(in srgb,var(--dsw-alias-label-primary) 24%,transparent);--dshcv-tint:color-mix(in srgb,var(--dsw-alias-label-primary) 8%,transparent);--dshcv-wash:color-mix(in srgb,var(--dsw-alias-label-primary) 6%,transparent);--dshcv-primary-bg:color-mix(in srgb,#4f8cff 16%,var(--dsw-alias-bg-layer-1));--dshcv-primary-wave:color-mix(in srgb,#4f8cff 26%,transparent);--dshcv-on:#79c193;--dshcv-off:#dfa0a5}',
+      ':root{--dshcv-ink:var(--dsw-alias-label-primary);--dshcv-ink-2:var(--dsw-alias-label-secondary);--dshcv-line:color-mix(in srgb,var(--dsw-alias-label-primary) 12%,transparent);--dshcv-line-strong:color-mix(in srgb,var(--dsw-alias-label-primary) 24%,transparent);--dshcv-tint:color-mix(in srgb,var(--dsw-alias-label-primary) 8%,transparent);--dshcv-wash:color-mix(in srgb,var(--dsw-alias-label-primary) 6%,transparent);--dshcv-primary-bg:color-mix(in srgb,#4f8cff 16%,var(--dsw-alias-bg-layer-1));--dshcv-primary-wave:color-mix(in srgb,#4f8cff 26%,transparent);--dshcv-off-mid:#e08d93;--dshcv-off-edge:#b4636b;--dshcv-on-mid:#83c39a;--dshcv-on-edge:#b9e2c7}',
       // ---- actions ----
       '.dshcv-btn{position:relative;display:inline-flex;align-items:center;justify-content:center;gap:4px;height:28px;padding:0 10px;border:1px solid var(--dshcv-line);border-radius:8px;background:transparent;color:var(--dshcv-ink);font:inherit;font-size:12px;line-height:1;cursor:pointer;white-space:nowrap;overflow:hidden;transition:background-color .12s ease,color .12s ease,border-color .12s ease,box-shadow .16s ease}',
       '.dshcv-btn:hover{background:var(--dshcv-wash);border-color:var(--dshcv-line-strong)}',
@@ -637,10 +637,10 @@ window.__ModuleLoader__.load({
       '.dshcv-btn:focus-visible{outline:2px solid var(--dshcv-ink);outline-offset:1px}',
       '.dshcv-btn[data-kind="quiet"]{border-color:transparent;color:var(--dshcv-ink-2);height:26px;padding:0 7px}',
       '.dshcv-btn[data-kind="quiet"]:hover{background:var(--dshcv-wash);color:var(--dshcv-ink)}',
-      '.dshcv-btn[data-kind="quiet"][data-danger="1"]:hover{color:var(--dshcv-off);background:color-mix(in srgb,var(--dshcv-off) 10%,transparent)}',
+      '.dshcv-btn[data-kind="quiet"][data-danger="1"]:hover{color:var(--dshcv-off-edge);background:color-mix(in srgb,var(--dshcv-off-edge) 12%,transparent)}',
       // Primary: light tinted fill with two counter-moving wave bands, so the fill
       // itself reads as motion without the label ever drifting.
-      '.dshcv-btn[data-kind="primary"]{height:30px;padding:0 14px;border-color:color-mix(in srgb,#4f8cff 42%,transparent);background:var(--dshcv-primary-bg);color:var(--dsw-alias-label-primary);font-weight:600;box-shadow:0 1px 0 color-mix(in srgb,#4f8cff 18%,transparent)}',
+      '.dshcv-btn[data-kind="primary"]{height:30px;padding:0 14px;border-color:color-mix(in srgb,#4f8cff 42%,transparent);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-weight:600;box-shadow:0 1px 0 color-mix(in srgb,#4f8cff 18%,transparent)}',
       '.dshcv-btn[data-kind="primary"]::before,.dshcv-btn[data-kind="primary"]::after{content:"";position:absolute;inset:-40%;pointer-events:none;background-repeat:repeat;background-position:center;opacity:.5}',
       '.dshcv-btn[data-kind="primary"]::before{background-image:repeating-radial-gradient(circle at 50% 50%,transparent 0 9px,var(--dshcv-primary-wave) 9px 13px)}',
       '.dshcv-btn[data-kind="primary"]::after{background-image:repeating-radial-gradient(circle at 50% 50%,transparent 0 15px,var(--dshcv-primary-wave) 15px 18px);opacity:.28}',
@@ -654,12 +654,12 @@ window.__ModuleLoader__.load({
       '@keyframes dshcv-ripple-in{from{background-position:0 0}to{background-position:121px 121px}}',
       '@media (prefers-reduced-motion: reduce){.dshcv-btn[data-kind="primary"]::before,.dshcv-btn[data-kind="primary"]::after{animation:none}}',
       // ---- toggles ----
-      // Off is red with an inset shadow (pressed inward), on is green with a glow and a
-      // rounder silhouette. Both hues are pale on purpose: the shape carries the state,
-      // the colour only tints it.
-      '.dshcv-toggle{display:inline-flex;align-items:center;gap:0;height:26px;padding:0 11px;border:0;border-radius:8px;background:linear-gradient(180deg,color-mix(in srgb,var(--dshcv-off) 12%,transparent),color-mix(in srgb,var(--dshcv-off) 4%,transparent));color:color-mix(in srgb,var(--dshcv-off) 62%,var(--dshcv-ink-2));font:inherit;font-size:12px;line-height:1;cursor:pointer;white-space:nowrap;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--dshcv-off) 26%,transparent),inset 0 1px 6px color-mix(in srgb,var(--dshcv-off) 16%,transparent);transition:all .16s ease}',
-      '.dshcv-toggle:hover{background:linear-gradient(180deg,color-mix(in srgb,var(--dshcv-off) 16%,transparent),color-mix(in srgb,var(--dshcv-off) 7%,transparent));box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--dshcv-off) 38%,transparent),inset 0 1px 6px color-mix(in srgb,var(--dshcv-off) 18%,transparent)}',
-      '.dshcv-toggle[aria-pressed="true"]{border:0;border-radius:14px;background:linear-gradient(180deg,color-mix(in srgb,var(--dshcv-on) 14%,transparent),color-mix(in srgb,var(--dshcv-on) 5%,transparent));color:color-mix(in srgb,var(--dshcv-on) 66%,var(--dshcv-ink));box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--dshcv-on) 30%,transparent),0 0 8px color-mix(in srgb,var(--dshcv-on) 26%,transparent)}',
+      // Radial shading, not an outline: red runs medium in the middle to deep at the
+      // rim, green runs medium to pale, and on is rounder so the state shows in the
+      // silhouette as well as the hue.
+      '.dshcv-toggle{display:inline-flex;align-items:center;gap:0;height:26px;padding:0 11px;border:0;border-radius:8px;background:radial-gradient(120% 150% at 50% 45%,var(--dshcv-off-mid) 0%,var(--dshcv-off-mid) 52%,var(--dshcv-off-edge) 100%);color:color-mix(in srgb,var(--dshcv-ink) 88%,transparent);font:inherit;font-size:12px;font-weight:500;line-height:1;cursor:pointer;white-space:nowrap;box-shadow:0 1px 2px color-mix(in srgb,var(--dshcv-off-edge) 30%,transparent);transition:all .16s ease}',
+      '.dshcv-toggle:hover{filter:brightness(1.04) saturate(1.08)}',
+      '.dshcv-toggle[aria-pressed="true"]{border:0;border-radius:14px;background:radial-gradient(120% 150% at 50% 45%,var(--dshcv-on-mid) 0%,var(--dshcv-on-mid) 52%,var(--dshcv-on-edge) 100%);color:color-mix(in srgb,var(--dshcv-ink) 88%,transparent);box-shadow:0 1px 2px color-mix(in srgb,var(--dshcv-on-edge) 35%,transparent),0 0 9px color-mix(in srgb,var(--dshcv-on-edge) 30%,transparent)}',
       '.dshcv-toggle:focus-visible{outline:2px solid var(--dshcv-ink);outline-offset:1px}',
       '.dshcv-toggle[disabled]{opacity:.5;cursor:default}',
       // ---- segmented (exclusive modes) ----
@@ -2109,40 +2109,18 @@ window.__ModuleLoader__.load({
         h('button', { type: 'button', className: 'dshcv-btn', onClick: editing ? cancelEdit : beginEdit }, editing ? '退出编辑' : '编辑'),
         isMarkdown
           ? h(
-              'div',
-              { className: 'dshcv-seg', role: 'group', 'aria-label': '显示方式' },
-              h(
-                'button',
-                {
-                  type: 'button',
-                  className: 'dshcv-btn',
-                  'aria-pressed': rendered ? 'true' : 'false',
-                  title: '按渲染结果阅读',
-                  onMouseDown: (event) => event.preventDefault(),
-                  onClick: () => {
-                    if (rendered) return;
-                    scrollPos.current = scrollRef.current ? scrollRef.current.scrollTop : 0;
-                    setRendered(true);
-                  },
+              'button',
+              {
+                type: 'button',
+                className: 'dshcv-btn',
+                title: rendered ? '显示 Markdown 原文' : '显示渲染结果',
+                onMouseDown: (event) => event.preventDefault(),
+                onClick: () => {
+                  scrollPos.current = scrollRef.current ? scrollRef.current.scrollTop : 0;
+                  setRendered(!rendered);
                 },
-                '渲染',
-              ),
-              h(
-                'button',
-                {
-                  type: 'button',
-                  className: 'dshcv-btn',
-                  'aria-pressed': rendered ? 'false' : 'true',
-                  title: '看 Markdown 原文，便于按行标注',
-                  onMouseDown: (event) => event.preventDefault(),
-                  onClick: () => {
-                    if (!rendered) return;
-                    scrollPos.current = scrollRef.current ? scrollRef.current.scrollTop : 0;
-                    setRendered(false);
-                  },
-                },
-                '原文',
-              ),
+              },
+              rendered ? '原文' : '渲染',
             )
           : null,
         h('span', { className: 'dshcv-spacer' }),
