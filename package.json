@@ -57,6 +57,6 @@
     }
   },
   "scripts": {
-    "test": "node test/markdown.test.cjs"
+    "test": "node test/markdown.test.cjs && node test/smoke.test.cjs && node test/panel-render.test.cjs"
   }
 }

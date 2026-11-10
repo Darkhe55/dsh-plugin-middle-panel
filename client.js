@@ -1174,6 +1174,35 @@ window.__ModuleLoader__.load({
         return pieces.length ? pieces : line;
       };
 
+      // Rows are rebuilt only when the content, the search or the spotlight change:
+      // a 12-page file is tens of thousands of nodes.
+      const hoverFrom = hoverLines ? hoverLines.from : 0;
+      const hoverTo = hoverLines ? hoverLines.to : 0;
+      const rows = React.useMemo(
+        () =>
+          lineElements.map((line, index) =>
+            h(
+              'div',
+              {
+                key: index,
+                className:
+                  'dshcv-line' +
+                  (deferredHits.includes(index + 1) ? ' dshcv-linehit' : '') +
+                  (searchIndex >= 0 && deferredHits[searchIndex] === index + 1 ? ' dshcv-linehitcur' : '') +
+                  (hoverFrom
+                    ? index + 1 >= hoverFrom && index + 1 <= hoverTo
+                      ? ' dshcv-spot'
+                      : ' dshcv-dim'
+                    : ''),
+                'data-line': index + 1,
+              },
+              h('span', { className: 'dshcv-num' }, String(index + 1)),
+              h('span', { className: 'dshcv-text' }, highlight(line, deferredQuery)),
+            ),
+          ),
+        [lineElements, deferredHits, searchIndex, deferredQuery, hoverFrom, hoverTo],
+      );
+
       React.useEffect(() => {
         if (searchIndex < 0 || !searchHits.length) return;
         const line = searchHits[Math.min(searchIndex, searchHits.length - 1)];
@@ -1416,34 +1445,6 @@ window.__ModuleLoader__.load({
           )
         : null;
 
-      // Rows are rebuilt only when the content, the search or the spotlight change:
-      // a 12-page file is tens of thousands of nodes.
-      const hoverFrom = hoverLines ? hoverLines.from : 0;
-      const hoverTo = hoverLines ? hoverLines.to : 0;
-      const rows = React.useMemo(
-        () =>
-          lineElements.map((line, index) =>
-            h(
-              'div',
-              {
-                key: index,
-                className:
-                  'dshcv-line' +
-                  (deferredHits.includes(index + 1) ? ' dshcv-linehit' : '') +
-                  (searchIndex >= 0 && deferredHits[searchIndex] === index + 1 ? ' dshcv-linehitcur' : '') +
-                  (hoverFrom
-                    ? index + 1 >= hoverFrom && index + 1 <= hoverTo
-                      ? ' dshcv-spot'
-                      : ' dshcv-dim'
-                    : ''),
-                'data-line': index + 1,
-              },
-              h('span', { className: 'dshcv-num' }, String(index + 1)),
-              h('span', { className: 'dshcv-text' }, highlight(line, deferredQuery)),
-            ),
-          ),
-        [lineElements, deferredHits, searchIndex, deferredQuery, hoverFrom, hoverTo],
-      );
       if (isMarkdown && rendered && !editing) {
         return h(
           React.Fragment,
@@ -4817,8 +4818,53 @@ window.__ModuleLoader__.load({
     // genuine open (nothing played in the last two seconds) animates.
     const panelReveal = { at: 0 };
 
-    function CanvasPanel(props) {
-      useVersion();
+    // A plugin must never take the whole window down with it. Without a boundary a
+    // single render error unmounts the host tree and leaves a blank page, which is
+    // how a hook-order slip turns into "clicking canvas whites out the app".
+    class PanelBoundary extends React.Component {
+      constructor(props) {
+        super(props);
+        this.state = { error: null };
+      }
+      static getDerivedStateFromError(error) {
+        return { error };
+      }
+      render() {
+        const error = this.state.error;
+        if (!error) return this.props.children;
+        return h(
+          'div',
+          { className: 'dshcv-empty', style: { alignItems: 'flex-start', gap: '10px' } },
+          h('div', { style: { fontSize: '13px' } }, '画布渲染出错，已隔离，界面其余部分不受影响'),
+          h(
+            'div',
+            { style: { font: '11px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace', maxWidth: '70ch', opacity: 0.85, overflowWrap: 'anywhere' } },
+            String((error && error.message) || error),
+          ),
+          h(
+            'div',
+            { style: { display: 'flex', gap: '8px', marginTop: '4px' } },
+            h('button', { type: 'button', className: 'dshcv-btn', 'data-primary': '1', onClick: () => this.setState({ error: null }) }, '重试'),
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'dshcv-btn',
+                onClick: () => {
+                  mutate({ docs: [], activeId: undefined });
+                  this.setState({ error: null });
+                },
+              },
+              '关闭所有标签',
+            ),
+          ),
+        );
+      }
+    }
+
+    const guardPanel = (Component) => (props) => h(PanelBoundary, null, h(Component, props));
+
+    function CanvasPanel(props) {      useVersion();
       const ratioKey = 'dsh.canvas.ratio.' + (store.sessionId || 'none');
       const [ratio, setRatio] = React.useState(() => {
         try {
@@ -5374,6 +5420,10 @@ window.__ModuleLoader__.load({
     }
 
     // ---------------- registrations ----------------
+    const GuardedPanel = guardPanel(CanvasPanel);
+    const GuardedBridge = guardPanel(Bridge);
+    const GuardedToolCard = guardPanel(CanvasToolCard);
+
     return {
       inject: ['slots', 'remote', 'remote.workspaceFiles'],
       apply(ctx) {
@@ -5383,14 +5433,14 @@ window.__ModuleLoader__.load({
           'files=' + typeof ctx.get('remote.workspaceFiles'),
         ]);
 
-        ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: PANEL_KEY }, CanvasPanel));
+        ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: PANEL_KEY }, GuardedPanel));
 
         ctx.slots.inject('conversation.composer.dock', () =>
-          ctx.slots.register({ name: 'conversation.composer.dock', id: 'canvas-bridge', order: -100 }, Bridge),
+          ctx.slots.register({ name: 'conversation.composer.dock', id: 'canvas-bridge', order: -100 }, GuardedBridge),
         );
 
         ctx.slots.inject('tool.call.toolview', () =>
-          ctx.slots.register({ name: 'tool.call.toolview', key: 'canvas' }, CanvasToolCard),
+          ctx.slots.register({ name: 'tool.call.toolview', key: 'canvas' }, GuardedToolCard),
         );
 
         ctx.slots.inject('conversation.session.header.utilities', () =>
