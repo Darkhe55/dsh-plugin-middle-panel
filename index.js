@@ -248,6 +248,15 @@ export function apply(ctx) {
 
         try {
           const target = await ctx.fs.resolve(absolute)
+          // `resolve` hands back a sandbox handle, not a path; stat the confined
+          // absolute path instead. Statting the handle threw, which silently
+          // disabled both the conflict check and the metadata route.
+          let fs
+          try {
+            fs = await import('node:fs/promises')
+          } catch {
+            fs = null
+          }
           // Optimistic concurrency: the client sends the mtime it edited against.
           // A mismatch means someone else touched the file, so the write is
           // refused instead of silently discarding one of the two versions.
@@ -255,10 +264,12 @@ export function apply(ctx) {
           const expectedSize = Number(body.expectedSize) || 0
           const force = body.force === true
           let before = null
-          try {
-            before = await ctx.fs.stat(target)
-          } catch {
-            before = null
+          if (fs) {
+            try {
+              before = await fs.stat(absolute)
+            } catch {
+              before = null
+            }
           }
           if (writeIsStale(before, expected, expectedSize, force)) {
             return reply(409, {
@@ -275,10 +286,12 @@ export function apply(ctx) {
             sessionId,
           })
           let after = null
-          try {
-            after = await ctx.fs.stat(target)
-          } catch {
-            after = null
+          if (fs) {
+            try {
+              after = await fs.stat(absolute)
+            } catch {
+              after = null
+            }
           }
           return reply(200, {
             ok: true,
@@ -364,9 +377,12 @@ export function apply(ctx) {
         } catch (error) {
           return reply(500, { error: error && error.message ? error.message : String(error) })
         }
+        void target
         let stats
         try {
-          stats = await fs.stat(target)
+          // Stat the confined path, not the sandbox handle: the handle is an object
+          // and node's stat rejects it, which used to 404 every metadata probe.
+          stats = await fs.stat(absolute)
         } catch (error) {
           return reply(404, { error: 'cannot stat: ' + (error && error.message ? error.message : String(error)) })
         }
