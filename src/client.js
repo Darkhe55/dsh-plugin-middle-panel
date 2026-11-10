@@ -1346,6 +1346,25 @@ window.__ModuleLoader__.load({
 
 
     // Chromium exposes ::highlight; without it the row keeps the older wash.
+    // Render counters are a debugging aid, not something a reviewer needs to see;
+    // they stay hidden unless a GL error appears or the toggle is on.
+    const debugState = { on: false };
+    try {
+      debugState.on = localStorage.getItem('dsh.canvas.debug') === '1';
+    } catch {
+      /* storage is best effort */
+    }
+    const debugRender = () => debugState.on;
+    const toggleDebugRender = () => {
+      debugState.on = !debugState.on;
+      try {
+        localStorage.setItem('dsh.canvas.debug', debugState.on ? '1' : '0');
+      } catch {
+        /* storage is best effort */
+      }
+      notify();
+    };
+
     const supportsCssHighlights = () =>
       typeof CSS !== 'undefined' && Boolean(CSS.highlights) && typeof Highlight !== 'undefined';
 
@@ -4088,6 +4107,7 @@ window.__ModuleLoader__.load({
 
     function ModelDoc(props) {
       const { doc, sessionId } = props;
+      useVersion();
       const [state, setState] = React.useState({ status: 'idle', error: '', info: '', stats: null });
       const [options, setOptions] = React.useState({ faces: true, edges: true, hiddenLine: true, fog: true, axes: true, normals: false });
       const [notice, setNotice] = React.useState('');
@@ -4864,11 +4884,23 @@ window.__ModuleLoader__.load({
           h('button', { type: 'button', className: 'dshcv-btn', 'data-primary': options.fog ? '1' : '0', onClick: () => toggle('fog') }, '雾'),
           h('button', { type: 'button', className: 'dshcv-btn', 'data-primary': options.axes ? '1' : '0', onClick: () => toggle('axes') }, '坐标轴'),
           h('button', { type: 'button', className: 'dshcv-btn', onClick: exportObj }, '导出 OBJ'),
-          h(
-            'span',
-            { className: 'dshcv-msg', title: '三角形数 · 线顶点数 · WebGL 错误码（0 为正常）' },
-            '△ ' + diag.triangles.toLocaleString() + ' · ‖ ' + diag.lineVertices.toLocaleString() + (diag.error ? ' · GL ' + diag.error : ''),
-          ),
+          diag.error
+            ? h(
+                'span',
+                {
+                  className: 'dshcv-msg',
+                  style: { color: 'var(--dsw-alias-warning,#c28b00)' },
+                  title: 'WebGL 调用出错，画面可能不完整；按 ? 打开帮助可查看渲染计数',
+                },
+                'GL ' + diag.error,
+              )
+            : debugRender()
+              ? h(
+                  'span',
+                  { className: 'dshcv-msg', title: '三角形数 · 线顶点数（调试）' },
+                  '△ ' + diag.triangles.toLocaleString() + ' · ‖ ' + diag.lineVertices.toLocaleString(),
+                )
+              : null,
           options.edges && options.faces && diag.lineVertices === 0 && diag.triangles > 0
             ? h('span', { className: 'dshcv-msg', title: '面数超过 40 万时不生成描边，切到线框仍会显示全部边' }, '描边已省略')
             : null,
@@ -6197,6 +6229,21 @@ window.__ModuleLoader__.load({
                 ['Alt+W', '关闭当前标签'],
                 ['?', '显示 / 隐藏本帮助'],
               ].map(([key, label]) => h('div', { key }, h('kbd', null, key), label)),
+              h(
+                'div',
+                { style: { marginTop: '6px', display: 'flex', gap: '8px', alignItems: 'center' } },
+                h('kbd', null, '调试'),
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dshcv-btn',
+                    'data-primary': debugRender() ? '1' : '0',
+                    onClick: toggleDebugRender,
+                  },
+                  debugRender() ? '渲染调试计数：开' : '渲染调试计数：关',
+                ),
+              ),
             )
           : null,
       );
