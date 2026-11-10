@@ -542,6 +542,16 @@ const CSS_BASE = [
 '.dshcv-task{list-style:none;margin-left:-14px}',
 '.dshcv-check{margin-right:6px;color:var(--dsw-alias-label-secondary)}',
 '.dshcv-imgchip{display:inline-flex;align-items:center;gap:4px;padding:1px 6px;border-radius:5px;border:1px dashed var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);font-size:11px}',
+'.dshcv-diff{display:flex;flex-direction:column;min-height:0;flex:1 1 auto;border-top:1px solid var(--dsw-alias-border-l1)}',
+'.dshcv-difhead{display:flex;align-items:center;gap:8px;padding:6px 12px;font-size:12px;border-bottom:1px solid var(--dsw-alias-border-l1)}',
+'.dshcv-diffbody{overflow:auto;flex:1 1 auto;font:11px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;padding:4px 0}',
+'.dshcv-difrow{display:flex;gap:8px;padding:0 12px;white-space:pre}',
+'.dshcv-difnum{flex:0 0 34px;text-align:right;color:var(--dsw-alias-label-secondary);user-select:none}',
+'.dshcv-difsign{flex:0 0 10px;user-select:none}',
+'.dshcv-diftext{flex:1 1 auto;overflow-wrap:anywhere;white-space:pre-wrap}',
+'.dshcv-dif-add{background:color-mix(in srgb,#2ea043 18%,transparent)}',
+'.dshcv-dif-del{background:color-mix(in srgb,#d1242f 18%,transparent)}',
+'.dshcv-dif-gap{color:var(--dsw-alias-label-secondary);opacity:.7}',
 '.dshcv-md del{opacity:.65}',
 '.dshcv-badge{flex:0 0 auto;min-width:18px;height:18px;border-radius:9px;background:var(--dsw-alias-brand-primary);color:#fff;font-size:11px;line-height:18px;text-align:center;padding:0 5px;font-variant-numeric:tabular-nums}',
 '.dshcv-note{width:100%;box-sizing:border-box;font:inherit;font-size:12px;line-height:1.5;padding:5px 8px;border-radius:7px;border:1px solid transparent;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);resize:vertical;transition:border-color .12s ease}',
@@ -1295,6 +1305,116 @@ return null;
 }
 return range;
 };
+const diffLines = (leftText, rightText, context) => {
+const a = String(leftText == null ? '' : leftText).split('\n');
+const b = String(rightText == null ? '' : rightText).split('\n');
+let start = 0;
+while (start < a.length && start < b.length && a[start] === b[start]) start += 1;
+let endA = a.length - 1;
+let endB = b.length - 1;
+while (endA >= start && endB >= start && a[endA] === b[endB]) {
+endA -= 1;
+endB -= 1;
+}
+const middleA = a.slice(start, endA + 1);
+const middleB = b.slice(start, endB + 1);
+const rows = [];
+for (let index = 0; index < start; index += 1) rows.push({ type: 'same', text: a[index], left: index + 1, right: index + 1 });
+if (middleA.length * middleB.length <= 400000) {
+const width = middleB.length + 1;
+const table = new Uint32Array((middleA.length + 1) * width);
+for (let i = middleA.length - 1; i >= 0; i -= 1) {
+for (let j = middleB.length - 1; j >= 0; j -= 1) {
+table[i * width + j] =
+middleA[i] === middleB[j] ? table[(i + 1) * width + j + 1] + 1 : Math.max(table[(i + 1) * width + j], table[i * width + j + 1]);
+}
+}
+let i = 0;
+let j = 0;
+while (i < middleA.length && j < middleB.length) {
+if (middleA[i] === middleB[j]) {
+rows.push({ type: 'same', text: middleA[i], left: start + i + 1, right: start + j + 1 });
+i += 1;
+j += 1;
+} else if (table[(i + 1) * width + j] >= table[i * width + j + 1]) {
+rows.push({ type: 'del', text: middleA[i], left: start + i + 1 });
+i += 1;
+} else {
+rows.push({ type: 'add', text: middleB[j], right: start + j + 1 });
+j += 1;
+}
+}
+while (i < middleA.length) {
+rows.push({ type: 'del', text: middleA[i], left: start + i + 1 });
+i += 1;
+}
+while (j < middleB.length) {
+rows.push({ type: 'add', text: middleB[j], right: start + j + 1 });
+j += 1;
+}
+} else {
+middleA.forEach((text, index) => rows.push({ type: 'del', text, left: start + index + 1 }));
+middleB.forEach((text, index) => rows.push({ type: 'add', text, right: start + index + 1 }));
+}
+for (let index = endA + 1; index < a.length; index += 1) {
+rows.push({ type: 'same', text: a[index], left: index + 1, right: index + (b.length - a.length) + 1 });
+}
+const keep = Math.max(1, Number(context) || 3);
+const changed = rows.map((row, index) => (row.type === 'same' ? -1 : index)).filter((index) => index >= 0);
+if (!changed.length) return { rows: [], added: 0, removed: 0, firstChange: 0 };
+const first = Math.max(0, changed[0] - keep);
+const last = Math.min(rows.length - 1, changed[changed.length - 1] + keep);
+const trimmed = [];
+let gap = false;
+for (let index = first; index <= last; index += 1) {
+const row = rows[index];
+const near = changed.some((at) => Math.abs(at - index) <= keep);
+if (row.type === 'same' && !near) {
+if (!gap) trimmed.push({ type: 'gap', text: '…' });
+gap = true;
+continue;
+}
+gap = false;
+trimmed.push(row);
+}
+return {
+rows: trimmed,
+added: rows.filter((row) => row.type === 'add').length,
+removed: rows.filter((row) => row.type === 'del').length,
+firstChange: changed[0] + 1,
+};
+};
+const DiffView = (props) => {
+const diff = React.useMemo(() => diffLines(props.left, props.right, 3), [props.left, props.right]);
+return h(
+'div',
+{ className: 'dshcv-diff' },
+h(
+'div',
+{ className: 'dshcv-difhead' },
+h('span', null, props.title || '差异'),
+h('span', { className: 'dshcv-msg' }, '+' + diff.added + ' / -' + diff.removed),
+h('span', { className: 'dshcv-spacer' }),
+h('button', { type: 'button', className: 'dshcv-btn', onClick: props.onClose }, '关闭'),
+),
+diff.rows.length
+? h(
+'div',
+{ className: 'dshcv-diffbody' },
+diff.rows.map((row, index) =>
+h(
+'div',
+{ key: index, className: 'dshcv-difrow dshcv-dif-' + row.type },
+h('span', { className: 'dshcv-difnum' }, row.type === 'add' ? '' : String(row.left || '')),
+h('span', { className: 'dshcv-difnum' }, row.type === 'del' ? '' : String(row.right || '')),
+h('span', { className: 'dshcv-difsign' }, row.type === 'add' ? '+' : row.type === 'del' ? '-' : row.type === 'gap' ? '⋯' : ' '),
+h('span', { className: 'dshcv-diftext' }, row.text || ' '),
+),
+),
+)
+: h('div', { className: 'dshcv-msg', style: { padding: '10px 12px' } }, '两边内容一致'),
+);
+};
 function TextDoc(props) {
 const { doc, sessionId } = props;
 const [state, setState] = React.useState({ status: 'idle', text: '', absolutePath: '', version: undefined, error: '' });
@@ -1309,6 +1429,9 @@ const [saving, setSaving] = React.useState(false);
 const [message, setMessage] = React.useState('');
 const [conflict, setConflict] = React.useState(null);
 const [reloadTick, setReloadTick] = React.useState(0);
+const [snapshots, setSnapshots] = React.useState([]);
+const [baseline, setBaseline] = React.useState('');
+const [diffState, setDiffState] = React.useState(null);
 const [fontSize, setFontSize] = React.useState(() => {
 const saved = Number(localStorage.getItem('dsh.canvas.fontsize'));
 return saved >= 10 && saved <= 22 ? saved : 12;
@@ -1362,6 +1485,19 @@ cancelled = true;
 controller.abort();
 };
 }, [doc.path, sessionId, pageBudget, reloadTick]);
+React.useEffect(() => {
+if (!editing) return undefined;
+const timer = setTimeout(() => {
+setSnapshots((list) => {
+if (!list.length || list[list.length - 1] !== draft) {
+const next = list.concat([draft]);
+return next.length > 24 ? next.slice(next.length - 24) : next;
+}
+return list;
+});
+}, 1200);
+return () => clearTimeout(timer);
+}, [draft, editing]);
 React.useEffect(() => {
 if (!message) return undefined;
 const timer = setTimeout(() => setMessage(''), 3000);
@@ -1546,6 +1682,9 @@ window.getSelection().removeAllRanges();
 };
 const beginEdit = () => {
 setDraft(state.text);
+setBaseline(state.text);
+setSnapshots([]);
+setDiffState(null);
 setEditing(true);
 setRendered(false);
 setPicked(null);
@@ -1554,6 +1693,8 @@ setMessage('');
 const cancelEdit = () => {
 setEditing(false);
 setDraft('');
+setDiffState(null);
+setSnapshots([]);
 setMessage('');
 };
 const save = async (force) => {
@@ -1594,6 +1735,28 @@ setMessage('已保存');
 setMessage('保存失败：' + errText(error));
 } finally {
 setSaving(false);
+}
+};
+const undoDraft = () => {
+setSnapshots((list) => {
+if (!list.length) {
+setDraft(baseline);
+return list;
+}
+const next = list.slice(0, list.length - 1);
+setDraft(next.length ? next[next.length - 1] : baseline);
+return next;
+});
+};
+const compareWithBaseline = () => {
+setDiffState({ left: baseline, right: draft, title: '与打开时的内容对比' });
+};
+const compareWithDisk = async () => {
+try {
+const page = await readTextPages(sessionId, doc.path, undefined, pageBudget);
+setDiffState({ left: page.text || '', right: draft, title: '磁盘内容 ← → 我的修改' });
+} catch (error) {
+setMessage('无法读取磁盘内容：' + errText(error));
 }
 };
 const reloadFromDisk = () => {
@@ -1668,6 +1831,27 @@ message ? h('span', { className: 'dshcv-msg' }, message) : null,
 editing
 ? h(
 'button',
+{ type: 'button', className: 'dshcv-btn', 'data-quiet': '1', title: '回到上一个快照', onClick: undoDraft },
+'撤销',
+)
+: null,
+editing && draft !== baseline
+? h(
+'button',
+{ type: 'button', className: 'dshcv-btn', 'data-quiet': '1', title: '丢弃修改，恢复打开时的内容', onClick: () => setDraft(baseline) },
+'回滚',
+)
+: null,
+editing
+? h(
+'button',
+{ type: 'button', className: 'dshcv-btn dshcv-opt', 'data-quiet': '1', title: '与打开时的内容逐行对比', onClick: compareWithBaseline },
+'对比',
+)
+: null,
+editing
+? h(
+'button',
 { type: 'button', className: 'dshcv-btn', 'data-primary': '1', disabled: saving, onClick: () => save(false) },
 saving ? '保存中…' : '保存',
 )
@@ -1687,6 +1871,7 @@ null,
 '文件已被外部修改' + (conflict.size ? '（磁盘上 ' + conflict.size.toLocaleString() + ' 字节）' : '') + '，直接保存会覆盖对方的改动。',
 ),
 h('button', { type: 'button', className: 'dshcv-btn', 'data-primary': '1', disabled: saving, onClick: () => save(true) }, '仍然覆盖'),
+h('button', { type: 'button', className: 'dshcv-btn', onClick: compareWithDisk }, '查看差异'),
 h('button', { type: 'button', className: 'dshcv-btn', onClick: reloadFromDisk }, '放弃我的修改并重读'),
 ),
 )
@@ -1705,6 +1890,19 @@ onClick: commit,
 '标记 ' + (picked.startLine === picked.endLine ? '第 ' + picked.startLine + ' 行' : '第 ' + picked.startLine + '-' + picked.endLine + ' 行'),
 )
 : null;
+if (diffState) {
+return h(
+React.Fragment,
+null,
+toolbarWithBanner,
+h(DiffView, {
+left: diffState.left,
+right: diffState.right,
+title: diffState.title,
+onClose: () => setDiffState(null),
+}),
+);
+}
 if (isMarkdown && rendered && !editing) {
 return h(
 React.Fragment,
