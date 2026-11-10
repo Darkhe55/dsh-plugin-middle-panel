@@ -3,13 +3,15 @@
   "version": "0.3.0",
   "description": "Middle canvas panel for DeepSeek Harness: shows deliverables between the workspace list and the conversation, and sends numbered annotations back to the chat.",
   "keywords": [
-    "deepseek-harness",
     "dsh",
     "dsh-plugin",
+    "deepseek-harness",
     "canvas",
-    "middle-panel",
     "annotation",
-    "artifacts"
+    "viewer",
+    "markdown",
+    "3d",
+    "review"
   ],
   "license": "MIT",
   "author": "Darkhe55",
@@ -36,7 +38,8 @@
     "client.js",
     "cordis.patch.yml",
     "locale/*.json",
-    "icon.svg"
+    "icon.svg",
+    "CHANGELOG.md"
   ],
   "readme": "README.en.md",
   "publishConfig": {

@@ -653,7 +653,12 @@ window.__ModuleLoader__.load({
       '.dshcv-path{font-size:12px;color:var(--dsw-alias-label-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}',
       '.dshcv-spacer{flex:1 1 auto;min-width:8px}',
       '.dshcv-body{display:flex;flex:1 1 0;min-height:0;overflow:hidden}',
-      '.dshcv-pane{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}',
+      '.dshcv-pane{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden;container-type:inline-size}',
+'.dshcv-tools{flex-wrap:wrap;row-gap:2px}',
+'.dshcv-head{flex-wrap:wrap;row-gap:2px}',
+'.dshcv-more{display:none}',
+      '@container (max-width: 720px){ :is(.dshcv-tools,.dshcv-head):not(.dshcv-expanded) .dshcv-opt{display:none} .dshcv-more{display:inline-flex} }',
+      '@container (max-width: 620px){ :is(.dshcv-tools,.dshcv-head):not(.dshcv-expanded) .dshcv-opt2{display:none} }',
       // The conversation must see a definite, clipped box: an auto-height flex
       // parent let it grow past the pane, so its transcript kept believing it
       // had more room and the last messages ended up under the composer.
@@ -1354,6 +1359,26 @@ window.__ModuleLoader__.load({
     } catch {
       /* storage is best effort */
     }
+    // Injecting the picker into a preview document is what makes element picking
+    // work, but it does run our code inside someone else's page; it can be turned
+    // off for HTML that is not trusted.
+    const injectState = { on: true };
+    try {
+      injectState.on = localStorage.getItem('dsh.canvas.injectscript') !== '0';
+    } catch {
+      /* storage is best effort */
+    }
+    const injectScriptAllowed = () => injectState.on;
+    const toggleInjectScript = () => {
+      injectState.on = !injectState.on;
+      try {
+        localStorage.setItem('dsh.canvas.injectscript', injectState.on ? '1' : '0');
+      } catch {
+        /* storage is best effort */
+      }
+      notify();
+    };
+
     const debugRender = () => debugState.on;
     const toggleDebugRender = () => {
       debugState.on = !debugState.on;
@@ -2295,7 +2320,7 @@ window.__ModuleLoader__.load({
       'else if(e.key==="ArrowLeft"){e.preventDefault();pauseAll();var t3=anims();var c3=0;for(var i=0;i<t3.length;i++){try{c3=Math.max(c3,Number(t3[i].currentTime)||0);}catch(x){}}seek(c3-step);}',
       'else if(e.key==="ArrowRight"){e.preventDefault();pauseAll();var u3=anims();var d3=0;for(var i=0;i<u3.length;i++){try{d3=Math.max(d3,Number(u3[i].currentTime)||0);}catch(x){}}seek(d3+step);}',
       'else if(e.key==="p"||e.key==="P"){paused?resumeAll():pauseAll();}},true);',
-      'window.addEventListener("message",function(e){var d=e.data;if(!d||d.source!=="dshcv-cmd")return;',
+      'window.addEventListener("message",function(e){if(e.source!==window.parent)return;var d=e.data;if(!d||d.source!=="dshcv-cmd")return;',
       'if(d.cmd==="pause")pauseAll();else if(d.cmd==="resume")resumeAll();else if(d.cmd==="seek")seek(d.time);',
       'else if(d.cmd==="step")stepFrame(d.dir||1);',
       'else if(d.cmd==="state")report();else if(d.cmd==="spot"){var spotTarget=null;if(d.selector){try{spotTarget=document.querySelector(d.selector);}catch(spotError){}}if(spotTarget){markSpot(spotTarget);}else{clearSpot();}}},false);',
@@ -2366,6 +2391,9 @@ window.__ModuleLoader__.load({
               ? (anim.count || 0) + ' 个动画' + (anim.raf ? ' · JS 帧 ' + anim.raf : '')
               : '无动画',
         ),
+        injectScriptAllowed()
+          ? null
+          : h('span', { className: 'dshcv-msg', title: '按 ? 打开帮助可重新开启' }, '标注脚本已禁用'),
         anim.paused
           ? h(
               'button',
@@ -2465,7 +2493,9 @@ window.__ModuleLoader__.load({
               if (bytes) html = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
             }
             if (cancelled) return;
-            objectUrl = URL.createObjectURL(new Blob([injectPicker(html)], { type: 'text/html' }));
+            objectUrl = URL.createObjectURL(
+  new Blob([injectScriptAllowed() ? injectPicker(html) : html], { type: 'text/html' }),
+);
             setState({ status: 'ready', url: objectUrl, error: '' });
           })
           .catch((error) => {
@@ -4797,6 +4827,19 @@ window.__ModuleLoader__.load({
                   ' · 顶点 ' + stats.vertices.toLocaleString(),
               )
             : null,
+h(
+            'button',
+            {
+              type: 'button',
+              className: 'dshcv-btn dshcv-more',
+              title: '显示全部工具',
+              onClick: (event) => {
+                const row = event.currentTarget.parentElement;
+                if (row) row.classList.toggle('dshcv-expanded');
+              },
+            },
+            '⋯',
+          ),
           h(
             'button',
             {
@@ -4880,10 +4923,10 @@ window.__ModuleLoader__.load({
           measure.points.length
             ? h('button', { type: 'button', className: 'dshcv-btn', 'data-quiet': '1', onClick: () => setMeasure({ mode: measure.mode, points: [], result: '' }) }, '清除测量')
             : null,
-          h('button', { type: 'button', className: 'dshcv-btn', 'data-primary': options.normals ? '1' : '0', title: '按法线方向着色', onClick: () => toggle('normals') }, '法线'),
-          h('button', { type: 'button', className: 'dshcv-btn', 'data-primary': options.fog ? '1' : '0', onClick: () => toggle('fog') }, '雾'),
-          h('button', { type: 'button', className: 'dshcv-btn', 'data-primary': options.axes ? '1' : '0', onClick: () => toggle('axes') }, '坐标轴'),
-          h('button', { type: 'button', className: 'dshcv-btn', onClick: exportObj }, '导出 OBJ'),
+          h('button', { type: 'button', className: 'dshcv-btn dshcv-opt', 'data-primary': options.normals ? '1' : '0', title: '按法线方向着色', onClick: () => toggle('normals') }, '法线'),
+          h('button', { type: 'button', className: 'dshcv-btn dshcv-opt', 'data-primary': options.fog ? '1' : '0', title: '远近雾化', onClick: () => toggle('fog') }, '雾'),
+          h('button', { type: 'button', className: 'dshcv-btn dshcv-opt', 'data-primary': options.axes ? '1' : '0', title: '显示世界坐标轴', onClick: () => toggle('axes') }, '坐标轴'),
+          h('button', { type: 'button', className: 'dshcv-btn dshcv-opt2', title: '把当前网格导出为工作区里的 OBJ', onClick: exportObj }, '导出 OBJ'),
           diag.error
             ? h(
                 'span',
@@ -5949,13 +5992,26 @@ window.__ModuleLoader__.load({
           h('span', { className: 'dshcv-title' }, '画布'),
           h('span', { className: 'dshcv-path' }, active ? active.path : '未打开交付物'),
           h('span', { className: 'dshcv-spacer' }),
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'dshcv-btn dshcv-more',
+              title: '显示全部按钮',
+              onClick: (event) => {
+                const head = event.currentTarget.parentElement;
+                if (head) head.classList.toggle('dshcv-expanded');
+              },
+            },
+            '⋯',
+          ),
           h('button', { type: 'button', className: 'dshcv-btn', onClick: () => setPickerOpen(!pickerOpen) }, '打开'),
           store.marks.length
             ? h(
                 'button',
                 {
                   type: 'button',
-                  className: 'dshcv-btn',
+                  className: 'dshcv-btn dshcv-opt',
                   'data-primary': followHover.on ? '1' : '0',
                   title: '悬停标注时自动滚动到对应内容',
                   onClick: () => setFollowHover(!followHover.on),
@@ -5976,7 +6032,7 @@ window.__ModuleLoader__.load({
           store.marks.length
             ? h(
                 'button',
-                { type: 'button', className: 'dshcv-btn', 'data-quiet': '1', title: '导出标注为 JSON', onClick: () => exportMarks() },
+                { type: 'button', className: 'dshcv-btn dshcv-opt', 'data-quiet': '1', title: '导出标注为 JSON', onClick: () => exportMarks() },
                 '导出',
               )
             : null,
@@ -5984,7 +6040,7 @@ window.__ModuleLoader__.load({
             'button',
             {
               type: 'button',
-              className: 'dshcv-btn',
+              className: 'dshcv-btn dshcv-opt',
               'data-quiet': '1',
               title: '导入标注 JSON（相同位置复用原编号）',
               onClick: () => {
@@ -6015,7 +6071,7 @@ window.__ModuleLoader__.load({
                 'button',
                 {
                   type: 'button',
-                  className: 'dshcv-btn',
+                  className: 'dshcv-btn dshcv-opt',
                   'data-primary': sendPrefs.autoClear ? '1' : '0',
                   title: '发送标注后自动清空列表（Ctrl+Enter 也能发送）',
                   onClick: toggleAutoClear,
@@ -6242,6 +6298,22 @@ window.__ModuleLoader__.load({
                     onClick: toggleDebugRender,
                   },
                   debugRender() ? '渲染调试计数：开' : '渲染调试计数：关',
+                ),
+              ),
+              h(
+                'div',
+                { style: { marginTop: '6px', display: 'flex', gap: '8px', alignItems: 'center' } },
+                h('kbd', null, 'HTML'),
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dshcv-btn',
+                    'data-primary': injectScriptAllowed() ? '1' : '0',
+                    title: '关闭后预览不再运行插件的标注脚本，元素点选将不可用',
+                    onClick: toggleInjectScript,
+                  },
+                  injectScriptAllowed() ? '预览注入标注脚本：开' : '预览注入标注脚本：关',
                 ),
               ),
             )
