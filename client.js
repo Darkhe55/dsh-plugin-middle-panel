@@ -4856,36 +4856,6 @@ const hoverToken = useHoverMark(doc.path);
 React.useEffect(() => {
 repaintRef.current();
 }, [hoverToken && hoverToken.id]);
-const exportObj = () => {
-const positions = meshRef.current;
-if (!positions) return;
-const lines = ['# exported from canvas panel', '# ' + doc.path];
-const lookup = new Map();
-const indices = [];
-for (let index = 0; index < positions.length; index += 3) {
-const key = positions[index].toFixed(5) + ',' + positions[index + 1].toFixed(5) + ',' + positions[index + 2].toFixed(5);
-let target = lookup.get(key);
-if (target === undefined) {
-target = lookup.size + 1;
-lookup.set(key, target);
-lines.push('v ' + positions[index].toFixed(6) + ' ' + positions[index + 1].toFixed(6) + ' ' + positions[index + 2].toFixed(6));
-}
-indices.push(target);
-}
-for (let index = 0; index + 2 < indices.length; index += 3) {
-lines.push('f ' + indices[index] + ' ' + indices[index + 1] + ' ' + indices[index + 2]);
-}
-setNotice('正在导出…');
-fetch(saveUrl(), {
-method: 'POST',
-mode: 'cors',
-headers: { 'content-type': 'application/json' },
-body: JSON.stringify({ sessionId: store.sessionId, path: doc.path.replace(/(\.[^.]+)?$/, '.export.obj'), content: lines.join('\n') }),
-})
-.then(() => setNotice('已导出 .export.obj'))
-.catch(() => setNotice('导出失败（文件过大或不在工作目录）'));
-setTimeout(() => setNotice(''), 2600);
-};
 if (state.status === 'failed') return h('div', { className: 'dshcv-empty' }, h('div', null, '无法预览该模型'), h('div', null, state.error));
 const stats = state.stats;
 const toggle = (key) => setOptions((previous) => Object.assign({}, previous, { [key]: !previous[key] }));
@@ -5011,7 +4981,6 @@ measure.points.length
 h('button', { type: 'button', className: 'dshcv-toggle dshcv-opt', 'aria-pressed': options.normals ? 'true' : 'false', title: '按法线方向着色', onClick: () => toggle('normals') }, '法线'),
 h('button', { type: 'button', className: 'dshcv-toggle dshcv-opt', 'aria-pressed': options.fog ? 'true' : 'false', title: '远近雾化', onClick: () => toggle('fog') }, '雾'),
 h('button', { type: 'button', className: 'dshcv-toggle dshcv-opt', 'aria-pressed': options.axes ? 'true' : 'false', title: '显示世界坐标轴', onClick: () => toggle('axes') }, '坐标轴'),
-h('button', { type: 'button', className: 'dshcv-btn dshcv-opt2', title: '把当前网格导出为工作区里的 OBJ', onClick: exportObj }, '导出 OBJ'),
 diag.error
 ? h(
 'span',
