@@ -169,6 +169,7 @@ window.__ModuleLoader__.load({
     };
     // A mark is stale once the file it points into reports a different mtime.
     const markStale = (mark) => {
+      if (mark.spotStale) return true;
       const current = fileVersionOf(mark.path);
       return Boolean(mark.mtimeMs && current && Math.abs(mark.mtimeMs - current) > 1);
     };
@@ -369,6 +370,63 @@ window.__ModuleLoader__.load({
       }
     };
 
+    // A 3D mark names a face by index, which only holds for the exact export that
+    // produced it. The centroid recorded with the mark finds the same face again
+    // after a re-export: first at the same index, then by nearest match.
+    const relocateSpotMarks = (path, positions, radius) => {
+      if (!positions || !positions.length) return;
+      const total = Math.floor(positions.length / 9);
+      if (!total) return;
+      const tolerance = Math.max(1e-9, Number(radius || 1) * 0.01);
+      const limit = tolerance * tolerance;
+      let changed = 0;
+      const next = store.marks.map((mark) => {
+        if (!sameFile(mark.path, path) || mark.kind !== 'spot') return mark;
+        if (typeof mark.triangle !== 'number') return mark;
+        if (!Array.isArray(mark.centroid) || mark.centroid.length !== 3) return mark;
+        const centerX = Number(mark.centroid[0]) || 0;
+        const centerY = Number(mark.centroid[1]) || 0;
+        const centerZ = Number(mark.centroid[2]) || 0;
+        const distanceSquared = (triangle) => {
+          const base = triangle * 9;
+          const dx = (positions[base] + positions[base + 3] + positions[base + 6]) / 3 - centerX;
+          const dy = (positions[base + 1] + positions[base + 4] + positions[base + 7]) / 3 - centerY;
+          const dz = (positions[base + 2] + positions[base + 5] + positions[base + 8]) / 3 - centerZ;
+          return dx * dx + dy * dy + dz * dz;
+        };
+        if (mark.triangle >= 0 && mark.triangle < total && distanceSquared(mark.triangle) <= limit) {
+          if (!mark.spotStale) return mark;
+          changed += 1;
+          return Object.assign({}, mark, { spotStale: false });
+        }
+        // A full scan is only worth it while the model stays interactive; past that
+        // the mark is flagged instead of freezing the viewer.
+        let best = -1;
+        let bestDistance = Infinity;
+        if (total <= 1500000) {
+          for (let triangle = 0; triangle < total; triangle += 1) {
+            const value = distanceSquared(triangle);
+            if (value < bestDistance) {
+              bestDistance = value;
+              best = triangle;
+            }
+          }
+        }
+        if (best >= 0 && bestDistance <= limit * 4) {
+          changed += 1;
+          return Object.assign({}, mark, { triangle: best, spotStale: false, relocated: true });
+        }
+        if (mark.spotStale) return mark;
+        changed += 1;
+        return Object.assign({}, mark, { spotStale: true });
+      });
+      if (changed) {
+        mutate({ marks: next });
+        persist();
+        devlog('spot-marks-relocated', ['changed=' + changed]);
+      }
+    };
+
     const addMark = (partial) => {
       if (!partial || !partial.path) return 0;
       const path = normalizePath(partial.path);
@@ -524,7 +582,16 @@ window.__ModuleLoader__.load({
     // One mark straight to the composer, for the ⟶ button on a rail row.
     const sendOneMark = (mark) => {
       const result = insertIntoComposer(markToBlock(mark) + '\n');
-      if (result !== 'ok') copyMark(mark);
+      if (result !== 'ok') {
+        copyMark(mark);
+        return result;
+      }
+      // Auto-clear means "sent marks leave the rail"; for a single send that is
+      // this one mark, never the whole list.
+      if (sendPrefs.autoClear) {
+        mutate({ marks: store.marks.filter((item) => item.id !== mark.id) });
+        persist();
+      }
       return result;
     };
 
@@ -629,7 +696,7 @@ window.__ModuleLoader__.load({
       // ---- control tokens ----
       // brand-primary is ink (black in light, white in dark), so it is used for text
       // and hairlines rather than as a fill; a tint carries the primary weight.
-      ':root{--dshcv-ink:var(--dsw-alias-label-primary);--dshcv-ink-2:var(--dsw-alias-label-secondary);--dshcv-line:color-mix(in srgb,var(--dsw-alias-label-primary) 12%,transparent);--dshcv-line-strong:color-mix(in srgb,var(--dsw-alias-label-primary) 24%,transparent);--dshcv-tint:color-mix(in srgb,var(--dsw-alias-label-primary) 8%,transparent);--dshcv-wash:color-mix(in srgb,var(--dsw-alias-label-primary) 6%,transparent);--dshcv-primary-bg:color-mix(in srgb,#4f8cff 16%,var(--dsw-alias-bg-layer-1));--dshcv-primary-wave:color-mix(in srgb,#4f8cff 26%,transparent);--dshcv-off-mid:#e9a6ab;--dshcv-off-edge:#d88b92;--dshcv-on-mid:#8ec9a3;--dshcv-on-edge:#cdead8}',
+      ':root{--dshcv-ink:var(--dsw-alias-label-primary);--dshcv-ink-2:var(--dsw-alias-label-secondary);--dshcv-line:color-mix(in srgb,var(--dsw-alias-label-primary) 12%,transparent);--dshcv-line-strong:color-mix(in srgb,var(--dsw-alias-label-primary) 24%,transparent);--dshcv-tint:color-mix(in srgb,var(--dsw-alias-label-primary) 8%,transparent);--dshcv-wash:color-mix(in srgb,var(--dsw-alias-label-primary) 6%,transparent);--dshcv-accent:color-mix(in srgb,#4f8cff 78%,var(--dsw-alias-label-primary));--dshcv-primary-bg:color-mix(in srgb,var(--dshcv-accent) 16%,var(--dsw-alias-bg-layer-1));--dshcv-primary-wave:color-mix(in srgb,var(--dshcv-accent) 32%,transparent);--dshcv-off-mid:#e9a6ab;--dshcv-off-edge:#d88b92;--dshcv-on-mid:#8ec9a3;--dshcv-on-edge:#cdead8}',
       // ---- actions ----
       '.dshcv-btn{position:relative;display:inline-flex;align-items:center;justify-content:center;gap:4px;height:28px;padding:0 10px;border:1px solid var(--dshcv-line);border-radius:8px;background:transparent;color:var(--dshcv-ink);font:inherit;font-size:12px;line-height:1;cursor:pointer;white-space:nowrap;overflow:hidden;transition:background-color .12s ease,color .12s ease,border-color .12s ease,box-shadow .16s ease}',
       '.dshcv-btn:hover{background:var(--dshcv-wash);border-color:var(--dshcv-line-strong)}',
@@ -640,7 +707,7 @@ window.__ModuleLoader__.load({
       '.dshcv-btn[data-kind="quiet"][data-danger="1"]:hover{color:var(--dshcv-off-edge);background:color-mix(in srgb,var(--dshcv-off-edge) 12%,transparent)}',
       // Primary: light tinted fill with two counter-moving wave bands, so the fill
       // itself reads as motion without the label ever drifting.
-      '.dshcv-btn[data-kind="primary"]{height:30px;padding:0 14px;border-color:color-mix(in srgb,#4f8cff 42%,transparent);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-weight:600;box-shadow:0 1px 0 color-mix(in srgb,#4f8cff 18%,transparent)}',
+      '.dshcv-btn[data-kind="primary"]{height:30px;padding:0 14px;border-color:color-mix(in srgb,var(--dshcv-accent) 45%,transparent);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-weight:600;box-shadow:0 1px 0 color-mix(in srgb,var(--dshcv-accent) 20%,transparent)}',
       '.dshcv-btn[data-kind="primary"]::before,.dshcv-btn[data-kind="primary"]::after{content:"";position:absolute;inset:-40%;pointer-events:none;background-repeat:repeat;background-position:center;opacity:.5}',
       '.dshcv-btn[data-kind="primary"]::before{background-image:repeating-radial-gradient(circle at 50% 50%,transparent 0 9px,var(--dshcv-primary-wave) 9px 13px)}',
       '.dshcv-btn[data-kind="primary"]::after{background-image:repeating-radial-gradient(circle at 50% 50%,transparent 0 15px,var(--dshcv-primary-wave) 15px 18px);opacity:.28}',
@@ -1363,7 +1430,10 @@ window.__ModuleLoader__.load({
 
     // Preview budgets. A viewer that survives a 500 MB file is worth less than
     // one that says so clearly, so every heavy reader asks for the size first.
-    const LIMITS = { model: 64, design: 64, office: 32, pdf: 256, html: 16, sheet: 32, text: 8 };
+    // Reading a large file is fine; editing one inline is not, because the draft,
+    // the baseline and every snapshot copy the whole string. So the two limits differ.
+    const LIMITS = { model: 64, design: 64, office: 32, pdf: 256, html: 16, sheet: 32, text: 16 };
+    const EDIT_LIMIT = { text: 4 };
     const MB = 1024 * 1024;
 
     const readFileInfo = async (sessionId, path, signal) => {
@@ -1995,6 +2065,17 @@ window.__ModuleLoader__.load({
       };
 
       const beginEdit = () => {
+        const editable = (EDIT_LIMIT[fileKind(doc.path)] || 8) * MB;
+        if (state.size && state.size > editable) {
+          setMessage(
+            '文件 ' +
+              (state.size / MB).toFixed(1) +
+              ' MB，超过可编辑上限 ' +
+              Math.round(editable / MB) +
+              ' MB；可以只读查看，需要修改请用外部编辑器。',
+          );
+          return;
+        }
         setDraft(state.text);
         setBaseline(state.text);
         setSnapshots([]);
@@ -4795,6 +4876,7 @@ window.__ModuleLoader__.load({
           viewRef.current.radius = radius;
           viewRef.current.distance = radius / Math.tan(Math.PI / 8) + radius;
           if (cancelled) return;
+          relocateSpotMarks(doc.path, positions, radius);
           setState({
             status: 'ready',
             error: '',
