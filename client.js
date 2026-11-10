@@ -47,6 +47,7 @@ seq: 0,
 restored: false,
 reportedBridge: false,
 reportedBlock: false,
+selected: [],
 };
 const notify = () => {
 version += 1;
@@ -663,6 +664,9 @@ const CSS_PANEL = [
 '.dshcv-docp.dshcv-spot,.dshcv-slide.dshcv-spot{box-shadow:0 0 0 1px color-mix(in srgb,var(--dsw-alias-brand-primary) 55%,transparent)}',
 '.dshcv-table td.dshcv-spot,.dshcv-table th.dshcv-spot{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 26%,transparent);outline:1px solid color-mix(in srgb,var(--dsw-alias-brand-primary) 60%,transparent)}',
 '.dshcv-markrow-on{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 10%,transparent);border-radius:6px}',
+'.dshcv-template-menu{position:absolute;z-index:20;top:26px;left:0;min-width:200px;max-width:280px;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:8px;box-shadow:0 10px 28px rgba(0,0,0,.24);padding:4px;display:flex;flex-direction:column;gap:2px}',
+'.dshcv-template-row{display:flex;align-items:center;gap:2px}',
+'.dshcv-template-pick{flex:1 1 auto;justify-content:flex-start;text-align:left;height:24px;font-size:12px}',
 '.dshcv-stale{flex:0 0 auto;font-size:11px;color:var(--dsw-alias-warning,#c28b00);align-self:flex-start}',
 '.dshcv-railhead{display:flex;gap:6px;align-items:center;padding:4px 0 6px;position:sticky;top:0;background:var(--dsw-alias-bg-layer-1);z-index:1}',
 '.dshcv-railgroup{font-size:10.5px;color:var(--dsw-alias-label-secondary);padding:6px 0 2px;border-bottom:1px solid var(--dsw-alias-border-l1);margin-bottom:2px}',
@@ -1979,11 +1983,11 @@ localStorage.setItem('dsh.canvas.railscope', railScope.mode);
 }
 notify();
 };
-const copyMark = (mark) => {
-const text = markToBlock(mark);
+const copyText = (text) => {
+const value = String(text == null ? '' : text);
 const fallback = () => {
 const area = document.createElement('textarea');
-area.value = text;
+area.value = value;
 area.style.position = 'fixed';
 area.style.opacity = '0';
 document.body.appendChild(area);
@@ -1995,15 +1999,63 @@ document.execCommand('copy');
 document.body.removeChild(area);
 };
 if (navigator.clipboard && navigator.clipboard.writeText) {
-navigator.clipboard.writeText(text).catch(fallback);
+navigator.clipboard.writeText(value).catch(fallback);
 return;
 }
 fallback();
 };
+const copyMark = (mark) => copyText(markToBlock(mark));
+const toggleSelected = (id) => {
+const current = store.selected || [];
+const next = current.includes(id) ? current.filter((value) => value !== id) : current.concat([id]);
+mutate({ selected: next });
+};
+const clearSelected = () => mutate({ selected: [] });
+const selectedMarks = () =>
+(store.selected || [])
+.map((id) => store.marks.find((mark) => mark.id === id))
+.filter(Boolean)
+.sort((a, b) => a.n - b.n);
+const removeSelected = () => {
+const doomed = new Set(store.selected || []);
+if (!doomed.size) return;
+mutate({ marks: store.marks.filter((mark) => !doomed.has(mark.id)), selected: [] });
+persist();
+};
+const sendSelected = () => {
+const marks = selectedMarks();
+if (!marks.length) return 'empty';
+const text =
+'以下是我在画布面板中选出的标注（共 ' + marks.length + ' 条），请按编号逐条处理：\n\n' +
+marks.map((mark) => markToBlock(mark)).join('\n\n');
+return insertIntoComposer(text + '\n') === 'ok' ? 'ok' : 'failed';
+};
+const DEFAULT_TEMPLATES = ['这段太啰嗦，请精简', '改成主动语态', '术语前后不一致，请统一', '补上异常分支'];
+const loadTemplates = () => {
+try {
+const raw = localStorage.getItem('dsh.canvas.templates');
+if (raw) {
+const parsed = JSON.parse(raw);
+if (Array.isArray(parsed)) return parsed.filter((item) => typeof item === 'string' && item.trim()).slice(0, 30);
+}
+} catch {
+}
+return DEFAULT_TEMPLATES.slice();
+};
+const saveTemplates = (list) => {
+store.templates = list;
+try {
+localStorage.setItem('dsh.canvas.templates', JSON.stringify(list));
+} catch {
+}
+notify();
+};
+store.templates = loadTemplates();
 function MarksRail(props) {
 useVersion();
 useHoverVersion();
 const [query, setQuery] = React.useState('');
+const [menuFor, setMenuFor] = React.useState(null);
 if (!store.marks.length) return null;
 const activeDoc = store.docs.find((doc) => doc.id === store.activeId);
 const activePath = activeDoc ? activeDoc.path : '';
@@ -2038,6 +2090,18 @@ className: 'dshcv-mark' + (store.hoverId === mark.id ? ' dshcv-markrow-on' : '')
 onMouseEnter: () => setHoverMark(mark.id),
 onMouseLeave: () => setHoverMark(undefined),
 },
+h(
+'button',
+{
+type: 'button',
+className: 'dshcv-btn',
+'data-quiet': '1',
+'data-primary': (store.selected || []).includes(mark.id) ? '1' : '0',
+title: '勾选后可批量发送或删除',
+onClick: () => toggleSelected(mark.id),
+},
+(store.selected || []).includes(mark.id) ? '▣' : '▢',
+),
 h('span', { className: 'dshcv-badge' }, String(mark.n)),
 markStale(mark)
 ? h('span', { className: 'dshcv-stale', title: '文件已改动，这条标注的位置可能已偏移' }, '⚠')
@@ -2059,6 +2123,73 @@ placeholder: '写修改意见，发送时按编号带上',
 value: mark.note || '',
 onChange: (event) => setMarkNote(mark.id, event.target.value),
 }),
+h(
+'div',
+{ style: { position: 'relative', display: 'flex', gap: '6px', alignItems: 'center' } },
+h(
+'button',
+{
+type: 'button',
+className: 'dshcv-btn',
+'data-quiet': '1',
+title: '插入常用意见',
+onClick: () => setMenuFor(menuFor === mark.id ? null : mark.id),
+},
+'常用意见',
+),
+menuFor === mark.id
+? h(
+'div',
+{ className: 'dshcv-template-menu' },
+(store.templates || DEFAULT_TEMPLATES).map((template, index) =>
+h(
+'div',
+{ key: 'tpl' + index, className: 'dshcv-template-row' },
+h(
+'button',
+{
+type: 'button',
+className: 'dshcv-btn dshcv-template-pick',
+onClick: () => {
+const current = (mark.note || '').trim();
+setMarkNote(mark.id, current ? current + '；' + template : template);
+setMenuFor(null);
+},
+},
+template,
+),
+h(
+'button',
+{
+type: 'button',
+className: 'dshcv-btn',
+'data-quiet': '1',
+title: '删除这条模板',
+onClick: () => saveTemplates((store.templates || DEFAULT_TEMPLATES).filter((item) => item !== template)),
+},
+'×',
+),
+),
+),
+(mark.note || '').trim()
+? h(
+'button',
+{
+type: 'button',
+className: 'dshcv-btn',
+onClick: () => {
+const current = (mark.note || '').trim();
+if (!current) return;
+saveTemplates((store.templates || DEFAULT_TEMPLATES).concat([current]).slice(-30));
+setMenuFor(null);
+},
+},
+'把当前意见存为模板',
+)
+: null,
+)
+: null,
+),
 ),
 h(
 'button',
@@ -5105,6 +5236,13 @@ const marqueeRef = React.useRef(null);
 const [layers, setLayers] = React.useState([]);
 const imageRef = React.useRef(null);
 const [sample, setSample] = React.useState(null);
+const [notice, setNotice] = React.useState('');
+const [ruler, setRuler] = React.useState({ on: false, points: [] });
+const rulerDistance = React.useMemo(() => {
+if (ruler.points.length !== 2) return 0;
+const [a, b] = ruler.points;
+return Math.round(Math.hypot(b[0] - a[0], b[1] - a[1]) * 10) / 10;
+}, [ruler.points]);
 const sampleCanvasRef = React.useRef(null);
 const hoverMark = useHoverMark(doc.path);
 const hoverRegion = hoverMark && hoverMark.kind === 'region' && Array.isArray(hoverMark.rect) ? hoverMark : null;
@@ -5191,6 +5329,54 @@ const rect = image.getBoundingClientRect();
 const factor = image.naturalWidth ? image.naturalWidth / rect.width : 1;
 return { left: rect.left, top: rect.top, width: rect.width, height: rect.height, factor };
 };
+const hexOf = (pixel) =>
+'#' +
+[pixel.r, pixel.g, pixel.b]
+.map((value) => Number(value || 0).toString(16).padStart(2, '0'))
+.join('')
+.toUpperCase();
+const copyCrop = async () => {
+const image = imageRef.current;
+const rect = marqueeRef.current;
+const box = naturalRect();
+if (!image || !rect || !box) {
+setNotice('先框选一块区域');
+return;
+}
+const width = Math.max(1, Math.round(rect.width * box.factor));
+const height = Math.max(1, Math.round(rect.height * box.factor));
+const canvas = document.createElement('canvas');
+canvas.width = width;
+canvas.height = height;
+const context = canvas.getContext('2d');
+if (!context) return;
+context.drawImage(
+image,
+Math.round(rect.left * box.factor),
+Math.round(rect.top * box.factor),
+width,
+height,
+0,
+0,
+width,
+height,
+);
+try {
+const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+setNotice('已复制 ' + width + ' × ' + height + ' 图像');
+} catch {
+setNotice('复制失败：当前环境不允许写剪贴板');
+}
+};
+const onImageClick = (event) => {
+if (!ruler.on) return;
+const box = naturalRect();
+if (!box) return;
+const x = Math.round((event.clientX - box.left) * box.factor);
+const y = Math.round((event.clientY - box.top) * box.factor);
+setRuler({ on: true, points: ruler.points.concat([[x, y]]).slice(-2) });
+};
 const startSelect = (event) => {
 if (!selecting) return;
 const box = naturalRect();
@@ -5245,9 +5431,52 @@ h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }
 h('button', { type: 'button', className: 'dshcv-btn', onClick: () => setZoom(Math.min(4, zoom + 0.25)) }, '+'),
 h('button', { type: 'button', className: 'dshcv-btn', onClick: () => setZoom(1) }, '1:1'),
 h('button', { type: 'button', className: 'dshcv-btn', onClick: () => setZoom(0.25) }, '适应'),
+h(
+'button',
+{
+type: 'button',
+className: 'dshcv-btn',
+'data-primary': ruler.on ? '1' : '0',
+title: '点两处量像素距离',
+onClick: () => setRuler({ on: !ruler.on, points: [] }),
+},
+'标尺',
+),
+ruler.points.length === 2
+? h('span', { className: 'dshcv-msg' }, 'Δ ' + rulerDistance + ' px')
+: null,
 sample
-? h('span', { className: 'dshcv-msg' }, sample.x + ',' + sample.y + ' · rgb(' + sample.r + ',' + sample.g + ',' + sample.b + ') a' + sample.a)
+? h(
+'button',
+{
+type: 'button',
+className: 'dshcv-btn dshcv-opt',
+'data-quiet': '1',
+title: '复制这个颜色的 HEX',
+onClick: () => {
+copyText(hexOf(sample));
+setNotice('已复制 ' + hexOf(sample));
+},
+},
+hexOf(sample),
+)
 : h('span', { className: 'dshcv-msg' }, 'Shift 悬停取样'),
+sample
+? h('span', { className: 'dshcv-msg dshcv-opt2' }, sample.x + ',' + sample.y + ' · a' + (sample.a / 255).toFixed(2))
+: null,
+marquee
+? h(
+'button',
+{
+type: 'button',
+className: 'dshcv-btn',
+title: '把框选区域复制为 PNG',
+onClick: () => copyCrop(),
+},
+'复制区域',
+)
+: null,
+notice ? h('span', { className: 'dshcv-msg' }, notice) : null,
 layers.length ? h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, layers.length + ' 个 SVG 图层') : null,
 ),
 h(
@@ -5266,7 +5495,42 @@ alt: doc.path,
 style: { display: 'block', maxWidth: '100%', userSelect: 'none' },
 draggable: false,
 onMouseMove: onSample,
+onClick: onImageClick,
 }),
+ruler.points.length === 2
+? h(
+'svg',
+{
+style: {
+position: 'absolute',
+left: 0,
+top: 0,
+width: '100%',
+height: '100%',
+pointerEvents: 'none',
+},
+},
+h('line', {
+key: 'line',
+x1: ruler.points[0][0] / displayFactor,
+y1: ruler.points[0][1] / displayFactor,
+x2: ruler.points[1][0] / displayFactor,
+y2: ruler.points[1][1] / displayFactor,
+stroke: 'var(--dsw-alias-brand-primary)',
+strokeWidth: 2,
+strokeDasharray: '6 4',
+}),
+ruler.points.map((point, index) =>
+h('circle', {
+key: 'p' + index,
+cx: point[0] / displayFactor,
+cy: point[1] / displayFactor,
+r: 4,
+fill: 'var(--dsw-alias-brand-primary)',
+}),
+),
+)
+: null,
 marquee
 ? h('div', {
 style: {
@@ -5700,6 +5964,49 @@ onClick: () => setFollowHover(!followHover.on),
 },
 '跟随',
 )
+: null,
+(store.selected || []).length
+? h(
+'span',
+{ className: 'dshcv-msg' },
+'已选 ' + store.selected.length,
+)
+: null,
+(store.selected || []).length
+? h(
+'button',
+{
+type: 'button',
+className: 'dshcv-btn',
+'data-primary': '1',
+title: '只把勾选的标注发送到对话框',
+onClick: () => {
+const result = sendSelected();
+setToast(result === 'ok' ? '已发送选中的标注' : '发送失败');
+setTimeout(() => setToast(''), 2200);
+},
+},
+'发送选中',
+)
+: null,
+(store.selected || []).length
+? h(
+'button',
+{
+type: 'button',
+className: 'dshcv-btn',
+title: '删除勾选的标注',
+onClick: () => {
+removeSelected();
+setToast('已删除选中的标注');
+setTimeout(() => setToast(''), 2200);
+},
+},
+'删除选中',
+)
+: null,
+(store.selected || []).length
+? h('button', { type: 'button', className: 'dshcv-btn', 'data-quiet': '1', onClick: clearSelected }, '取消选择')
 : null,
 store.marks.length
 ? h(
