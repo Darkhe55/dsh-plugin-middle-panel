@@ -4194,44 +4194,184 @@ window.__ModuleLoader__.load({
       return { positions: new Float32Array(out), colors: null };
     };
 
-    const parseCollada = (bytes) => {
-      const xml = parseXml(new TextDecoder('utf-8', { fatal: false }).decode(bytes));
-      const arrays = new Map();
-      for (const node of Array.from(xml.getElementsByTagName('float_array'))) {
-        const id = node.getAttribute('id');
-        if (!id) continue;
-        arrays.set(
-          id,
-          (node.textContent || '')
-            .trim()
-            .split(/\s+/)
-            .map((value) => Number(value) || 0),
-        );
+    // Collada is XML with an indirection that is easy to get wrong: a primitive's
+    // VERTEX input often points at a <vertices> block, which in turn points at the
+    // <source> element holding the <float_array>. Reading the geometry is split from
+    // interpreting it so the index maths can be tested without a DOM.
+    const readCollada = (xml) => {
+      const buckets = new Map();
+      for (const node of Array.from(xml.getElementsByTagName('*'))) {
+        const name = node.localName || String(node.tagName || '').split(':').pop();
+        if (!buckets.has(name)) buckets.set(name, []);
+        buckets.get(name).push(node);
       }
-      const out = [];
-      for (const triangles of Array.from(xml.getElementsByTagName('triangles'))) {
-        const inputs = Array.from(triangles.getElementsByTagName('input'));
-        const vertex = inputs.find((input) => (input.getAttribute('semantic') || '').toUpperCase() === 'VERTEX');
-        if (!vertex) continue;
-        const source = vertex.getAttribute('source') || '';
-        const values = arrays.get(source.replace(/^#/, ''));
-        if (!values) continue;
-        const stride = Number(vertex.getAttribute('offset')) || 0;
-        const step = Math.max(1, inputs.length);
-        const p = triangles.getElementsByTagName('p')[0];
-        if (!p) continue;
-        const raw = (p.textContent || '')
+      const pick = (name) => buckets.get(name) || [];
+      const directChildren = (node, name) =>
+        Array.from(node.children || []).filter((child) => (child.localName || String(child.tagName || '').split(':').pop()) === name);
+
+      const sources = new Map();
+      for (const source of pick('source')) {
+        const id = source.getAttribute('id');
+        if (!id) continue;
+        const array = directChildren(source, 'float_array')[0] || directChildren(source, 'double_array')[0] || pick('float_array').find((node) => source.contains(node));
+        if (!array) continue;
+        const values = (array.textContent || '')
           .trim()
           .split(/\s+/)
+          .filter(Boolean)
           .map((value) => Number(value) || 0);
-        for (let index = 0; index + step * 3 <= raw.length; index += step * 3) {
+        sources.set(id, values);
+        // Exporters reference either the source id or the array id; keep both.
+        const arrayId = array.getAttribute('id');
+        if (arrayId && !sources.has(arrayId)) sources.set(arrayId, values);
+      }
+
+      const vertices = new Map();
+      for (const block of pick('vertices')) {
+        const id = block.getAttribute('id');
+        if (!id) continue;
+        const position = Array.from(block.getElementsByTagName('input')).find(
+          (input) => String(input.getAttribute('semantic') || '').toUpperCase() === 'POSITION',
+        );
+        if (position) vertices.set(id, String(position.getAttribute('source') || '').replace(/^#/, ''));
+      }
+
+      const primitives = [];
+      const readInputs = (node) =>
+        directChildren(node, 'input').map((input) => ({
+          semantic: String(input.getAttribute('semantic') || '').toUpperCase(),
+          source: String(input.getAttribute('source') || '').replace(/^#/, ''),
+          offset: Number(input.getAttribute('offset')) || 0,
+        }));
+      const readNumbers = (node) =>
+        (node && node.textContent ? node.textContent : '')
+          .trim()
+          .split(/\s+/)
+          .filter(Boolean)
+          .map((value) => Number(value) || 0);
+
+      for (const kind of ['triangles', 'polylist', 'polygons', 'tristrips', 'trifans']) {
+        for (const node of pick(kind)) {
+          const inputs = readInputs(node);
+          const vcountNode = directChildren(node, 'vcount')[0];
+          const polygons = kind === 'polygons' ? Array.from(node.getElementsByTagName('p')) : null;
+          if (polygons) {
+            primitives.push({
+              kind,
+              inputs,
+              polygons: polygons.map((entry) => readNumbers(entry)),
+            });
+            continue;
+          }
+          const p = directChildren(node, 'p')[0] || node.getElementsByTagName('p')[0];
+          if (!p) continue;
+          primitives.push({
+            kind,
+            inputs,
+            p: readNumbers(p),
+            vcount: vcountNode ? readNumbers(vcountNode) : [],
+          });
+        }
+      }
+      return { sources, vertices, primitives };
+    };
+
+    const triangulateCollada = (model) => {
+      const out = [];
+      const lookup = (ref) => {
+        if (model.sources.has(ref)) return model.sources.get(ref);
+        const viaVertices = model.vertices.get(ref);
+        if (viaVertices !== undefined) return model.sources.get(viaVertices) || null;
+        return null;
+      };
+      for (const primitive of model.primitives) {
+        const vertex = primitive.inputs.find((input) => input.semantic === 'VERTEX');
+        if (!vertex) continue;
+        const values = lookup(vertex.source);
+        if (!values) continue;
+        const step = Math.max(1, ...primitive.inputs.map((input) => input.offset + 1));
+        const cornersOf = (raw, offset) => {
+          // Materials and normals interleave with positions; only VERTEX is used.
+          const corners = [];
           for (const corner of [0, 1, 2]) {
-            const vertexIndex = raw[index + corner * step + stride];
-            out.push(values[vertexIndex * 3] || 0, values[vertexIndex * 3 + 1] || 0, values[vertexIndex * 3 + 2] || 0);
+            const vertexIndex = raw[offset + corner * step + vertex.offset];
+            corners.push([
+              values[vertexIndex * 3] || 0,
+              values[vertexIndex * 3 + 1] || 0,
+              values[vertexIndex * 3 + 2] || 0,
+            ]);
+          }
+          return corners;
+        };
+        const emit = (corners) => {
+          for (const corner of corners) out.push(corner[0], corner[1], corner[2]);
+        };
+
+        if (primitive.polygons) {
+          for (const polygon of primitive.polygons) {
+            const points = [];
+            for (let index = 0; index + step <= polygon.length; index += step) {
+              const vertexIndex = polygon[index + vertex.offset];
+              points.push([
+                values[vertexIndex * 3] || 0,
+                values[vertexIndex * 3 + 1] || 0,
+                values[vertexIndex * 3 + 2] || 0,
+              ]);
+            }
+            for (let index = 1; index + 1 < points.length; index += 1) {
+              emit([points[0], points[index], points[index + 1]]);
+            }
+          }
+          continue;
+        }
+
+        const raw = primitive.p || [];
+        if (primitive.kind === 'triangles') {
+          for (let index = 0; index + step * 3 <= raw.length; index += step * 3) emit(cornersOf(raw, index));
+        } else if (primitive.kind === 'polylist') {
+          let cursor = 0;
+          for (const count of primitive.vcount) {
+            const points = [];
+            for (let corner = 0; corner < count; corner += 1) {
+              const base = cursor + corner * step;
+              const vertexIndex = raw[base + vertex.offset];
+              points.push([
+                values[vertexIndex * 3] || 0,
+                values[vertexIndex * 3 + 1] || 0,
+                values[vertexIndex * 3 + 2] || 0,
+              ]);
+            }
+            for (let index = 1; index + 1 < points.length; index += 1) {
+              emit([points[0], points[index], points[index + 1]]);
+            }
+            cursor += count * step;
+          }
+        } else {
+          // tristrips / trifans: overlapping windows, with the strip flipping winding.
+          const points = [];
+          for (let index = 0; index + step <= raw.length; index += step) {
+            const vertexIndex = raw[index + vertex.offset];
+            points.push([
+              values[vertexIndex * 3] || 0,
+              values[vertexIndex * 3 + 1] || 0,
+              values[vertexIndex * 3 + 2] || 0,
+            ]);
+          }
+          for (let index = 0; index + 2 < points.length; index += 1) {
+            emit(
+              primitive.kind === 'tristrips' && index % 2 === 1
+                ? [points[index + 1], points[index], points[index + 2]]
+                : [points[index], points[index + 1], points[index + 2]],
+            );
           }
         }
       }
       return { positions: new Float32Array(out), colors: null };
+    };
+
+    const parseCollada = (bytes) => {
+      const xml = parseXml(new TextDecoder('utf-8', { fatal: false }).decode(bytes));
+      return triangulateCollada(readCollada(xml));
     };
 
     const loadMesh = async (bytes, extension, options) => {
