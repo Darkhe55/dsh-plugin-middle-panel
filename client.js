@@ -6,6 +6,13 @@ const h = React.createElement;
 const PANEL_KEY = 'canvas';
 const STORAGE_PREFIX = 'dsh.canvas.v1.';
 const errText = (error) => (error && error.message ? error.message : String(error));
+const netText = (error, action) => {
+const raw = errText(error);
+if (/failed to fetch|networkerror|load failed/i.test(raw)) {
+return action + '失败：请求没有到达本机服务（' + location.origin + '）。请确认 DSH 仍在运行，然后刷新页面重试。';
+}
+return action + '失败：' + raw;
+};
 const basename = (path) => String(path || '').split(/[\\/]/).pop() || String(path || '');
 const normalizePath = (path) => {
 let value = String(path || '').trim().replace(/\\/g, '/');
@@ -1131,9 +1138,8 @@ const shown = React.useMemo(
 return h('div', { className: 'dshcv-md' }, shown);
 };
 const SAVE_PATH = '/dsh-canvas/save';
-const SAVE_ABSOLUTE = 'http://127.0.0.1:1296/dsh-canvas/save';
-const saveUrl = () => (/^https?:$/.test(location.protocol) ? SAVE_PATH : SAVE_ABSOLUTE);
-const fileUrl = () => (/^https?:$/.test(location.protocol) ? '/dsh-canvas/file' : 'http://127.0.0.1:1296/dsh-canvas/file');
+const saveUrl = () => SAVE_PATH;
+const fileUrl = () => '/dsh-canvas/file';
 const LIMITS = { model: 64, design: 64, office: 32, pdf: 256, html: 16, sheet: 32, text: 8 };
 const MB = 1024 * 1024;
 const readFileInfo = async (sessionId, path, signal) => {
@@ -1742,7 +1748,7 @@ size: payload && payload.size ? payload.size : state.size,
 setEditing(false);
 setMessage('已保存');
 } catch (error) {
-setMessage('保存失败：' + errText(error));
+setMessage(netText(error, '保存'));
 } finally {
 setSaving(false);
 }

@@ -18,6 +18,15 @@ window.__ModuleLoader__.load({
     const STORAGE_PREFIX = 'dsh.canvas.v1.';
 
     const errText = (error) => (error && error.message ? error.message : String(error));
+    // "Failed to fetch" tells the user nothing; a network-level failure here always
+    // means the request never reached this app's own server.
+    const netText = (error, action) => {
+      const raw = errText(error);
+      if (/failed to fetch|networkerror|load failed/i.test(raw)) {
+        return action + '失败：请求没有到达本机服务（' + location.origin + '）。请确认 DSH 仍在运行，然后刷新页面重试。';
+      }
+      return action + '失败：' + raw;
+    };
     const basename = (path) => String(path || '').split(/[\\/]/).pop() || String(path || '');
 
     // One file, one tab: the model may name the same file as `a/b`, `./a/b`,
@@ -1287,10 +1296,15 @@ window.__ModuleLoader__.load({
     };
 
     // ---------------- text viewer ----------------
+    // Always same-origin. In the Web UI that is the server itself; in the desktop
+    // shell the page is `dsh-app://app`, whose protocol handler forwards every path
+    // that is not a static asset straight to the loopback host. Hardcoding
+    // `http://127.0.0.1:1296` bypassed that forwarding and broke the moment the
+    // server picked another port, which surfaced as "Failed to fetch" after a
+    // two-second connect timeout.
     const SAVE_PATH = '/dsh-canvas/save';
-    const SAVE_ABSOLUTE = 'http://127.0.0.1:1296/dsh-canvas/save';
-    const saveUrl = () => (/^https?:$/.test(location.protocol) ? SAVE_PATH : SAVE_ABSOLUTE);
-    const fileUrl = () => (/^https?:$/.test(location.protocol) ? '/dsh-canvas/file' : 'http://127.0.0.1:1296/dsh-canvas/file');
+    const saveUrl = () => SAVE_PATH;
+    const fileUrl = () => '/dsh-canvas/file';
 
     // Preview budgets. A viewer that survives a 500 MB file is worth less than
     // one that says so clearly, so every heavy reader asks for the size first.
@@ -1987,7 +2001,7 @@ window.__ModuleLoader__.load({
           setEditing(false);
           setMessage('已保存');
         } catch (error) {
-          setMessage('保存失败：' + errText(error));
+          setMessage(netText(error, '保存'));
         } finally {
           setSaving(false);
         }
