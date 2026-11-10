@@ -477,6 +477,7 @@ window.__ModuleLoader__.load({
       '.dshcv-linehit{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 10%,transparent)}',
       '.dshcv-linehitcur{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 22%,transparent)}',
       '.dshcv-hit{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 45%,transparent);color:inherit;border-radius:3px;padding:0 1px}',
+      '::highlight(dshcv-hover){background-color:color-mix(in srgb,var(--dsw-alias-brand-primary) 34%,transparent);color:inherit}',
       '.dshcv-badge{flex:0 0 auto;min-width:18px;height:18px;border-radius:9px;background:var(--dsw-alias-brand-primary);color:#fff;font-size:11px;line-height:18px;text-align:center;padding:0 5px;font-variant-numeric:tabular-nums}',
       '.dshcv-note{width:100%;box-sizing:border-box;font:inherit;font-size:12px;line-height:1.5;padding:5px 8px;border-radius:7px;border:1px solid transparent;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);resize:vertical;transition:border-color .12s ease}',
       '.dshcv-note:hover{border-color:var(--dsw-alias-border-l1)}',
@@ -1023,8 +1024,9 @@ window.__ModuleLoader__.load({
       return blocks.map((block, index) => {
         const span = spans[index];
         const hit = span.start > 0 && from <= span.end && to >= span.start;
+        if (hit) return supportsCssHighlights() ? block : React.cloneElement(block, { className: (block.props.className ? block.props.className + ' ' : '') + 'dshcv-spot' });
         return React.cloneElement(block, {
-          className: (block.props.className ? block.props.className + ' ' : '') + (hit ? 'dshcv-spot' : 'dshcv-dim'),
+          className: (block.props.className ? block.props.className + ' ' : '') + 'dshcv-dim',
         });
       });
     };
@@ -1111,6 +1113,108 @@ window.__ModuleLoader__.load({
       return size;
     };
 
+
+    // Chromium exposes ::highlight; without it the row keeps the older wash.
+    const supportsCssHighlights = () =>
+      typeof CSS !== 'undefined' && Boolean(CSS.highlights) && typeof Highlight !== 'undefined';
+
+    // Locate the exact characters of a quote inside a container and return a
+    // Range. Multi-line quotes are matched by their first and last line, so the
+    // highlight covers the whole selection without guessing whitespace between
+    // rows (the raw view has no newline characters between line elements).
+    const collectTextNodes = (host) => {
+      const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT, null);
+      const entries = [];
+      let flat = '';
+      let node = walker.nextNode();
+      while (node) {
+        let line = 0;
+        let element = node.parentElement;
+        while (element && element !== host) {
+          if (element.dataset && element.dataset.line) {
+            line = Number(element.dataset.line) || 0;
+            break;
+          }
+          element = element.parentElement;
+        }
+        entries.push({ node, start: flat.length, length: (node.nodeValue || '').length, line });
+        flat += node.nodeValue || '';
+        node = walker.nextNode();
+      }
+      return { entries, flat };
+    };
+
+    // Find one needle, preferring the occurrence closest to a source line.
+    const locateNeedle = (entries, needle, preferLine, fromIndex) => {
+      if (!needle) return null;
+      const matches = [];
+      for (const entry of entries) {
+        const text = entry.node.nodeValue || '';
+        let at = text.indexOf(needle);
+        while (at >= 0) {
+          matches.push({ entry, offset: at, line: entry.line });
+          at = text.indexOf(needle, at + 1);
+          if (matches.length > 200) break;
+        }
+      }
+      if (!matches.length) return null;
+      const usable = fromIndex === undefined ? matches : matches.filter((match) => match.entry.start >= fromIndex);
+      const pool = usable.length ? usable : matches;
+      let best = pool[0];
+      if (preferLine) {
+        let bestDistance = Infinity;
+        for (const match of pool) {
+          const distance = match.line ? Math.abs(match.line - preferLine) : 999;
+          if (distance < bestDistance) {
+            bestDistance = distance;
+            best = match;
+          }
+        }
+      }
+      return best;
+    };
+
+    const findQuoteRange = (host, quote, preferLine, endLine) => {
+      if (!host || !quote || typeof document === 'undefined') return null;
+      const wanted = String(quote)
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean);
+      if (!wanted.length) return null;
+      const { entries } = collectTextNodes(host);
+      if (!entries.length) return null;
+
+      const firstNeedle = wanted[0].slice(0, 120);
+      const first = locateNeedle(entries, firstNeedle, preferLine);
+      if (!first) return null;
+
+      let last = first;
+      let lastNeedle = firstNeedle;
+      if (wanted.length > 1) {
+        const tail = wanted[wanted.length - 1].slice(-120);
+        const tailShort = tail.slice(0, 60);
+        const found = locateNeedle(entries, tail, endLine || preferLine, first.entry.start);
+        if (found) {
+          last = found;
+          lastNeedle = tail;
+        } else {
+          const fallback = locateNeedle(entries, tailShort, endLine || preferLine, first.entry.start);
+          if (fallback) {
+            last = fallback;
+            lastNeedle = tailShort;
+          }
+        }
+      }
+
+      const range = document.createRange();
+      try {
+        range.setStart(first.entry.node, first.offset);
+        range.setEnd(last.entry.node, Math.min(last.entry.length, last.offset + lastNeedle.length));
+      } catch {
+        return null;
+      }
+      return range;
+    };
 
     function TextDoc(props) {
       const { doc, sessionId } = props;
@@ -1261,7 +1365,9 @@ window.__ModuleLoader__.load({
                   (searchIndex >= 0 && deferredHits[searchIndex] === index + 1 ? ' dshcv-linehitcur' : '') +
                   (hoverFrom
                     ? index + 1 >= hoverFrom && index + 1 <= hoverTo
-                      ? ' dshcv-spot'
+                      ? supportsCssHighlights()
+                        ? ''
+                        : ' dshcv-spot'
                       : ' dshcv-dim'
                     : ''),
                 'data-line': index + 1,
@@ -1280,6 +1386,28 @@ window.__ModuleLoader__.load({
         const node = host && host.querySelector('[data-line="' + line + '"]');
         if (node && typeof node.scrollIntoView === 'function') node.scrollIntoView({ block: 'center' });
       }, [searchIndex, searchHits]);
+
+      // Rail hover covers exactly the marked characters (CSS Highlights), so a long
+      // paragraph keeps its context while the quote itself stands out.
+      React.useEffect(() => {
+        if (typeof CSS === 'undefined' || !CSS.highlights || typeof Highlight === 'undefined') return undefined;
+        CSS.highlights.delete('dshcv-hover');
+        const host = scrollRef.current;
+        const mark = hovered;
+        if (!host || !mark || mark.kind !== 'text' || !mark.quote) return undefined;
+        const range = findQuoteRange(host, mark.quote, mark.lines ? mark.lines[0] : 0);
+        if (range) {
+          CSS.highlights.set('dshcv-hover', new Highlight(range));
+        }
+        return () => {
+          try {
+            CSS.highlights.delete('dshcv-hover');
+          } catch {
+            /* ignore */
+          }
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [hovered && hovered.id, rendered]);
 
       // Rail hover scrolls the marked lines into view, unless following is off.
       React.useEffect(() => {
