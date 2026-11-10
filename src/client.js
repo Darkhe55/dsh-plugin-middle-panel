@@ -770,9 +770,14 @@ window.__ModuleLoader__.load({
       '.dshcv-docp.dshcv-spot,.dshcv-slide.dshcv-spot{box-shadow:0 0 0 1px color-mix(in srgb,var(--dsw-alias-brand-primary) 55%,transparent)}',
       '.dshcv-table td.dshcv-spot,.dshcv-table th.dshcv-spot{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 26%,transparent);outline:1px solid color-mix(in srgb,var(--dsw-alias-brand-primary) 60%,transparent)}',
       '.dshcv-markrow-on{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 10%,transparent);border-radius:6px}',
-      '.dshcv-template-menu{position:absolute;z-index:20;top:26px;left:0;min-width:200px;max-width:280px;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:8px;box-shadow:0 10px 28px rgba(0,0,0,.24);padding:4px;display:flex;flex-direction:column;gap:2px}',
-      '.dshcv-template-row{display:flex;align-items:center;gap:2px}',
-      '.dshcv-template-pick{flex:1 1 auto;justify-content:flex-start;text-align:left;height:24px;font-size:12px}',
+      '.dshcv-template-menu{position:absolute;z-index:20;top:26px;left:0;width:260px;max-height:220px;overflow:auto;overscroll-behavior:contain;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:8px;box-shadow:0 10px 28px rgba(0,0,0,.24);padding:4px;display:flex;flex-direction:column;gap:4px}',
+      '.dshcv-template-list{display:flex;flex-direction:column;gap:2px}',
+      '.dshcv-template-save{justify-content:flex-start;text-align:left;border:1px dashed color-mix(in srgb,var(--dsw-alias-brand-primary) 55%,transparent);color:var(--dsw-alias-brand-primary);background:color-mix(in srgb,var(--dsw-alias-brand-primary) 8%,transparent)}',
+      '.dshcv-template-rule{height:1px;background:var(--dsw-alias-border-l1);margin:2px 0}',
+      '.dshcv-template-row{display:flex;align-items:center;gap:4px}',
+      '.dshcv-template-tag{flex:0 0 auto;font-size:9px;line-height:14px;padding:0 3px;border-radius:3px;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l1)}',
+      '.dshcv-template-pick{flex:1 1 auto;justify-content:flex-start;text-align:left;height:26px;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.dshcv-template-remove{flex:0 0 auto;width:20px;padding:0}',
       '.dshcv-stale{flex:0 0 auto;font-size:11px;color:var(--dsw-alias-warning,#c28b00);align-self:flex-start}',
       '.dshcv-railhead{display:flex;gap:6px;align-items:center;padding:4px 0 6px;position:sticky;top:0;background:var(--dsw-alias-bg-layer-1);z-index:1}',
       '.dshcv-railgroup{font-size:10.5px;color:var(--dsw-alias-label-secondary);padding:6px 0 2px;border-bottom:1px solid var(--dsw-alias-border-l1);margin-bottom:2px}',
@@ -2431,42 +2436,14 @@ window.__ModuleLoader__.load({
                 ? h(
                     'div',
                     { className: 'dshcv-template-menu' },
-                    (store.templates || DEFAULT_TEMPLATES).map((template, index) =>
-                      h(
-                        'div',
-                        { key: 'tpl' + index, className: 'dshcv-template-row' },
-                        h(
-                          'button',
-                          {
-                            type: 'button',
-                            className: 'dshcv-btn dshcv-template-pick',
-                            onClick: () => {
-                              const current = (mark.note || '').trim();
-                              setMarkNote(mark.id, current ? current + '；' + template : template);
-                              setMenuFor(null);
-                            },
-                          },
-                          template,
-                        ),
-                        h(
-                          'button',
-                          {
-                            type: 'button',
-                            className: 'dshcv-btn',
-                            'data-quiet': '1',
-                            title: '删除这条模板',
-                            onClick: () => saveTemplates((store.templates || DEFAULT_TEMPLATES).filter((item) => item !== template)),
-                          },
-                          '×',
-                        ),
-                      ),
-                    ),
+                    // The save action is an action, not a template, so it sits above the
+                    // rule and carries its own accent instead of looking like an entry.
                     (mark.note || '').trim()
                       ? h(
                           'button',
                           {
                             type: 'button',
-                            className: 'dshcv-btn',
+                            className: 'dshcv-btn dshcv-template-save',
                             onClick: () => {
                               const current = (mark.note || '').trim();
                               if (!current) return;
@@ -2474,9 +2451,50 @@ window.__ModuleLoader__.load({
                               setMenuFor(null);
                             },
                           },
-                          '把当前意见存为模板',
+                          '＋ 把当前意见存为模板',
                         )
                       : null,
+                    (mark.note || '').trim() ? h('div', { className: 'dshcv-template-rule' }) : null,
+                    h(
+                      'div',
+                      { className: 'dshcv-template-list' },
+                      (store.templates || DEFAULT_TEMPLATES).map((template, index) =>
+                        h(
+                          'div',
+                          { key: 'tpl' + index, className: 'dshcv-template-row' },
+                          h(
+                            'span',
+                            { className: 'dshcv-template-tag' },
+                            '已存',
+                          ),
+                          h(
+                            'button',
+                            {
+                              type: 'button',
+                              className: 'dshcv-btn dshcv-template-pick',
+                              title: template,
+                              onClick: () => {
+                                const current = (mark.note || '').trim();
+                                setMarkNote(mark.id, current ? current + '；' + template : template);
+                                setMenuFor(null);
+                              },
+                            },
+                            template,
+                          ),
+                          h(
+                            'button',
+                            {
+                              type: 'button',
+                              className: 'dshcv-btn dshcv-template-remove',
+                              'data-quiet': '1',
+                              title: '删除这条模板',
+                              onClick: () => saveTemplates((store.templates || DEFAULT_TEMPLATES).filter((item) => item !== template)),
+                            },
+                            '×',
+                          ),
+                        ),
+                      ),
+                    ),
                   )
                 : null,
             ),
