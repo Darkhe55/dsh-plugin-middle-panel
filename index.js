@@ -7,6 +7,23 @@
  */
 export const inject = ['tools', 'systemPrompt', 'webServer', 'fs', 'workingDirectory', 'sessions']
 
+const writeIsStale = (before, expectedMtime, expectedSize, force) => {
+  if (!before) return false
+  // Node-style stats expose isFile() as a method; a plain snapshot may expose a flag.
+  const isFile = typeof before.isFile === 'function' ? before.isFile() : Boolean(before.isFile)
+  if (!isFile) return false
+  if (force) return false
+  const mtime = Number(expectedMtime) || 0
+  const size = Number(expectedSize) || 0
+  if (mtime > 0 && Math.abs(Number(before.mtimeMs) - mtime) > 1) return true
+  // Size is the fallback signal when the caller only knows the file's extent, and a
+  // second opinion when a writer preserves mtime.
+  if (size > 0 && Number(before.size) !== size) return true
+  return false
+}
+
+export { writeIsStale }
+
 const VIEWS = ['auto', 'text', 'markdown', 'html', 'image']
 const MAX_SAVE_BYTES = 4 * 1024 * 1024
 
@@ -235,6 +252,7 @@ export function apply(ctx) {
           // A mismatch means someone else touched the file, so the write is
           // refused instead of silently discarding one of the two versions.
           const expected = Number(body.expectedMtime) || 0
+          const expectedSize = Number(body.expectedSize) || 0
           const force = body.force === true
           let before = null
           try {
@@ -242,7 +260,7 @@ export function apply(ctx) {
           } catch {
             before = null
           }
-          if (before && before.isFile && expected && !force && Math.abs(Number(before.mtimeMs) - expected) > 1) {
+          if (writeIsStale(before, expected, expectedSize, force)) {
             return reply(409, {
               error: 'file changed on disk',
               mtimeMs: Number(before.mtimeMs) || 0,

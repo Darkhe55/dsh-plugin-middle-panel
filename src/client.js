@@ -1623,7 +1623,7 @@ window.__ModuleLoader__.load({
 
     function TextDoc(props) {
       const { doc, sessionId } = props;
-      const [state, setState] = React.useState({ status: 'idle', text: '', absolutePath: '', version: undefined, error: '' });
+      const [state, setState] = React.useState({ status: 'idle', text: '', absolutePath: '', version: undefined, size: 0, error: '' });
       const [picked, setPicked] = React.useState(null);
       const [editing, setEditing] = React.useState(false);
       const [pageBudget, setPageBudget] = React.useState(12);
@@ -1675,6 +1675,7 @@ window.__ModuleLoader__.load({
         setEditing(false);
         const load = async () => {
           try {
+            const info = await readFileInfo(sessionId, doc.path, controller.signal);
             const page = await readTextPages(sessionId, doc.path, controller.signal, pageBudget);
             if (cancelled) return;
             noteFileVersion(doc.path, page.version);
@@ -1683,7 +1684,8 @@ window.__ModuleLoader__.load({
               status: 'ready',
               text: page.text,
               absolutePath: page.absolutePath,
-              version: page.version,
+              version: (info && info.mtimeMs) || page.version,
+              size: info ? Number(info.size) || 0 : 0,
               error: '',
               truncated: page.truncated,
             });
@@ -1949,7 +1951,8 @@ window.__ModuleLoader__.load({
         }
         setSaving(true);
         setConflict(null);
-        setMessage('保存中…');
+        if (!state.version && !state.size) setMessage('缺少版本信息，本次保存无法检测外部改动');
+        else setMessage('保存中…');
         try {
           const response = await fetch(saveUrl(), {
             method: 'POST',
@@ -1961,6 +1964,7 @@ window.__ModuleLoader__.load({
               absolutePath: state.absolutePath,
               content: draft,
               expectedMtime: state.version || 0,
+              expectedSize: state.size || 0,
               force: force === true,
             }),
           });
@@ -1973,7 +1977,13 @@ window.__ModuleLoader__.load({
           if (!response.ok) throw new Error(payload && payload.error ? payload.error : 'HTTP ' + response.status);
           const nextVersion = payload && payload.mtimeMs ? payload.mtimeMs : state.version;
           noteFileVersion(doc.path, nextVersion);
-          setState(Object.assign({}, state, { text: draft, version: nextVersion }));
+          setState(
+            Object.assign({}, state, {
+              text: draft,
+              version: nextVersion,
+              size: payload && payload.size ? payload.size : state.size,
+            }),
+          );
           setEditing(false);
           setMessage('已保存');
         } catch (error) {
@@ -2441,7 +2451,9 @@ window.__ModuleLoader__.load({
         if (page === budget - 1) truncated = true;
         offset += Math.max(1, Number(result.lines) || 1000);
       }
-      return { text, absolutePath, version, truncated };
+      // The remote may not report a version; our own metadata route always does, and
+      // assertFits has just refreshed it.
+      return { text, absolutePath, version: fileVersionOf(path) || version, truncated };
     };
 
     const readBytesFile = async (sessionId, path, signal) => {
