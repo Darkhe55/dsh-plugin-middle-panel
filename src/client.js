@@ -71,6 +71,8 @@ window.__ModuleLoader__.load({
       restored: false,
       reportedBridge: false,
       reportedBlock: false,
+      // Transient UI state: the floating confirmation shown after a copy action.
+      flash: '',
     };
     const notify = () => {
       version += 1;
@@ -774,6 +776,7 @@ window.__ModuleLoader__.load({
       '.dshcv-note:focus{outline:none;border-color:var(--dsw-alias-brand-primary)}',
       '.dshcv-card{display:flex;align-items:center;gap:10px;padding:8px 10px;margin:6px 0;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1)}',
       '.dshcv-pick{position:fixed;z-index:60;transform:translate(-50%,-100%);box-shadow:0 8px 24px rgba(0,0,0,.2)}',
+      '.dshcv-toast-2{bottom:52px}', 
       '.dshcv-toast{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);z-index:50;pointer-events:none;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l1);border-radius:10px;padding:8px 12px;font-size:12px;box-shadow:0 8px 24px rgba(0,0,0,.16);animation:dshcv-toast-in .16s ease-out both}',
       '@keyframes dshcv-toast-in{from{opacity:0;transform:translate(-50%,4px)}to{opacity:1;transform:translate(-50%,0)}}',
       '@media (prefers-reduced-motion: reduce){.dshcv-btn,.dshcv-chip,.dshcv-note{transition:none}}',
@@ -1946,6 +1949,15 @@ window.__ModuleLoader__.load({
         [lineElements, deferredHits, searchIndex, deferredQuery, hoverFrom, hoverTo],
       );
 
+      // One stepper for the keyboard and the two buttons, so both cannot drift.
+      const stepSearch = (delta) => {
+        if (!searchHits.length) return;
+        setSearchIndex((value) => {
+          const size = searchHits.length;
+          return (((Math.max(0, value) + delta) % size) + size) % size;
+        });
+      };
+
       React.useEffect(() => {
         if (searchIndex < 0 || !searchHits.length) return;
         const line = searchHits[Math.min(searchIndex, searchHits.length - 1)];
@@ -2221,11 +2233,40 @@ window.__ModuleLoader__.load({
                 onKeyDown: (event) => {
                   if (event.key !== 'Enter') return;
                   event.preventDefault();
-                  if (!searchHits.length) return;
-                  setSearchIndex((value) => ((Math.max(0, value) + (event.shiftKey ? -1 : 1)) % searchHits.length + searchHits.length) % searchHits.length);
+                  stepSearch(event.shiftKey ? -1 : 1);
                 },
               }),
-              h('span', { className: 'dshcv-msg' }, searchHits.length ? Math.max(0, searchIndex) + 1 + '/' + searchHits.length : '无匹配'),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'dshcv-btn',
+                  'data-kind': 'quiet',
+                  'data-icon': '1',
+                  disabled: !searchHits.length,
+                  title: '上一个匹配（Shift+Enter）',
+                  onClick: () => stepSearch(-1),
+                },
+                '‹',
+              ),
+              h(
+                'span',
+                { className: 'dshcv-msg' },
+                searchHits.length ? Math.max(0, searchIndex) + 1 + '/' + searchHits.length : '无匹配',
+              ),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'dshcv-btn',
+                  'data-kind': 'quiet',
+                  'data-icon': '1',
+                  disabled: !searchHits.length,
+                  title: '下一个匹配（Enter）',
+                  onClick: () => stepSearch(1),
+                },
+                '›',
+              ),
             )
           : null,
         state.truncated
@@ -2389,9 +2430,22 @@ window.__ModuleLoader__.load({
       notify();
     };
 
+    // A transient message that survives the component that triggered it: a copy
+    // action usually happens while the eye is on the picture, not on the toolbar.
+    let flashTimer = 0;
+    const flash = (text) => {
+      store.flash = String(text || '');
+      notify();
+      clearTimeout(flashTimer);
+      flashTimer = setTimeout(() => {
+        store.flash = '';
+        notify();
+      }, 1800);
+    };
+
     // One clipboard path for text: the async API when available, a hidden textarea
     // otherwise. Both the mark copy button and the colour picker use it.
-    const copyText = (text) => {
+    const copyText = (text, label) => {
       const value = String(text == null ? '' : text);
       const fallback = () => {
         const area = document.createElement('textarea');
@@ -2408,13 +2462,20 @@ window.__ModuleLoader__.load({
         document.body.removeChild(area);
       };
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(value).catch(fallback);
+        navigator.clipboard
+          .writeText(value)
+          .then(() => flash(label || '已复制'))
+          .catch(() => {
+            fallback();
+            flash(label || '已复制');
+          });
         return;
       }
       fallback();
+      flash(label || '已复制');
     };
 
-    const copyMark = (mark) => copyText(markToBlock(mark));
+    const copyMark = (mark) => copyText(markToBlock(mark), '已复制第 ' + mark.n + ' 条');
 
     // ---- comment templates ----
     const DEFAULT_TEMPLATES = ['这段太啰嗦，请精简', '改成主动语态', '术语前后不一致，请统一', '补上异常分支'];
@@ -2446,6 +2507,24 @@ window.__ModuleLoader__.load({
       useHoverVersion();
       const [query, setQuery] = React.useState('');
       const [menuFor, setMenuFor] = React.useState(null);
+      // The menu is a popover, so it closes on Escape and on a click anywhere else.
+      React.useEffect(() => {
+        if (!menuFor) return undefined;
+        const onKey = (event) => {
+          if (event.key === 'Escape') setMenuFor(null);
+        };
+        const onDown = (event) => {
+          const target = event.target;
+          if (target && target.closest && target.closest('[data-menu-trigger]')) return;
+          setMenuFor(null);
+        };
+        window.addEventListener('keydown', onKey);
+        window.addEventListener('pointerdown', onDown);
+        return () => {
+          window.removeEventListener('keydown', onKey);
+          window.removeEventListener('pointerdown', onDown);
+        };
+      }, [menuFor]);
       if (!store.marks.length) return null;
 
       const activeDoc = store.docs.find((doc) => doc.id === store.activeId);
@@ -2482,6 +2561,21 @@ window.__ModuleLoader__.load({
             className: 'dshcv-mark' + (store.hoverId === mark.id ? ' dshcv-markrow-on' : ''),
             onMouseEnter: () => setHoverMark(mark.id),
             onMouseLeave: () => setHoverMark(undefined),
+            tabIndex: 0,
+            // Delete removes the row, Enter jumps into its note: the same two actions
+            // the buttons offer, without a mouse.
+            onKeyDown: (event) => {
+              if (event.key === 'Delete' || event.key === 'Backspace') {
+                event.preventDefault();
+                removeMark(mark.id);
+              } else if (event.key === 'Enter') {
+                const note = event.currentTarget.querySelector('.dshcv-note');
+                if (note) {
+                  event.preventDefault();
+                  note.focus();
+                }
+              }
+            },
           },
           h('span', { className: 'dshcv-badge' }, String(mark.n)),
           markStale(mark)
@@ -2514,6 +2608,7 @@ window.__ModuleLoader__.load({
                   className: 'dshcv-btn',
                   'data-kind': 'quiet',
                   title: '插入常用意见',
+                  'data-menu-trigger': mark.id,
                   onClick: () => setMenuFor(menuFor === mark.id ? null : mark.id),
                 },
                 '常用意见',
@@ -6189,7 +6284,7 @@ h(
         try {
           const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
           await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-          setNotice('已复制 ' + width + ' × ' + height + ' 图像');
+          flash('已复制 ' + width + ' × ' + height + ' 的图像');
         } catch {
           setNotice('复制失败：当前环境不允许写剪贴板');
         }
@@ -6284,8 +6379,7 @@ h(
                   'data-kind': 'quiet',
                   title: '复制这个颜色的 HEX',
                   onClick: () => {
-                    copyText(hexOf(sample));
-                    setNotice('已复制 ' + hexOf(sample));
+                    copyText(hexOf(sample), '已复制 ' + hexOf(sample));
                   },
                 },
                 hexOf(sample),
@@ -7106,7 +7200,8 @@ h(
             ),
           ),
         ),
-        toast ? h('div', { className: 'dshcv-toast' }, toast) : null,
+        store.flash ? h('div', { className: 'dshcv-toast' }, store.flash) : null,
+        toast ? h('div', { className: 'dshcv-toast dshcv-toast-2' }, toast) : null,
         helpOpen
           ? h(
               'div',
