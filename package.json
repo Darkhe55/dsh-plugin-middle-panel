@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-middle-panel",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Middle canvas panel for DeepSeek Harness: shows deliverables between the workspace list and the conversation, and sends numbered annotations back to the chat.",
   "keywords": [
     "deepseek-harness",
@@ -57,6 +57,8 @@
     }
   },
   "scripts": {
-    "test": "node test/markdown.test.cjs && node test/smoke.test.cjs && node test/panel-render.test.cjs"
+    "test": "node scripts/build.cjs && node test/markdown.test.cjs && node test/relocate.test.cjs && node test/smoke.test.cjs && node test/panel-render.test.cjs",
+    "build": "node scripts/build.cjs",
+    "prepublishOnly": "node scripts/build.cjs"
   }
 }
