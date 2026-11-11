@@ -104,9 +104,10 @@ const make = (docs, activeId, split, focus) => {
 
 // —— 模板契约 ——
 check(/className: 'dshcv-slots'/.test(src), '渲染层有 slots 容器');
-check(/'data-dir': splitState\(\)\.dir/.test(src), '排列方向来自状态');
+check(/const splitDir = paneBox\.width > 0 && paneBox\.width < 860 \? 'column' : splitState\(\)\.dir/.test(src), '排列方向按宽度自动切上下');
+check(/'data-dir': splitDir/.test(src), '渲染使用计算后的方向');
 check(/className: 'dshcv-slot'/.test(src), '渲染层有两个 slot');
-check(/'data-active': splitState\(\)\.on && secondDoc\(\) && store\.splitFocus === 'b' \? '0' : '1'/.test(src), '激活态跟随焦点');
+check(/'data-active': splitReady && store\.splitFocus === 'b' \? '0' : '1'/.test(src), '激活态跟随焦点');
 check(/function SplitDivider\(props\)/.test(src), '分隔条是独立组件');
 check(/onDoubleClick: \(\) => setSplit\(\{ ratio: 0\.5 \}\)/.test(src), '双击分隔条复位 50/50');
 check(/const snap = \(ratio\) =>/.test(src), '松手吸附到 30/40/50/60/70');
@@ -117,6 +118,35 @@ check(/split: splitState\(\),\n\s+splitFocus: store\.splitFocus,/.test(src), '�
 check(/store\.split = \{\n\s+on: Boolean\(data\.split\.on\)/.test(src), '恢复时校验并排状态');
 check(/\.dshcv-divider\{flex:0 0 9px/.test(src), '分隔条有 9px 命中区');
 check(/cursor:row-resize/.test(src), '上下排列时光标方向正确');
+
+// —— P2 防形变 ——
+check(/function FitStage\(props\)/.test(src), '有等比缩放舞台组件');
+check(/const scale = enabled && box\.width \? Math\.min\(1, box\.width \/ designWidth\) : 0/.test(src), '缩放比例按容器宽度计算');
+check(/transform: 'scale\(' \+ scale \+ '\)'/.test(src), '整体等比缩放而不是拉伸');
+check(/designWidth: 1280/.test(src), 'HTML 按 1280 逻辑宽度缩放');
+check(/designWidth: 900/.test(src), 'PDF 按 900 逻辑宽度缩放');
+check(/fit: splitState\(\)\.on/.test(src), '只在并排时启用缩放');
+check(/perspective\(Math\.PI \/ 4, width \/ height/.test(src), '三维每帧按当前宽高比重算投影');
+
+// —— P4 断点与键盘 ——
+check(/paneBox\.width >= 600/.test(src), '宽度小于 600 时放弃并排');
+check(/paneBox\.height >= 500/.test(src), '高度不足时放弃并排');
+check(/paneBox\.width < 860 \? 'column'/.test(src), '窄于 860 时改为上下排列');
+check(/Unknown size \(first paint, tests\) must not switch the view off/.test(src), '未知尺寸不会误关并排');
+check(/event\.altKey && event\.key === '\\\\'/.test(src), 'Alt+\\ 切换并排');
+check(/event\.altKey && \(event\.key === '1' \|\| event\.key === '2'\)/.test(src), 'Alt+1/2 切窗格');
+check(/event\.key === 'Escape' && splitState\(\)\.on/.test(src), 'Esc 退出并排');
+check(/typeof ResizeObserver === 'undefined'/.test(src), '无 ResizeObserver 时安全降级');
+
+// —— P3 标注语义 ——
+check(/const otherPaneMarks = splitReady/.test(src), '统计另一侧窗格的标注数');
+check(/另有 ' \+ otherPaneMarks \+ ' 条在另一侧/.test(src), '工具栏提示另一侧还有标注');
+check(/把两个窗格的标注一起发送/.test(src), '发送按钮说明聚合范围');
+check(/mark\.done && focusedPath && !sameFile/.test(src), '只统计未处理且属于另一侧文件的标注');
+
+// —— 帮助面板 ——
+check(/'并排对比（再按一次收起）'/.test(src), '帮助里有并排快捷键');
+check(/'在并排的两个窗格里切换焦点'/.test(src), '帮助里有窗格切换');
 
 if (failures) {
   console.log('失败 ' + failures + ' 项');

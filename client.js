@@ -2913,14 +2913,18 @@ onResume: () => post('resume'),
 onSeek: (time) => post('seek', { time }),
 onStep: (dir) => post('step', { dir }),
 }),
+h(
+FitStage,
+{ enabled: props.fit, designWidth: 1280 },
 h('iframe', {
 ref: frameRef,
 src: state.url,
 title: 'canvas html preview',
 sandbox: 'allow-scripts',
 onLoad: () => post('state'),
-style: { flex: '1 1 auto', minHeight: 0, width: '100%', border: '0', background: '#fff' },
+style: { flex: '1 1 auto', width: '100%', height: '100%', border: '0', background: '#fff' },
 }),
+),
 );
 }
 const sanitizeSvg = (text) => {
@@ -3592,11 +3596,15 @@ onClick: () => addMark({ kind: 'spot', path: doc.path, label: '整份 PDF', quot
 '标记整份文档',
 ),
 ),
+h(
+FitStage,
+{ enabled: props.fit, designWidth: 900 },
 h('iframe', {
 title: 'canvas pdf preview',
 src: state.url,
-style: { flex: '1 1 auto', minHeight: 0, width: '100%', border: '0', background: '#fff' },
+style: { flex: '1 1 auto', width: '100%', height: '100%', border: '0', background: '#fff' },
 }),
+),
 );
 }
 const unpackBits = (data, offset, expected) => {
@@ -6187,13 +6195,13 @@ this.setState({ error: null });
 const guardPanel = (Component) => (props) => h(PanelBoundary, null, h(Component, props));
 const viewerFor = (doc) =>
 doc.view === 'html'
-? h(HtmlDoc, { key: doc.id + '-html', doc, sessionId: store.sessionId })
+? h(HtmlDoc, { key: doc.id + '-html', doc, sessionId: store.sessionId, fit: splitState().on })
 : doc.view === 'image'
 ? /\.svg$/i.test(doc.path)
 ? h(SvgDoc, { key: doc.id + '-svg', doc, sessionId: store.sessionId })
 : h(ImageDoc, { key: doc.id + '-image', doc, sessionId: store.sessionId })
 : doc.view === 'pdf'
-? h(PdfDoc, { key: doc.id + '-pdf', doc, sessionId: store.sessionId })
+? h(PdfDoc, { key: doc.id + '-pdf', doc, sessionId: store.sessionId, fit: splitState().on })
 : doc.view === 'model'
 ? h(ModelDoc, { key: doc.id + '-model', doc, sessionId: store.sessionId })
 : doc.view === 'cad'
@@ -6208,6 +6216,57 @@ doc.view === 'html'
 ? h(SheetDoc, { key: doc.id + '-sheet', doc, sessionId: store.sessionId })
 : h(TextDoc, { key: doc.id + '-text', doc, sessionId: store.sessionId })
 ;
+function FitStage(props) {
+const ref = React.useRef(null);
+const [box, setBox] = React.useState({ width: 0, height: 0 });
+const designWidth = Number(props.designWidth) || 1280;
+const enabled = props.enabled !== false;
+React.useEffect(() => {
+const node = ref.current;
+if (!node || typeof ResizeObserver === 'undefined') return undefined;
+const measure = () => {
+const width = node.clientWidth || 0;
+const height = node.clientHeight || 0;
+setBox((current) =>
+Math.abs(current.width - width) < 1 && Math.abs(current.height - height) < 1 ? current : { width, height },
+);
+};
+measure();
+const observer = new ResizeObserver(measure);
+observer.observe(node);
+return () => observer.disconnect();
+}, []);
+const scale = enabled && box.width ? Math.min(1, box.width / designWidth) : 0;
+const scaled = scale > 0 && scale < 0.999;
+return h(
+'div',
+{
+ref,
+className: 'dshcv-fit',
+'data-scaled': scaled ? '1' : '0',
+style: { flex: '1 1 auto', minHeight: 0, position: 'relative', overflow: 'hidden' },
+},
+h(
+'div',
+{
+style: scaled
+? {
+position: 'absolute',
+top: 0,
+left: 0,
+width: designWidth + 'px',
+height: Math.max(1, Math.round(box.height / scale)) + 'px',
+transform: 'scale(' + scale + ')',
+transformOrigin: 'top left',
+display: 'flex',
+flexDirection: 'column',
+}
+: { position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column' },
+},
+props.children,
+),
+);
+}
 function SplitDivider(props) {
 const dragging = React.useRef(false);
 const applyFrom = (clientX, clientY, rect, dir) => {
@@ -6346,6 +6405,37 @@ const bodyRef = React.useRef(null);
 const convRef = React.useRef(null);
 const [convBox, setConvBox] = React.useState(null);
 const active = store.docs.find((doc) => doc.id === store.activeId) || store.docs[0];
+const [paneBox, setPaneBox] = React.useState({ width: 0, height: 0 });
+React.useEffect(() => {
+const node = paneRef.current;
+if (!node || typeof ResizeObserver === 'undefined') return undefined;
+const measure = () => {
+const width = node.clientWidth || 0;
+const height = node.clientHeight || 0;
+setPaneBox((current) =>
+Math.abs(current.width - width) < 2 && Math.abs(current.height - height) < 2
+? current
+: { width, height },
+);
+};
+measure();
+const observer = new ResizeObserver(measure);
+observer.observe(node);
+return () => observer.disconnect();
+}, []);
+const splitWanted = splitState().on && Boolean(secondDoc());
+const splitReady =
+splitWanted &&
+(paneBox.width === 0 || paneBox.width >= 600) &&
+(paneBox.height === 0 || paneBox.height >= 500);
+const splitDir = paneBox.width > 0 && paneBox.width < 860 ? 'column' : splitState().dir;
+const focusedPath =
+store.splitFocus === 'b'
+? (secondDoc() || {}).path || ''
+: (store.docs.find((doc) => doc.id === store.activeId) || {}).path || '';
+const otherPaneMarks = splitReady
+? store.marks.filter((mark) => !mark.done && focusedPath && !sameFile(mark.path, focusedPath)).length
+: 0;
 React.useEffect(() => {
 devlog('panel-mount', ['docs=' + store.docs.length, 'hasFactory=' + (typeof props.renderFactorySlot === 'function')]);
 }, []);
@@ -6488,6 +6578,27 @@ event.preventDefault();
 cycleDoc(event.shiftKey ? -1 : 1);
 return;
 }
+if (event.altKey && event.key === '\\') {
+event.preventDefault();
+toggleSplit();
+return;
+}
+if (event.altKey && (event.key === '1' || event.key === '2')) {
+const state = splitState();
+if (!state.on) return;
+event.preventDefault();
+if (event.key === '2') {
+if (state.secondId) mutate({ splitFocus: 'b' });
+} else {
+mutate({ splitFocus: 'a' });
+}
+return;
+}
+if (event.key === 'Escape' && splitState().on) {
+event.preventDefault();
+mutate({ split: Object.assign({}, splitState(), { on: false, secondId: null }), splitFocus: 'a' });
+return;
+}
 if (event.altKey && (event.key === 'w' || event.key === 'W')) {
 event.preventDefault();
 if (store.activeId) closeDoc(store.activeId);
@@ -6592,9 +6703,25 @@ type: 'button',
 className: 'dshcv-btn',
 'data-kind': 'primary',
 onClick: send,
-title: doneCount ? '已处理 ' + doneCount + ' 条不参与发送' : '把全部标注发送到对话框',
+title:
+doneCount
+? '已处理 ' + doneCount + ' 条不参与发送'
+: otherPaneMarks > 0
+? '把两个窗格的标注一起发送（其中 ' + otherPaneMarks + ' 条来自另一窗格）'
+: '把全部标注发送到对话框',
 },
 '发送标注 (' + pendingMarks().length + ')',
+otherPaneMarks > 0
+? h(
+'span',
+{
+className: 'dshcv-opt',
+style: { color: 'var(--dsw-alias-label-tertiary)', fontSize: '11px' },
+title: '并排时另一个窗格里的标注会一起发送',
+},
+'另有 ' + otherPaneMarks + ' 条在另一侧',
+)
+: null,
 )
 : null,
 store.marks.length
@@ -6729,29 +6856,29 @@ onClose: () => setPickerOpen(false),
 'div',
 {
 className: 'dshcv-slots',
-'data-dir': splitState().dir,
-'data-split': splitState().on && secondDoc() ? '1' : '0',
+'data-dir': splitDir,
+'data-split': splitReady ? '1' : '0',
 },
 h(
 'div',
 {
 key: 'a',
 className: 'dshcv-slot',
-'data-active': splitState().on && secondDoc() && store.splitFocus === 'b' ? '0' : '1',
+'data-active': splitReady && store.splitFocus === 'b' ? '0' : '1',
 onMouseDown: () => {
-if (splitState().on && secondDoc() && store.splitFocus !== 'a') mutate({ splitFocus: 'a' });
+if (splitReady && store.splitFocus !== 'a') mutate({ splitFocus: 'a' });
 },
 style:
-splitState().on && secondDoc()
+splitReady
 ? { flex: '0 0 ' + Math.round(splitState().ratio * 1000) / 10 + '%' }
 : { flex: '1 1 0' },
 },
 viewerFor(active),
 ),
-splitState().on && secondDoc()
+splitReady
 ? h(SplitDivider, { key: 'divider', dir: splitState().dir })
 : null,
-splitState().on && secondDoc()
+splitReady
 ? h(
 'div',
 {
@@ -6889,6 +7016,9 @@ h('div', { style: { fontWeight: 600, marginBottom: 4 } }, '快捷键'),
 ['1-7', '前 / 后 / 右 / 左 / 顶 / 底 / 等轴测'],
 ['Ctrl+Tab', '切换标签（加 Shift 反向）'],
 ['Alt+W', '关闭当前标签'],
+['Alt+\\', '并排对比（再按一次收起）'],
+['Alt+1 / Alt+2', '在并排的两个窗格里切换焦点'],
+['Esc', '并排时先退出并排'],
 ['?', '显示 / 隐藏本帮助'],
 ].map(([key, label]) => h('div', { key }, h('kbd', null, key), label)),
 h(
