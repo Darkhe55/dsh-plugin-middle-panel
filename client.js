@@ -216,6 +216,7 @@ const ext = match ? match[1].toLowerCase() : '';
 if (['html', 'htm', 'xhtml'].includes(ext)) return 'html';
 if (['md', 'markdown'].includes(ext)) return 'markdown';
 if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif'].includes(ext)) return 'image';
+if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg', 'mpeg', '3gp', 'ts', 'mts', 'm2ts'].includes(ext)) return 'video';
 if (ext === 'pdf') return 'pdf';
 if (['stl', 'obj', 'glb', 'gltf', 'ply', 'off', 'noff', 'coff', 'cnoff', '3mf', 'dae'].includes(ext)) return 'model';
 if (ext === 'dxf') return 'cad';
@@ -233,6 +234,9 @@ if (left.kind !== right.kind || !sameFile(left.path, right.path)) return false;
 if (left.kind === 'text') return Boolean(left.lines && right.lines) && left.lines[0] === right.lines[0] && left.lines[1] === right.lines[1];
 if (left.kind === 'element' || left.kind === 'layer') return left.selector === right.selector;
 if (left.kind === 'paragraph') return left.paragraph === right.paragraph;
+if (left.kind === 'video') {
+return Math.abs(Number(left.start) - Number(right.start)) <= 0.2 && Math.abs(Number(left.end) - Number(right.end)) <= 0.2;
+}
 if (left.kind === 'spot') return left.label === right.label;
 if (left.kind === 'region') {
 const a = left.rect || [];
@@ -530,6 +534,30 @@ const index = docs.findIndex((doc) => doc.id === store.activeId);
 const next = ((index < 0 ? 0 : index) + delta + docs.length) % docs.length;
 activateDoc(docs[next].id);
 };
+const formatTime = (value) => {
+const total = Math.max(0, Number(value) || 0);
+const minutes = Math.floor(total / 60);
+const seconds = Math.round((total - minutes * 60) * 10) / 10;
+return String(minutes).padStart(2, '0') + ':' + (seconds < 10 ? '0' : '') + seconds.toFixed(1);
+};
+const timeLabel = (mark) => formatTime(mark && mark.start) + '–' + formatTime(mark && mark.end);
+const seekVideoMark = (mark) => {
+mutate({ seek: { path: mark.path, time: Number(mark.start) || 0, stamp: Date.now() } });
+};
+const markPlace = (mark) =>
+mark.kind === 'video'
+? h(
+'button',
+{
+key: 'where',
+type: 'button',
+className: 'dshcv-timecode',
+title: '跳到这一时刻',
+onClick: () => seekVideoMark(mark),
+},
+timeLabel(mark) + (Array.isArray(mark.rect) ? ' · 画面区域' : ''),
+)
+: markWhere(mark);
 const markWhere = (mark) =>
 mark.kind === 'text'
 ? mark.lines && mark.lines[0] === mark.lines[1]
@@ -543,6 +571,8 @@ mark.kind === 'text'
 ? '元素 `' + mark.selector + '`'
 : mark.kind === 'layer'
 ? '图层 `' + mark.selector + '`'
+: mark.kind === 'video'
+? timeLabel(mark) + (Array.isArray(mark.rect) ? ' · 画面区域' : '')
 : '区域 (' + (mark.rect || []).join(', ') + ')';
 const markToBlock = (mark) => {
 const lines = [mark.n + '. `' + mark.path + '` — ' + markWhere(mark)];
@@ -777,6 +807,20 @@ const CSS_PANEL = [
 '.dshcv-spacer{flex:1 1 auto;min-width:8px}',
 '.dshcv-body{display:flex;flex:1 1 0;min-height:0;overflow:hidden}',
 '.dshcv-slots{display:flex;flex:1 1 0;min-height:0;min-width:0;overflow:hidden}',
+'.dshcv-video{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:8px;padding:10px 12px 12px}',
+'.dshcv-videostage{flex:1 1 auto;min-height:0;position:relative;display:flex;align-items:center;justify-content:center;background:#0b0c0e;border-radius:10px;overflow:hidden;touch-action:none}',
+'.dshcv-videostage video{max-width:100%;max-height:100%;display:block;cursor:pointer}',
+'.dshcv-videostage[data-boxing="1"]{cursor:crosshair}',
+'.dshcv-marquee{position:absolute;border:1px solid rgba(79,140,255,.9);background:rgba(79,140,255,.18);pointer-events:none}',
+'.dshcv-videobar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
+'.dshcv-videotime{font:12px/1 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums}',
+'.dshcv-track{position:relative;height:22px;border-radius:11px;background:color-mix(in srgb,var(--dsw-alias-bg-layer-2) 88%,transparent);cursor:pointer;touch-action:none;overflow:hidden}',
+'.dshcv-trackfill{position:absolute;left:0;top:0;bottom:0;background:color-mix(in srgb,var(--dsw-alias-brand-primary) 18%,transparent)}',
+'.dshcv-trackhead{position:absolute;top:-2px;bottom:-2px;width:2px;margin-left:-1px;background:var(--dsw-alias-brand-primary)}',
+'.dshcv-trackband{position:absolute;top:0;bottom:0;background:rgba(79,140,255,.35);border-left:1px solid rgba(79,140,255,.8);border-right:1px solid rgba(79,140,255,.8)}',
+'.dshcv-videohint{font-size:11px;color:var(--dsw-alias-label-tertiary)}',
+'.dshcv-timecode{font:inherit;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:inherit;background:none;border:0;padding:0;cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px}',
+'.dshcv-timecode:hover{color:var(--dsw-alias-brand-primary)}',
 '.dshcv-slots[data-dir="column"]{flex-direction:column}',
 '.dshcv-slot{display:flex;flex-direction:column;flex:1 1 0;min-width:0;min-height:0;overflow:hidden;position:relative}',
 '.dshcv-slots[data-split="1"] .dshcv-slot{box-shadow:inset 0 0 0 1px transparent;transition:box-shadow .18s ease,opacity .18s ease}',
@@ -2411,11 +2455,11 @@ h(
 'div',
 { className: 'dshcv-meta' },
 showGroupHeaders
-? markWhere(mark)
+? markPlace(mark)
 : [
 h('span', { key: 'path', className: 'dshcv-mpath', title: mark.path }, shortenPath(mark.path)),
 ' · ',
-markWhere(mark),
+markPlace(mark),
 ],
 ),
 mark.quote ? h('div', { className: 'dshcv-quote' }, mark.quote.split('\n').slice(0, 3).join('\n')) : null,
@@ -6200,6 +6244,8 @@ doc.view === 'html'
 ? /\.svg$/i.test(doc.path)
 ? h(SvgDoc, { key: doc.id + '-svg', doc, sessionId: store.sessionId })
 : h(ImageDoc, { key: doc.id + '-image', doc, sessionId: store.sessionId })
+: doc.view === 'video'
+? h(VideoDoc, { key: doc.id + '-video', doc, sessionId: store.sessionId })
 : doc.view === 'pdf'
 ? h(PdfDoc, { key: doc.id + '-pdf', doc, sessionId: store.sessionId, fit: splitState().on })
 : doc.view === 'model'
@@ -6319,6 +6365,284 @@ const step = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 0.04 : -0
 setSplit({ ratio: Math.min(0.8, Math.max(0.2, Math.round((state.ratio + step) * 100) / 100)) });
 },
 });
+}
+const VIDEO_NATIVE = ['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov'];
+const videoExtOf = (path) => (/.([a-z0-9]+)$/i.exec(String(path || '')) || [, ''])[1].toLowerCase();
+const videoMimeOf = (path) => {
+const ext = videoExtOf(path);
+if (ext === 'webm') return 'video/webm';
+if (ext === 'ogv' || ext === 'ogg') return 'video/ogg';
+if (ext === 'mov') return 'video/quicktime';
+return 'video/mp4';
+};
+function VideoDoc(props) {
+const { doc, sessionId } = props;
+const native = VIDEO_NATIVE.includes(videoExtOf(doc.path));
+const [state, setState] = React.useState({ status: native ? 'loading' : 'unsupported', url: '', error: '' });
+const [info, setInfo] = React.useState({ duration: 0, current: 0, playing: false, rate: 1 });
+const [drag, setDrag] = React.useState(null);
+const [boxing, setBoxing] = React.useState(false);
+const [marquee, setMarquee] = React.useState(null);
+const videoRef = React.useRef(null);
+const stageRef = React.useRef(null);
+const rootRef = React.useRef(null);
+const seekRef = React.useRef(0);
+React.useEffect(() => {
+if (!native) return undefined;
+let cancelled = false;
+let objectUrl = '';
+setState({ status: 'loading', url: '', error: '' });
+readBytesFile(sessionId, doc.path, undefined)
+.then((bytes) => {
+if (cancelled || !bytes) return;
+objectUrl = URL.createObjectURL(new Blob([bytes], { type: videoMimeOf(doc.path) }));
+setState({ status: 'ready', url: objectUrl, error: '' });
+})
+.catch((error) => {
+if (cancelled) return;
+setState({ status: 'failed', url: '', error: errText(error) });
+});
+return () => {
+cancelled = true;
+if (objectUrl) URL.revokeObjectURL(objectUrl);
+};
+}, [doc.path, native]);
+const seek = store.seek;
+React.useEffect(() => {
+if (!seek || !sameFile(seek.path, doc.path)) return;
+const node = videoRef.current;
+if (!node) return;
+if (Math.abs(node.currentTime - seek.time) < 0.05) return;
+node.currentTime = Math.max(0, Number(seek.time) || 0);
+setInfo((current) => Object.assign({}, current, { current: node.currentTime }));
+}, [seek && seek.stamp, doc.path]);
+const video = () => videoRef.current;
+const play = () => {
+const node = video();
+if (!node) return;
+if (node.paused) node.play().catch(() => {});
+else node.pause();
+};
+const step = (frames) => {
+const node = video();
+if (!node) return;
+node.pause();
+const delta = (frames * 1) / 30;
+node.currentTime = Math.min(node.duration || 0, Math.max(0, node.currentTime + delta));
+setInfo((current) => Object.assign({}, current, { current: node.currentTime }));
+};
+const seekTo = (time) => {
+const node = video();
+if (!node) return;
+node.currentTime = Math.min(node.duration || 0, Math.max(0, time));
+setInfo((current) => Object.assign({}, current, { current: node.currentTime }));
+};
+const cycleRate = () => {
+const node = video();
+if (!node) return;
+const rates = [1, 1.5, 2, 0.5];
+const next = rates[(rates.indexOf(info.rate) + 1) % rates.length];
+node.playbackRate = next;
+setInfo((current) => Object.assign({}, current, { rate: next }));
+};
+const addClip = (start, end, rect) => {
+const from = Math.round(Math.min(start, end) * 10) / 10;
+const to = Math.round(Math.max(start, end) * 10) / 10;
+const created = { kind: 'video', path: doc.path, start: from, end: to };
+if (Array.isArray(rect)) created.rect = rect;
+addMark(created);
+store.flash = '已标注 ' + formatTime(from) + '–' + formatTime(to);
+notify();
+};
+const timeFromEvent = (event) => {
+const node = video();
+const track = event.currentTarget;
+if (!node || !track) return 0;
+const rect = track.getBoundingClientRect();
+const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / Math.max(1, rect.width)));
+return ratio * (info.duration || 0);
+};
+const onTrackDown = (event) => {
+if (!info.duration) return;
+event.preventDefault();
+const time = timeFromEvent(event);
+seekTo(time);
+setDrag({ from: time, to: time });
+event.currentTarget.setPointerCapture(event.pointerId);
+};
+const onTrackMove = (event) => {
+if (!drag) return;
+setDrag({ from: drag.from, to: timeFromEvent(event) });
+};
+const onTrackUp = (event) => {
+if (!drag) return;
+const time = timeFromEvent(event);
+const start = Math.min(drag.from, time);
+const end = Math.max(drag.from, time);
+setDrag(null);
+if (end - start < 0.2) {
+seekTo(start);
+return;
+}
+addClip(start, end);
+};
+const onStageDown = (event) => {
+if (!boxing) return;
+const node = video();
+if (!node) return;
+node.pause();
+const rect = node.getBoundingClientRect();
+const point = {
+x: (event.clientX - rect.left) / Math.max(1, rect.width),
+y: (event.clientY - rect.top) / Math.max(1, rect.height),
+};
+setMarquee({ x0: point.x, y0: point.y, x1: point.x, y1: point.y });
+event.currentTarget.setPointerCapture(event.pointerId);
+};
+const onStageMove = (event) => {
+if (!marquee) return;
+const node = video();
+if (!node) return;
+const rect = node.getBoundingClientRect();
+const x = Math.min(1, Math.max(0, (event.clientX - rect.left) / Math.max(1, rect.width)));
+const y = Math.min(1, Math.max(0, (event.clientY - rect.top) / Math.max(1, rect.height)));
+setMarquee({ x0: marquee.x0, y0: marquee.y0, x1: x, y1: y });
+};
+const onStageUp = () => {
+if (!marquee) return;
+const x = Math.min(marquee.x0, marquee.x1);
+const y = Math.min(marquee.y0, marquee.y1);
+const w = Math.abs(marquee.x1 - marquee.x0);
+const h = Math.abs(marquee.y1 - marquee.y0);
+setMarquee(null);
+if (w < 0.02 || h < 0.02) return;
+addClip(info.current, info.current, [Math.round(x * 1000) / 1000, Math.round(y * 1000) / 1000, Math.round(w * 1000) / 1000, Math.round(h * 1000) / 1000]);
+setBoxing(false);
+};
+React.useEffect(() => {
+const onKey = (event) => {
+if (!ownsKeyboard(event, rootRef.current)) return;
+if (event.key === ' ') {
+event.preventDefault();
+play();
+return;
+}
+if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+event.preventDefault();
+const direction = event.key === 'ArrowRight' ? 1 : -1;
+if (event.shiftKey) seekTo(info.current + direction);
+else step(direction);
+}
+};
+window.addEventListener('keydown', onKey, true);
+return () => window.removeEventListener('keydown', onKey, true);
+}, [info.current, info.duration]);
+if (state.status === 'unsupported') {
+return h(
+'div',
+{ className: 'dshcv-empty' },
+h('div', null, '浏览器无法直接播放 .' + videoExtOf(doc.path)),
+h('div', null, '可播放 mp4 / webm / mov / m4v / ogv；其他格式请先转码。'),
+);
+}
+if (state.status === 'failed') {
+return h('div', { className: 'dshcv-empty' }, h('div', null, '无法读取该视频'), h('div', null, state.error));
+}
+if (state.status !== 'ready') {
+return h('div', { className: 'dshcv-empty' }, h('div', null, '加载中…'));
+}
+const ratio = info.duration ? Math.min(1, info.current / info.duration) : 0;
+const bandFrom = drag ? Math.min(drag.from, drag.to) / (info.duration || 1) : 0;
+const bandTo = drag ? Math.max(drag.from, drag.to) / (info.duration || 1) : 0;
+return h(
+'div',
+{ ref: rootRef, className: 'dshcv-video' },
+h(
+'div',
+{
+ref: stageRef,
+className: 'dshcv-videostage',
+'data-boxing': boxing ? '1' : '0',
+onPointerDown: onStageDown,
+onPointerMove: onStageMove,
+onPointerUp: onStageUp,
+},
+h('video', {
+ref: videoRef,
+src: state.url,
+playsInline: true,
+onLoadedMetadata: (event) => {
+const node = event.currentTarget;
+setInfo((current) => Object.assign({}, current, { duration: Number(node.duration) || 0 }));
+},
+onTimeUpdate: (event) => {
+const node = event.currentTarget;
+setInfo((current) => Object.assign({}, current, { current: node.currentTime }));
+},
+onPlay: () => setInfo((current) => Object.assign({}, current, { playing: true })),
+onPause: () => setInfo((current) => Object.assign({}, current, { playing: false })),
+onClick: play,
+}),
+marquee
+? h('div', {
+className: 'dshcv-marquee',
+style: {
+left: Math.min(marquee.x0, marquee.x1) * 100 + '%',
+top: Math.min(marquee.y0, marquee.y1) * 100 + '%',
+width: Math.abs(marquee.x1 - marquee.x0) * 100 + '%',
+height: Math.abs(marquee.y1 - marquee.y0) * 100 + '%',
+},
+})
+: null,
+),
+h(
+'div',
+{ className: 'dshcv-videobar' },
+h('button', { type: 'button', className: 'dshcv-btn', 'data-kind': 'primary', onClick: play }, info.playing ? '暂停' : '播放'),
+h('button', { type: 'button', className: 'dshcv-btn', 'data-kind': 'quiet', title: '后退一帧（←）', onClick: () => step(-1) }, '−1f'),
+h('button', { type: 'button', className: 'dshcv-btn', 'data-kind': 'quiet', title: '前进一帧（→）', onClick: () => step(1) }, '+1f'),
+h('button', { type: 'button', className: 'dshcv-btn', 'data-kind': 'quiet', title: '播放速度', onClick: cycleRate }, info.rate + '×'),
+h('span', { className: 'dshcv-videotime' }, formatTime(info.current) + ' / ' + formatTime(info.duration)),
+h('span', { style: { flex: '1 1 auto' } }),
+h(
+'button',
+{
+type: 'button',
+className: 'dshcv-toggle dshcv-opt',
+'aria-pressed': boxing ? 'true' : 'false',
+title: '在暂停画面上框选一块区域',
+onClick: () => {
+const node = video();
+if (node) node.pause();
+setBoxing((value) => !value);
+},
+},
+'框选画面',
+),
+h('button', { type: 'button', className: 'dshcv-btn', 'data-kind': 'default', title: '给当前时刻打点', onClick: () => addClip(info.current, info.current) }, '标记此刻'),
+),
+h(
+'div',
+{
+className: 'dshcv-track',
+onPointerDown: onTrackDown,
+onPointerMove: onTrackMove,
+onPointerUp: onTrackUp,
+},
+h('div', { className: 'dshcv-trackfill', style: { width: ratio * 100 + '%' } }),
+h('div', {
+className: 'dshcv-trackhead',
+style: { left: ratio * 100 + '%' },
+}),
+drag && bandTo > bandFrom
+? h('div', {
+className: 'dshcv-trackband',
+style: { left: bandFrom * 100 + '%', width: (bandTo - bandFrom) * 100 + '%' },
+})
+: null,
+),
+h('div', { className: 'dshcv-videohint' }, '拖动进度条选择时间段 → 生成一条标注；点进度条可跳转，单击不拖则只打点。'),
+);
 }
 function CanvasPanel(props) {      useVersion();
 const ratioKey = 'dsh.canvas.ratio.' + (store.sessionId || 'none');
