@@ -89,11 +89,11 @@ check(/\.dshcv-toggle\[aria-pressed="true"\]\{[^}]*border-radius:14px/.test(src)
 const primaryRule = src.split('\n').find((line) => line.includes('data-kind="primary"]{'));
 check(Boolean(primaryRule), '存在主按钮规则');
 check(primaryRule.includes('background-color:rgba('), '主按钮底色是字面量 rgba');
-check(primaryRule.includes('background-image:radial-gradient('), '波纹是按钮自身的 background-image');
-check(primaryRule.includes('animation:dshcv-ripple'), '波纹动画挂在按钮上');
+check(!primaryRule.includes('background-image:'), '圆环不在按钮本体的背景里');
+check(!primaryRule.includes('animation:'), '按钮本体不做动画（动画在圆环层）');
 check(!/var\(--dshcv-primary/.test(primaryRule), '主按钮不依赖自定义属性');
-check(src.includes('@keyframes dshcv-ripple'), '定义了波纹动画');
-check(src.includes('prefers-reduced-motion: reduce){.dshcv-btn[data-kind="primary"]'), '减少动态效果时关闭动画');
+check(src.includes('@keyframes dshcv-drift-a') && src.includes('@keyframes dshcv-drift-b'), '定义了两层圆环动画');
+check(src.includes('prefers-reduced-motion: reduce){.dshcv-btn[data-kind="primary"]::before'), '减少动态效果时关闭圆环动画');
 
 // 每个分段控件里的按钮都应有 aria-pressed
 const segCount = (src.match(/className: 'dshcv-seg'/g) || []).length;
