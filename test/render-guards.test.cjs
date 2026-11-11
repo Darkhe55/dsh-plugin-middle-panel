@@ -44,13 +44,26 @@ check(/shortenPath\(mark\.path\)/.test(src), '标注行使用路径而不是文�
 
 // 3) 主按钮必须自包含：字面量颜色，波纹在按钮自身，不用伪元素与自定义属性
 const lines = src.split('\n');
-const primaryRule = lines.find((line) => line.includes('data-kind="primary"]{'));
+const primaryRule = (src.match(/\.dshcv-btn\[data-kind="primary"\]\{[^}]*\}/) || [''])[0];
 check(Boolean(primaryRule), '存在主按钮规则');
-check(primaryRule && primaryRule.includes('background-color:rgba('), '底色是字面量 rgba');
-check(primaryRule && primaryRule.includes('background-image:radial-gradient('), '波纹是按钮自身的 background-image');
-check(primaryRule && primaryRule.includes('animation:dshcv-ripple'), '波纹动画挂在按钮上');
+check(primaryRule.includes('background-color:rgba('), '底色是字面量 rgba');
+check(!primaryRule.includes('background-image:radial-gradient('), '波纹已移出按钮本体（由模糊层绘制）');
+check(!primaryRule.includes('animation:dshcv-ripple'), '动画在模糊层而不是按钮本体');
 check(!/var\(--dshcv-primary/.test(primaryRule || ''), '主按钮不依赖自定义属性');
-check(!/::before|::after/.test(primaryRule || ''), '主按钮不依赖伪元素');
+check(!/::before|::after/.test(primaryRule || ''), '主按钮本体不含伪元素');
+
+// 柔光层可以放在伪元素里，但按钮本体的底色/描边必须自足：
+// 伪元素失效时按钮仍然可见。
+const glowRule = lines.find((line) => line.includes('data-kind="primary"]::before{'));
+check(Boolean(glowRule), '存在模糊波纹层');
+check(glowRule.includes('filter:blur('), '波纹层带高斯模糊');
+check(/blur\(\s*[1-9]/.test(glowRule), '模糊半径大于 0', (glowRule.match(/blur\(([^)]+)\)/) || [])[1]);
+check(glowRule.includes('animation:dshcv-ripple'), '波纹层带动画');
+check(src.includes('backdrop-filter:blur('), '按钮使用背景模糊');
+check(
+  src.includes('prefers-reduced-motion: reduce){.dshcv-btn[data-kind="primary"]::before{animation:none}}'),
+  '减少动态效果时关闭波纹动画',
+);
 check(src.includes('@keyframes dshcv-ripple'), '定义了波纹动画');
 check(
   src.includes('prefers-reduced-motion: reduce){.dshcv-btn[data-kind="primary"]'),
@@ -67,3 +80,4 @@ if (failures) {
   console.log('失败 ' + failures + ' 项');
   process.exit(1);
 }
+
