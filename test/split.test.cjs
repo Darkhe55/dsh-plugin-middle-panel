@@ -19,6 +19,7 @@ const factory = new Function(
   'store',
   'mutate',
   'notify',
+  'flash',
   src.slice(start, end) + '\nreturn { splitState, secondDoc, setSplit, focusDoc, toggleSplit };',
 );
 
@@ -33,7 +34,14 @@ const make = (docs, activeId, split, focus) => {
       flash: '',
     },
   };
-  const api = factory(state.store, (patch) => Object.assign(state.store, patch), () => {});
+  const api = factory(
+    state.store,
+    (patch) => Object.assign(state.store, patch),
+    () => {},
+    (text) => {
+      state.store.flash = String(text || '');
+    },
+  );
   return { state, api };
 };
 

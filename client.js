@@ -501,8 +501,7 @@ return;
 }
 const other = store.docs.find((doc) => doc.id !== store.activeId);
 if (!other) {
-store.flash = '再打开一个交付物，就能并排对比';
-notify();
+flash('再打开一个交付物，就能并排对比');
 return;
 }
 mutate({ split: Object.assign({}, state, { on: true, secondId: other.id }), splitFocus: 'a' });
@@ -6468,8 +6467,7 @@ const to = Math.round(Math.max(start, end) * 10) / 10;
 const created = { kind: 'video', path: doc.path, start: from, end: to };
 if (Array.isArray(rect)) created.rect = rect;
 addMark(created);
-store.flash = '已标注 ' + formatTime(from) + '–' + formatTime(to);
-notify();
+flash('已标注 ' + formatTime(from) + '–' + formatTime(to));
 };
 const timeFromEvent = (event) => {
 const node = video();
