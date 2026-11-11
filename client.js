@@ -2389,7 +2389,9 @@ window.removeEventListener('pointerdown', onDown);
 };
 }, [menuFor]);
 if (!store.marks.length) return null;
-const activeDoc = store.docs.find((doc) => doc.id === store.activeId);
+const splitNow = splitState();
+const focusedDoc = splitNow.on && store.splitFocus === 'b' ? secondDoc() : store.docs.find((doc) => doc.id === store.activeId);
+const activeDoc = focusedDoc || store.docs.find((doc) => doc.id === store.activeId);
 const activePath = activeDoc ? activeDoc.path : '';
 const activeCount = activePath ? store.marks.filter((mark) => sameFile(mark.path, activePath)).length : 0;
 const needle = query.trim().toLowerCase();
@@ -7182,6 +7184,19 @@ onClick: toggleSplit,
 },
 '⧉',
 ),
+splitReady
+? h(
+'button',
+{
+type: 'button',
+className: 'dshcv-btn',
+'data-kind': 'quiet',
+title: splitDir === 'column' ? '改为左右并排' : '改为上下并排',
+onClick: () => setSplit({ dir: splitDir === 'column' ? 'row' : 'column' }),
+},
+splitDir === 'column' ? '↕' : '↔',
+)
+: null,
 )
 : null,
 pickerOpen

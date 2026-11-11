@@ -156,6 +156,15 @@ check(/mark\.done && focusedPath && !sameFile/.test(src), '只统计未处理且
 check(/'并排对比（再按一次收起）'/.test(src), '帮助里有并排快捷键');
 check(/'在并排的两个窗格里切换焦点'/.test(src), '帮助里有窗格切换');
 
+// —— 标注栏跟随聚焦窗格 ——
+check(/const focusedDoc = splitNow\.on && store\.splitFocus === 'b' \? secondDoc\(\)/.test(src), 'rail 取聚焦窗格的文档');
+check(/const activeDoc = focusedDoc \|\| store\.docs\.find/.test(src), '聚焦窗格为空时回退到第一个文档');
+
+// —— 排列方向手动覆盖 ——
+check(/title: splitDir === 'column' \? '改为左右并排' : '改为上下并排'/.test(src), '有排列方向开关');
+check(/onClick: \(\) => setSplit\(\{ dir: splitDir === 'column' \? 'row' : 'column' \}\)/.test(src), '点击在左右/上下之间切换');
+check(/splitDir === 'column' \? '↕' : '↔'/.test(src), '按钮显示当前方向');
+
 if (failures) {
   console.log('失败 ' + failures + ' 项');
   process.exit(1);
