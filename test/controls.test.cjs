@@ -84,11 +84,16 @@ check(/\.dshcv-toggle\{[^}]*radial-gradient/.test(src), '关闭态使用径向�
 check(/\.dshcv-toggle\[aria-pressed="true"\]\{[^}]*radial-gradient/.test(src), '打开态使用径向渐变');
 check(/\.dshcv-toggle\[aria-pressed="true"\]\{[^}]*border-radius:14px/.test(src), '打开态圆角更大');
 
-// A2：强调色必须走令牌，不能散落硬编码
-const hardcoded = (src.match(/#4f8cff/g) || []).length;
-check(hardcoded <= 1, '强调色只在令牌里出现一次', 'found ' + hardcoded);
-check(src.includes('--dshcv-accent:'), '定义了 --dshcv-accent');
-check(src.includes('var(--dshcv-accent)'), '主按钮使用 --dshcv-accent');
+// 主按钮必须自包含：颜色写成字面量，因为令牌或 color-mix 一旦解析失败，
+// 整条声明会被丢弃，按钮就变成"没有样式"的样子。
+const primaryRule = src.split('\n').find((line) => line.includes('data-kind="primary"]{'));
+check(Boolean(primaryRule), '存在主按钮规则');
+check(primaryRule.includes('background-color:rgba('), '主按钮底色是字面量 rgba');
+check(primaryRule.includes('background-image:radial-gradient('), '波纹是按钮自身的 background-image');
+check(primaryRule.includes('animation:dshcv-ripple'), '波纹动画挂在按钮上');
+check(!/var\(--dshcv-primary/.test(primaryRule), '主按钮不依赖自定义属性');
+check(src.includes('@keyframes dshcv-ripple'), '定义了波纹动画');
+check(src.includes('prefers-reduced-motion: reduce){.dshcv-btn[data-kind="primary"]'), '减少动态效果时关闭动画');
 
 // 每个分段控件里的按钮都应有 aria-pressed
 const segCount = (src.match(/className: 'dshcv-seg'/g) || []).length;

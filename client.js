@@ -613,7 +613,7 @@ return 'failed';
 }
 };
 const CSS_BASE = [
-':root{--dshcv-ink:var(--dsw-alias-label-primary);--dshcv-ink-2:var(--dsw-alias-label-secondary);--dshcv-line:color-mix(in srgb,var(--dsw-alias-label-primary) 12%,transparent);--dshcv-line-strong:color-mix(in srgb,var(--dsw-alias-label-primary) 24%,transparent);--dshcv-tint:color-mix(in srgb,var(--dsw-alias-label-primary) 8%,transparent);--dshcv-wash:color-mix(in srgb,var(--dsw-alias-label-primary) 6%,transparent);--dshcv-accent:color-mix(in srgb,#4f8cff 78%,var(--dsw-alias-label-primary));--dshcv-primary-bg:color-mix(in srgb,var(--dshcv-accent) 16%,var(--dsw-alias-bg-layer-1));--dshcv-primary-wave:color-mix(in srgb,var(--dshcv-accent) 46%,transparent);--dshcv-off-mid:#e9a6ab;--dshcv-off-edge:#d88b92;--dshcv-on-mid:#8ec9a3;--dshcv-on-edge:#cdead8}',
+':root{--dshcv-ink:var(--dsw-alias-label-primary);--dshcv-ink-2:var(--dsw-alias-label-secondary);--dshcv-line:color-mix(in srgb,var(--dsw-alias-label-primary) 12%,transparent);--dshcv-line-strong:color-mix(in srgb,var(--dsw-alias-label-primary) 24%,transparent);--dshcv-tint:color-mix(in srgb,var(--dsw-alias-label-primary) 8%,transparent);--dshcv-wash:color-mix(in srgb,var(--dsw-alias-label-primary) 6%,transparent);--dshcv-off-mid:#e9a6ab;--dshcv-off-edge:#d88b92;--dshcv-on-mid:#8ec9a3;--dshcv-on-edge:#cdead8}',
 '.dshcv-btn{position:relative;display:inline-flex;align-items:center;justify-content:center;gap:4px;height:28px;padding:0 10px;border:1px solid var(--dshcv-line);border-radius:8px;background:transparent;color:var(--dshcv-ink);font:inherit;font-size:12px;line-height:1;cursor:pointer;white-space:nowrap;overflow:hidden;transition:background-color .12s ease,color .12s ease,border-color .12s ease,box-shadow .16s ease}',
 '.dshcv-btn:hover{background:var(--dshcv-wash);border-color:var(--dshcv-line-strong)}',
 '.dshcv-btn:active{background:var(--dshcv-tint)}',
@@ -621,17 +621,8 @@ const CSS_BASE = [
 '.dshcv-btn[data-kind="quiet"]{border-color:transparent;color:var(--dshcv-ink-2);height:26px;padding:0 7px}',
 '.dshcv-btn[data-kind="quiet"]:hover{background:var(--dshcv-wash);color:var(--dshcv-ink)}',
 '.dshcv-btn[data-kind="quiet"][data-danger="1"]:hover{color:var(--dshcv-off-edge);background:color-mix(in srgb,var(--dshcv-off-edge) 12%,transparent)}',
-'.dshcv-btn[data-kind="primary"]{height:30px;padding:0 14px;border-color:color-mix(in srgb,var(--dshcv-accent) 45%,transparent);background:color-mix(in srgb,var(--dshcv-accent) 13%,var(--dsw-alias-bg-layer-1));color:var(--dsw-alias-label-primary);font-weight:600;box-shadow:0 1px 0 color-mix(in srgb,var(--dshcv-accent) 20%,transparent)}',
-'.dshcv-btn[data-kind="primary"]::before,.dshcv-btn[data-kind="primary"]::after{content:"";position:absolute;inset:-40%;pointer-events:none;background-repeat:repeat;background-position:center;opacity:.6}',
-'.dshcv-btn[data-kind="primary"]::before{background-image:repeating-radial-gradient(circle at 50% 50%,transparent 0 9px,var(--dshcv-primary-wave) 9px 13px)}',
-'.dshcv-btn[data-kind="primary"]::after{background-image:repeating-radial-gradient(circle at 50% 50%,transparent 0 15px,var(--dshcv-primary-wave) 15px 18px);opacity:.34}',
-'.dshcv-btn[data-kind="primary"]::before{animation:dshcv-ripple-out 9s linear infinite}',
-'.dshcv-btn[data-kind="primary"]::after{animation:dshcv-ripple-in 13s linear infinite}',
-'.dshcv-btn[data-kind="primary"]>span,.dshcv-btn[data-kind="primary"]{isolation:isolate}',
+'.dshcv-btn[data-kind="primary"]{background-color:rgba(79,140,255,.18)!important;border:1px solid rgba(79,140,255,.55)!important;background-image:radial-gradient(circle at 50% 50%,transparent 0 9px,rgba(79,140,255,.30) 9px 13px),radial-gradient(circle at 50% 50%,transparent 0 15px,rgba(79,140,255,.22) 15px 18px)!important;background-repeat:repeat!important;background-position:0 0;color:var(--dsw-alias-label-primary);font-weight:600!important;height:30px!important;padding:0 14px!important;animation:dshcv-ripple 9s linear infinite;box-shadow:inset 0 1px 0 rgba(255,255,255,.30)}',      '@keyframes dshcv-ripple{from{background-position:0 0,0 0}to{background-position:-121px -121px,121px 121px}}',      '@media (prefers-reduced-motion: reduce){.dshcv-btn[data-kind="primary"]{animation:none}}',
 '.dshcv-btn[data-kind="primary"]:hover{filter:saturate(1.15) brightness(1.02)}',
-'@keyframes dshcv-ripple-out{from{background-position:0 0}to{background-position:-121px -121px}}',
-'@keyframes dshcv-ripple-in{from{background-position:0 0}to{background-position:121px 121px}}',
-'@media (prefers-reduced-motion: reduce){.dshcv-btn[data-kind="primary"]::before,.dshcv-btn[data-kind="primary"]::after{animation:none}}',
 '.dshcv-toggle{display:inline-flex;align-items:center;gap:0;height:26px;padding:0 11px;border:0;border-radius:8px;background:radial-gradient(68% 96% at 50% 42%,color-mix(in srgb,var(--dshcv-off-mid) 50%,transparent) 0%,color-mix(in srgb,var(--dshcv-off-mid) 50%,transparent) 16%,color-mix(in srgb,var(--dshcv-off-edge) 50%,transparent) 94%);color:color-mix(in srgb,var(--dshcv-ink) 88%,transparent);font:inherit;font-size:12px;font-weight:500;line-height:1;cursor:pointer;white-space:nowrap;box-shadow:0 1px 2px color-mix(in srgb,var(--dshcv-off-edge) 38%,transparent);transition:all .16s ease}',
 '.dshcv-toggle:hover{filter:brightness(1.04) saturate(1.08)}',
 '.dshcv-toggle[aria-pressed="true"]{border:0;border-radius:14px;background:radial-gradient(68% 96% at 50% 42%,color-mix(in srgb,var(--dshcv-on-mid) 50%,transparent) 0%,color-mix(in srgb,var(--dshcv-on-mid) 50%,transparent) 16%,color-mix(in srgb,var(--dshcv-on-edge) 50%,transparent) 94%);color:color-mix(in srgb,var(--dshcv-ink) 88%,transparent);box-shadow:0 1px 2px color-mix(in srgb,var(--dshcv-on-edge) 35%,transparent),0 0 9px color-mix(in srgb,var(--dshcv-on-edge) 30%,transparent)}',
@@ -2039,7 +2030,7 @@ editing
 editing
 ? h(
 'button',
-{ type: 'button', className: 'dshcv-btn', 'data-kind': 'primary', disabled: saving, onClick: () => save(false) },
+{ type: 'button', className: 'dshcv-btn', 'data-kind': 'primary', disabled: saving, onClick: () => save(false)  },
 saving ? '保存中…' : '保存',
 )
 : null,
@@ -6567,7 +6558,7 @@ h(
 { className: 'dshcv-guideactions' },
 h(
 'button',
-{ type: 'button', className: 'dshcv-btn', 'data-kind': 'primary', onClick: () => setPickerOpen(true) },
+{ type: 'button', className: 'dshcv-btn', 'data-kind': 'primary', onClick: () => setPickerOpen(true)  },
 '打开工作区文件',
 ),
 h(

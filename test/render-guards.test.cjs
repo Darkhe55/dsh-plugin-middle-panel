@@ -1,5 +1,6 @@
-// Guard against the two regressions this round: a React element concatenated with `+`
-// (renders "[object Object]") and a primary button that loses its fill.
+// Guard against the regressions seen this round: a React element concatenated with
+// `+` (renders "[object Object]"), and a primary button whose styling depends on
+// anything that can fail to resolve.
 const fs = require('fs');
 const src = fs.readFileSync('src/client.js', 'utf8');
 
@@ -16,7 +17,6 @@ for (;;) {
   const at = src.indexOf('h(', cursor);
   if (at < 0) break;
   cursor = at + 2;
-  // 只认 `h(` 前面不是标识符字符的调用
   const before = at > 0 ? src[at - 1] : '';
   if (before && /[A-Za-z0-9_$.]/.test(before)) continue;
   let depth = 0;
@@ -30,8 +30,7 @@ for (;;) {
     }
   }
   if (index >= src.length) break;
-  const rest = src.slice(index + 1, index + 8);
-  if (/^\s*\+/.test(rest)) {
+  if (/^\s*\+/.test(src.slice(index + 1, index + 8))) {
     const line = src.slice(0, at).split('\n').length;
     concatenated.push(line + ': ' + src.slice(at, at + 60).replace(/\s+/g, ' '));
   }
@@ -43,18 +42,19 @@ check(concatenated.length === 0, '没有用 + 拼接 React 元素', concatenated
 check(/key: 'path', className: 'dshcv-mpath'/.test(src), '标注行路径是独立子节点');
 check(/shortenPath\(mark\.path\)/.test(src), '标注行使用路径而不是文件名');
 
-// 3) 主按钮必须有可见底色与可见波纹
+// 3) 主按钮必须自包含：字面量颜色，波纹在按钮自身，不用伪元素与自定义属性
 const lines = src.split('\n');
-const primaryRule = lines.find((line) => line.includes('data-kind="primary"]{height:30px'));
+const primaryRule = lines.find((line) => line.includes('data-kind="primary"]{'));
 check(Boolean(primaryRule), '存在主按钮规则');
-check(primaryRule && /background:color-mix\(/.test(primaryRule), '主按钮底色是混合色（不是裸的层色，避免透明）');
-check(!/background:var\(--dsw-alias-bg-layer-1\)/.test(primaryRule || ''), '主按钮不再直接用层色作底');
-
-const wave = (src.match(/--dshcv-primary-wave:color-mix\(in srgb,var\(--dshcv-accent\) (\d+)%/) || [])[1];
-check(Number(wave) >= 40, '波纹颜色足够显眼', wave + '%');
+check(primaryRule && primaryRule.includes('background-color:rgba('), '底色是字面量 rgba');
+check(primaryRule && primaryRule.includes('background-image:radial-gradient('), '波纹是按钮自身的 background-image');
+check(primaryRule && primaryRule.includes('animation:dshcv-ripple'), '波纹动画挂在按钮上');
+check(!/var\(--dshcv-primary/.test(primaryRule || ''), '主按钮不依赖自定义属性');
+check(!/::before|::after/.test(primaryRule || ''), '主按钮不依赖伪元素');
+check(src.includes('@keyframes dshcv-ripple'), '定义了波纹动画');
 check(
-  lines.some((line) => line.includes('data-kind="primary"]::before{background-image:repeating-radial-gradient')),
-  '波纹层仍然存在',
+  src.includes('prefers-reduced-motion: reduce){.dshcv-btn[data-kind="primary"]'),
+  '减少动态效果时关闭动画',
 );
 
 // 4) 分组标题用子节点而不是拼接
