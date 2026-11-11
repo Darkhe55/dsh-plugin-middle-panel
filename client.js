@@ -54,6 +54,8 @@ actions: undefined,
 docs: [],
 activeId: undefined,
 pendingList: undefined,
+split: { on: false, secondId: null, ratio: 0.5, dir: 'row' },
+splitFocus: 'a',
 marks: [],
 seq: 0,
 restored: false,
@@ -152,6 +154,8 @@ docs: store.docs,
 activeId: store.activeId,
 marks: store.marks,
 seq: store.seq,
+split: splitState(),
+splitFocus: store.splitFocus,
 }),
 );
 } catch (error) {
@@ -186,6 +190,18 @@ const data = JSON.parse(raw);
 if (Array.isArray(data.docs)) store.docs = dedupeDocs(data.docs);
 if (Array.isArray(data.marks)) store.marks = dedupeMarks(data.marks);
 if (typeof data.activeId === 'string') store.activeId = data.activeId;
+if (data.split && typeof data.split === 'object') {
+store.split = {
+on: Boolean(data.split.on),
+secondId: typeof data.split.secondId === 'string' ? data.split.secondId : null,
+ratio: Math.min(0.8, Math.max(0.2, Number(data.split.ratio) || 0.5)),
+dir: data.split.dir === 'column' ? 'column' : 'row',
+};
+if (store.split.on && !store.docs.some((doc) => doc.id === store.split.secondId)) {
+store.split = { on: false, secondId: null, ratio: store.split.ratio, dir: store.split.dir };
+}
+}
+if (data.splitFocus === 'b') store.splitFocus = 'b';
 const highest = store.marks.reduce((max, mark) => Math.max(max, Number(mark.n) || 0), 0);
 store.seq = Math.max(Number(data.seq) || 0, highest);
 if (!store.docs.some((doc) => doc.id === store.activeId)) store.activeId = store.docs.length ? store.docs[0].id : undefined;
@@ -444,7 +460,59 @@ activeId = id;
 mutate({ docs, activeId });
 persist();
 };
+const atLeastTwoDocs = () => store.docs.length > 1;
+const splitState = () => store.split || { on: false, secondId: null, ratio: 0.5, dir: 'row' };
+const secondDoc = () => {
+const state = splitState();
+if (!state.secondId) return null;
+return store.docs.find((doc) => doc.id === state.secondId) || null;
+};
+const setSplit = (patch) => mutate({ split: Object.assign({}, splitState(), patch) });
+const focusDoc = (doc) => {
+if (!doc) return;
+const state = splitState();
+if (!state.on) {
+mutate({ activeId: doc.id });
+return;
+}
+if (doc.id === store.activeId) {
+mutate({ splitFocus: 'a' });
+return;
+}
+if (doc.id === state.secondId) {
+mutate({ splitFocus: 'b' });
+return;
+}
+if ((store.splitFocus || 'a') === 'b') {
+mutate({ activeId: doc.id, splitFocus: 'a' });
+} else {
+mutate({ split: Object.assign({}, state, { secondId: doc.id }), splitFocus: 'b' });
+}
+};
+const toggleSplit = () => {
+const state = splitState();
+if (state.on) {
+mutate({ split: Object.assign({}, state, { on: false, secondId: null }), splitFocus: 'a' });
+return;
+}
+const other = store.docs.find((doc) => doc.id !== store.activeId);
+if (!other) {
+store.flash = '再打开一个交付物，就能并排对比';
+notify();
+return;
+}
+mutate({ split: Object.assign({}, state, { on: true, secondId: other.id }), splitFocus: 'a' });
+};
 const closeDoc = (id) => {
+const state = splitState();
+if (state.on && state.secondId === id) {
+const fallback = store.docs.find((doc) => doc.id !== id && doc.id !== store.activeId);
+mutate({
+split: Object.assign({}, state, { on: Boolean(fallback), secondId: fallback ? fallback.id : null }),
+splitFocus: 'a',
+});
+if (fallback) return;
+}
 const docs = store.docs.filter((doc) => doc.id !== id);
 const activeId = store.activeId === id ? (docs.length ? docs[docs.length - 1].id : undefined) : store.activeId;
 mutate({ docs, activeId });
@@ -708,6 +776,19 @@ const CSS_PANEL = [
 '.dshcv-path{font-size:12px;color:var(--dsw-alias-label-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}',
 '.dshcv-spacer{flex:1 1 auto;min-width:8px}',
 '.dshcv-body{display:flex;flex:1 1 0;min-height:0;overflow:hidden}',
+'.dshcv-slots{display:flex;flex:1 1 0;min-height:0;min-width:0;overflow:hidden}',
+'.dshcv-slots[data-dir="column"]{flex-direction:column}',
+'.dshcv-slot{display:flex;flex-direction:column;flex:1 1 0;min-width:0;min-height:0;overflow:hidden;position:relative}',
+'.dshcv-slots[data-split="1"] .dshcv-slot{box-shadow:inset 0 0 0 1px transparent;transition:box-shadow .18s ease,opacity .18s ease}',
+'.dshcv-slots[data-split="1"] .dshcv-slot[data-active="1"]{box-shadow:inset 0 0 0 1px rgba(79,140,255,.42)}',
+'.dshcv-slots[data-split="1"] .dshcv-slot[data-active="0"]{opacity:.9}',
+'.dshcv-divider{flex:0 0 9px;position:relative;cursor:col-resize;touch-action:none;background:transparent}',
+'.dshcv-slots[data-dir="column"] .dshcv-divider{cursor:row-resize}',
+'.dshcv-divider::after{content:"";position:absolute;inset:0;margin:auto;width:1px;height:100%;background:var(--dsw-alias-border-l1);border-radius:2px;transition:background .15s ease,width .15s ease}',
+'.dshcv-slots[data-dir="column"] .dshcv-divider::after{width:100%;height:1px}',
+'.dshcv-divider:hover::after,.dshcv-divider:focus-visible::after{width:3px;background:rgba(79,140,255,.5)}',
+'.dshcv-slots[data-dir="column"] .dshcv-divider:hover::after{width:100%;height:3px}',
+'.dshcv-chip[data-second="1"]{box-shadow:inset 0 0 0 1px rgba(79,140,255,.5)}',
 '.dshcv-pane{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden;container-type:inline-size}',
 '.dshcv-tools{flex-wrap:wrap;row-gap:2px}',
 '.dshcv-head{flex-wrap:wrap;row-gap:2px}',
@@ -6104,6 +6185,82 @@ this.setState({ error: null });
 }
 }
 const guardPanel = (Component) => (props) => h(PanelBoundary, null, h(Component, props));
+const viewerFor = (doc) =>
+doc.view === 'html'
+? h(HtmlDoc, { key: doc.id + '-html', doc, sessionId: store.sessionId })
+: doc.view === 'image'
+? /\.svg$/i.test(doc.path)
+? h(SvgDoc, { key: doc.id + '-svg', doc, sessionId: store.sessionId })
+: h(ImageDoc, { key: doc.id + '-image', doc, sessionId: store.sessionId })
+: doc.view === 'pdf'
+? h(PdfDoc, { key: doc.id + '-pdf', doc, sessionId: store.sessionId })
+: doc.view === 'model'
+? h(ModelDoc, { key: doc.id + '-model', doc, sessionId: store.sessionId })
+: doc.view === 'cad'
+? h(CadDoc, { key: doc.id + '-cad', doc, sessionId: store.sessionId })
+: doc.view === 'unsupported'
+? h(UnsupportedDoc, { key: doc.id + '-unsupported', doc })
+: doc.view === 'design'
+? h(DesignDoc, { key: doc.id + '-design', doc, sessionId: store.sessionId })
+: doc.view === 'office'
+? h(OfficeDoc, { key: doc.id + '-office', doc, sessionId: store.sessionId })
+: doc.view === 'sheet'
+? h(SheetDoc, { key: doc.id + '-sheet', doc, sessionId: store.sessionId })
+: h(TextDoc, { key: doc.id + '-text', doc, sessionId: store.sessionId })
+;
+function SplitDivider(props) {
+const dragging = React.useRef(false);
+const applyFrom = (clientX, clientY, rect, dir) => {
+const raw = dir === 'column' ? (clientY - rect.top) / rect.height : (clientX - rect.left) / rect.width;
+const clamped = Math.min(0.8, Math.max(0.2, raw));
+setSplit({ ratio: Math.round(clamped * 100) / 100 });
+};
+const snap = (ratio) => {
+const steps = [0.3, 0.4, 0.5, 0.6, 0.7];
+for (const step of steps) {
+if (Math.abs(ratio - step) < 0.028) return step;
+}
+return ratio;
+};
+const onPointerDown = (event) => {
+event.preventDefault();
+const container = event.currentTarget.parentElement;
+if (!container) return;
+const rect = container.getBoundingClientRect();
+const dir = props.dir === 'column' ? 'column' : 'row';
+dragging.current = true;
+const move = (moveEvent) => {
+if (!dragging.current) return;
+applyFrom(moveEvent.clientX, moveEvent.clientY, rect, dir);
+};
+const up = (upEvent) => {
+dragging.current = false;
+window.removeEventListener('pointermove', move);
+window.removeEventListener('pointerup', up);
+const raw = dir === 'column' ? (upEvent.clientY - rect.top) / rect.height : (upEvent.clientX - rect.left) / rect.width;
+setSplit({ ratio: snap(Math.min(0.8, Math.max(0.2, Math.round(raw * 100) / 100))) });
+};
+window.addEventListener('pointermove', move);
+window.addEventListener('pointerup', up);
+};
+return h('div', {
+className: 'dshcv-divider',
+role: 'separator',
+tabIndex: 0,
+'aria-orientation': props.dir === 'column' ? 'horizontal' : 'vertical',
+'aria-label': '调整两侧比例',
+title: '拖动调整比例 · 双击复位',
+onPointerDown,
+onDoubleClick: () => setSplit({ ratio: 0.5 }),
+onKeyDown: (event) => {
+const state = splitState();
+if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight' && event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+event.preventDefault();
+const step = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 0.04 : -0.04;
+setSplit({ ratio: Math.min(0.8, Math.max(0.2, Math.round((state.ratio + step) * 100) / 100)) });
+},
+});
+}
 function CanvasPanel(props) {      useVersion();
 const ratioKey = 'dsh.canvas.ratio.' + (store.sessionId || 'none');
 const [ratio, setRatio] = React.useState(() => {
@@ -6526,8 +6683,9 @@ h(
 type: 'button',
 className: 'dshcv-chip',
 'data-active': doc.id === (active && active.id) ? '1' : '0',
+'data-second': splitState().on && doc.id === splitState().secondId ? '1' : '0',
 title: doc.path,
-onClick: () => mutate({ activeId: doc.id }),
+onClick: () => focusDoc(doc),
 },
 basename(doc.path),
 ),
@@ -6545,6 +6703,19 @@ onClick: () => closeDoc(doc.id),
 ),
 ),
 ),
+h(
+'button',
+{
+type: 'button',
+className: 'dshcv-btn',
+'data-kind': splitState().on ? 'primary' : 'default',
+'aria-pressed': splitState().on ? 'true' : 'false',
+title: '并排对比（Alt+\\）',
+style: { marginLeft: 'auto' },
+onClick: toggleSplit,
+},
+'⧉',
+),
 )
 : null,
 pickerOpen
@@ -6554,27 +6725,48 @@ onOpen: (path) => openDoc({ path }),
 onClose: () => setPickerOpen(false),
 })
 : active
-? active.view === 'html'
-? h(HtmlDoc, { key: active.id + '-html', doc: active, sessionId: store.sessionId })
-: active.view === 'image'
-? /\.svg$/i.test(active.path)
-? h(SvgDoc, { key: active.id + '-svg', doc: active, sessionId: store.sessionId })
-: h(ImageDoc, { key: active.id + '-image', doc: active, sessionId: store.sessionId })
-: active.view === 'pdf'
-? h(PdfDoc, { key: active.id + '-pdf', doc: active, sessionId: store.sessionId })
-: active.view === 'model'
-? h(ModelDoc, { key: active.id + '-model', doc: active, sessionId: store.sessionId })
-: active.view === 'cad'
-? h(CadDoc, { key: active.id + '-cad', doc: active, sessionId: store.sessionId })
-: active.view === 'unsupported'
-? h(UnsupportedDoc, { key: active.id + '-unsupported', doc: active })
-: active.view === 'design'
-? h(DesignDoc, { key: active.id + '-design', doc: active, sessionId: store.sessionId })
-: active.view === 'office'
-? h(OfficeDoc, { key: active.id + '-office', doc: active, sessionId: store.sessionId })
-: active.view === 'sheet'
-? h(SheetDoc, { key: active.id + '-sheet', doc: active, sessionId: store.sessionId })
-: h(TextDoc, { key: active.id + '-text', doc: active, sessionId: store.sessionId })
+? h(
+'div',
+{
+className: 'dshcv-slots',
+'data-dir': splitState().dir,
+'data-split': splitState().on && secondDoc() ? '1' : '0',
+},
+h(
+'div',
+{
+key: 'a',
+className: 'dshcv-slot',
+'data-active': splitState().on && secondDoc() && store.splitFocus === 'b' ? '0' : '1',
+onMouseDown: () => {
+if (splitState().on && secondDoc() && store.splitFocus !== 'a') mutate({ splitFocus: 'a' });
+},
+style:
+splitState().on && secondDoc()
+? { flex: '0 0 ' + Math.round(splitState().ratio * 1000) / 10 + '%' }
+: { flex: '1 1 0' },
+},
+viewerFor(active),
+),
+splitState().on && secondDoc()
+? h(SplitDivider, { key: 'divider', dir: splitState().dir })
+: null,
+splitState().on && secondDoc()
+? h(
+'div',
+{
+key: 'b',
+className: 'dshcv-slot',
+'data-active': store.splitFocus === 'b' ? '1' : '0',
+onMouseDown: () => {
+if (store.splitFocus !== 'b') mutate({ splitFocus: 'b' });
+},
+style: { flex: '1 1 0' },
+},
+viewerFor(secondDoc()),
+)
+: null,
+)
 : h(
 'div',
 { className: 'dshcv-guide' },
