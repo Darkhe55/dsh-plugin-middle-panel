@@ -101,6 +101,13 @@ check(/focused: !splitState\(\)\.on \|\| \(store\.splitFocus === 'b'/.test(src),
 check(/const focused = props\.focused !== false;/.test(src), '未传 focused 时视为聚焦');
 check(/if \(focused\) return;\s*\n\s*const node = videoRef\.current;\s*\n\s*if \(node && !node\.paused\) node\.pause\(\);/.test(src), '失去焦点时自动暂停');
 
+// —— 区域框在画面上可见 ——
+check(/const hoverRegion = hovered && hovered\.kind === 'video' && Array\.isArray\(hovered\.rect\)/.test(src), '悬停区域标注时取其矩形');
+check(/className: 'dshcv-regionbox'/.test(src), '画面上绘制区域框');
+check(/left: hoverRegion\.rect\[0\] \* 100 \+ '%'/.test(src), '按归一化坐标定位');
+check(/\.dshcv-regionbox\{position:absolute;border:1\.5px solid/.test(src), '区域框有描边样式');
+check(/hoverRegion && !marquee/.test(src), '框选进行中不画旧的区域');
+
 if (failures) {
   console.log('失败 ' + failures + ' 项');
   process.exit(1);

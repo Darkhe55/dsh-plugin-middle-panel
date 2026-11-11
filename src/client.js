@@ -964,6 +964,7 @@ return Math.abs(Number(left.start) - Number(right.start)) <= 0.2 && Math.abs(Num
       '.dshcv-videostage video{max-width:100%;max-height:100%;display:block;cursor:pointer}',
       '.dshcv-videostage[data-boxing="1"]{cursor:crosshair}',
       '.dshcv-marquee{position:absolute;border:1px solid rgba(79,140,255,.9);background:rgba(79,140,255,.18);pointer-events:none}',
+      '.dshcv-regionbox{position:absolute;border:1.5px solid rgba(79,140,255,.95);background:rgba(79,140,255,.12);border-radius:2px;pointer-events:none;box-shadow:0 0 0 9999px rgba(0,0,0,.18)}',
       '.dshcv-videobar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
       '.dshcv-videotime{font:12px/1 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums}',
       '.dshcv-track{position:relative;height:22px;border-radius:11px;background:color-mix(in srgb,var(--dsw-alias-bg-layer-2) 88%,transparent);cursor:pointer;touch-action:none;overflow:hidden}',
@@ -7054,6 +7055,10 @@ function SplitDivider(props) {
       const [drag, setDrag] = React.useState(null);
       const [boxing, setBoxing] = React.useState(false);
       const [marquee, setMarquee] = React.useState(null);
+      // Hovering a region mark in the rail shows that box on the frame, the way
+      // the image viewer does, so "画面区域" is verifiable rather than a claim.
+      const hovered = useHoverMark(doc.path);
+      const hoverRegion = hovered && hovered.kind === 'video' && Array.isArray(hovered.rect) && hovered.rect.length === 4 ? hovered : null;
       const videoRef = React.useRef(null);
       const stageRef = React.useRef(null);
       const rootRef = React.useRef(null);
@@ -7275,6 +7280,18 @@ function SplitDivider(props) {
             onPause: () => setInfo((current) => Object.assign({}, current, { playing: false })),
             onClick: play,
           }),
+          hoverRegion && !marquee
+            ? h('div', {
+                className: 'dshcv-regionbox',
+                title: '标注区域 ' + formatTime(hoverRegion.start),
+                style: {
+                  left: hoverRegion.rect[0] * 100 + '%',
+                  top: hoverRegion.rect[1] * 100 + '%',
+                  width: hoverRegion.rect[2] * 100 + '%',
+                  height: hoverRegion.rect[3] * 100 + '%',
+                },
+              })
+            : null,
           marquee
             ? h('div', {
                 className: 'dshcv-marquee',
