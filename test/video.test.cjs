@@ -108,6 +108,17 @@ check(/left: hoverRegion\.rect\[0\] \* 100 \+ '%'/.test(src), '按归一化坐�
 check(/\.dshcv-regionbox\{position:absolute;border:1\.5px solid/.test(src), '区域框有描边样式');
 check(/hoverRegion && !marquee/.test(src), '框选进行中不画旧的区域');
 
+// —— 播放器控件齐备（ready 分支） ——
+check(/'播放' : '暂停'|info\.playing \? '暂停' : '播放'/.test(src), '有播放/暂停按钮');
+check(/'−1f'/.test(src) && /'\+1f'/.test(src), '有逐帧步进按钮');
+check(/info\.rate \+ '×'/.test(src), '有倍速按钮');
+check(/formatTime\(info\.current\) \+ ' \/ ' \+ formatTime\(info\.duration\)/.test(src), '显示当前时间 / 总时长');
+check(/'框选画面'/.test(src), '有框选开关');
+check(/'标记此刻'/.test(src), '有单点标注按钮');
+check(/className: 'dshcv-track'/.test(src), '有进度条');
+check(/onPointerDown: onTrackDown/.test(src), '进度条可按下');
+check(/onPointerMove: onTrackMove/.test(src), '进度条可拖动');
+
 if (failures) {
   console.log('失败 ' + failures + ' 项');
   process.exit(1);
