@@ -3176,22 +3176,64 @@ window.__ModuleLoader__.load({
     }
 
     // ---------------- svg viewer (inline, so elements can be inspected) ----------------
+    // SVG is injected inline so its elements can be picked, which means it shares this
+    // page's origin: a hostile file could read the annotation store or call the save
+    // route. The filter therefore removes every known way to run script — not only
+    // <script> and on* attributes, but also foreignObject, external hrefs and SMIL
+    // nodes that can rewrite an attribute after this pass.
     const sanitizeSvg = (text) => {
       const parsed = new DOMParser().parseFromString(String(text || ''), 'image/svg+xml');
       if (!parsed || !parsed.documentElement || parsed.querySelector('parsererror')) return null;
       const root = parsed.documentElement;
-      for (const node of Array.from(root.querySelectorAll('script'))) node.remove();
-      const walk = (node) => {
+      const dropTags = ['script', 'foreignObject', 'iframe', 'object', 'embed', 'handler', 'audio', 'video'];
+      for (const tag of dropTags) {
+        for (const node of Array.from(root.getElementsByTagName(tag))) node.remove();
+      }
+      // External references would either execute or leak a request to a third party.
+      const allowedHref = (value) => {
+        const target = String(value || '').trim().toLowerCase();
+        return target === '' || target.startsWith('#') || target.startsWith('data:image/');
+      };
+      const executable = /(?:javascript|vbscript|data:text\/html)/i;
+      const rewrite = (node) => {
         for (const attribute of Array.from(node.attributes || [])) {
           const name = attribute.name.toLowerCase();
-          const value = String(attribute.value || '').trim().toLowerCase();
-          if (name.startsWith('on') || ((name === 'href' || name === 'xlink:href') && value.startsWith('javascript:'))) {
+          const value = String(attribute.value || '');
+          if (name.startsWith('on')) {
+            node.removeAttribute(attribute.name);
+            continue;
+          }
+          if ((name === 'href' || name === 'xlink:href' || name === 'src') && !allowedHref(value)) {
+            node.removeAttribute(attribute.name);
+            continue;
+          }
+          if (executable.test(value) && /^(href|xlink:href|src|style|values|to|from|attributeName)$/.test(name)) {
             node.removeAttribute(attribute.name);
           }
         }
-        for (const child of Array.from(node.children || [])) walk(child);
+        if (node.children && node.children.length) {
+          for (const child of Array.from(node.children)) {
+            const tag = String(child.localName || child.tagName || '').toLowerCase();
+            // SMIL can retarget an attribute at runtime, which would defeat the pass
+            // above: an <animate attributeName="href" values="javascript:..."> is the
+            // classic bypass, so only keep animation of visual attributes.
+            if (tag === 'set' || tag === 'animate') {
+              const target = String(child.getAttribute('attributeName') || '').toLowerCase();
+              if (!target || target.startsWith('on') || target === 'href' || target === 'xlink:href' || target === 'src') {
+                child.remove();
+                continue;
+              }
+            }
+            rewrite(child);
+          }
+        }
       };
-      walk(root);
+      rewrite(root);
+      // A stylesheet can pull in a remote URL (@import) even with no other reference.
+      for (const style of Array.from(root.getElementsByTagName('style'))) {
+        const body = String(style.textContent || '');
+        if (/@import|url\s*\(\s*['"]?\s*(?:https?:|javascript:|data:text)/i.test(body)) style.remove();
+      }
       return root.outerHTML;
     };
 

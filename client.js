@@ -2801,18 +2801,50 @@ const sanitizeSvg = (text) => {
 const parsed = new DOMParser().parseFromString(String(text || ''), 'image/svg+xml');
 if (!parsed || !parsed.documentElement || parsed.querySelector('parsererror')) return null;
 const root = parsed.documentElement;
-for (const node of Array.from(root.querySelectorAll('script'))) node.remove();
-const walk = (node) => {
+const dropTags = ['script', 'foreignObject', 'iframe', 'object', 'embed', 'handler', 'audio', 'video'];
+for (const tag of dropTags) {
+for (const node of Array.from(root.getElementsByTagName(tag))) node.remove();
+}
+const allowedHref = (value) => {
+const target = String(value || '').trim().toLowerCase();
+return target === '' || target.startsWith('#') || target.startsWith('data:image/');
+};
+const executable = /(?:javascript|vbscript|data:text\/html)/i;
+const rewrite = (node) => {
 for (const attribute of Array.from(node.attributes || [])) {
 const name = attribute.name.toLowerCase();
-const value = String(attribute.value || '').trim().toLowerCase();
-if (name.startsWith('on') || ((name === 'href' || name === 'xlink:href') && value.startsWith('javascript:'))) {
+const value = String(attribute.value || '');
+if (name.startsWith('on')) {
+node.removeAttribute(attribute.name);
+continue;
+}
+if ((name === 'href' || name === 'xlink:href' || name === 'src') && !allowedHref(value)) {
+node.removeAttribute(attribute.name);
+continue;
+}
+if (executable.test(value) && /^(href|xlink:href|src|style|values|to|from|attributeName)$/.test(name)) {
 node.removeAttribute(attribute.name);
 }
 }
-for (const child of Array.from(node.children || [])) walk(child);
+if (node.children && node.children.length) {
+for (const child of Array.from(node.children)) {
+const tag = String(child.localName || child.tagName || '').toLowerCase();
+if (tag === 'set' || tag === 'animate') {
+const target = String(child.getAttribute('attributeName') || '').toLowerCase();
+if (!target || target.startsWith('on') || target === 'href' || target === 'xlink:href' || target === 'src') {
+child.remove();
+continue;
+}
+}
+rewrite(child);
+}
+}
 };
-walk(root);
+rewrite(root);
+for (const style of Array.from(root.getElementsByTagName('style'))) {
+const body = String(style.textContent || '');
+if (/@import|url\s*\(\s*['"]?\s*(?:https?:|javascript:|data:text)/i.test(body)) style.remove();
+}
 return root.outerHTML;
 };
 function SvgDoc(props) {
