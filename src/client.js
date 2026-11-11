@@ -844,12 +844,6 @@ window.__ModuleLoader__.load({
       '.dshcv-tools{display:flex;align-items:center;gap:4px;min-height:34px;padding:0 8px;border-bottom:1px solid var(--dsw-alias-border-l1)}',
       '.dshcv-msg{font-size:11px;color:var(--dsw-alias-label-secondary);white-space:nowrap}',
       '.dshcv-range{flex:0 0 150px;min-width:80px;accent-color:var(--dsw-alias-brand-primary)}',
-      '.dshcv-svg{flex:1 1 auto;min-height:0;overflow:auto;display:flex;align-items:flex-start;justify-content:center;padding:12px}',
-      '.dshcv-svg>svg{max-width:100%;height:auto}',
-      '.dshcv-svg[data-dshcv-spotlight] *{opacity:.45 !important;transition:opacity .18s cubic-bezier(.33,0,.2,1) !important}',
-      '.dshcv-svg[data-dshcv-spotlight] [data-dshcv-path]{opacity:1 !important}',
-      '.dshcv-svg[data-dshcv-spotlight] [data-dshcv-focus],.dshcv-svg[data-dshcv-spotlight] [data-dshcv-focus] *{opacity:1 !important}',
-      '@media (prefers-reduced-motion: reduce){.dshcv-svg[data-dshcv-spotlight] *{transition:none !important}}',
       '.dshcv-editor{flex:1 1 auto;min-height:0;width:100%;box-sizing:border-box;border:0;outline:none;resize:none;padding:10px 12px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;tab-size:2}',
       '.dshcv-docwrap{flex:1 1 auto;min-height:0;overflow:auto;padding:12px 16px 24px}',
       '.dshcv-doc{font-size:13px;line-height:1.75;max-width:760px}',
@@ -3175,7 +3169,7 @@ window.__ModuleLoader__.load({
       );
     }
 
-    // ---------------- svg viewer (inline, so elements can be inspected) ----------------
+    // ---------------- svg viewer (sandboxed preview, filter as a second layer) ----------------
     // SVG is injected inline so its elements can be picked, which means it shares this
     // page's origin: a hostile file could read the annotation store or call the save
     // route. The filter therefore removes every known way to run script — not only
@@ -3237,41 +3231,52 @@ window.__ModuleLoader__.load({
       return root.outerHTML;
     };
 
+    // The SVG runs inside the same sandboxed iframe as an HTML preview: it keeps the
+    // picker, the dwell spotlight and the SMIL controls, but a hostile file can no
+    // longer touch this page's origin, its annotation store or the save route.
+    const buildSvgDocument = (markup) =>
+      [
+        '<!doctype html><html><head><meta charset="utf-8">',
+        '<style>',
+        'html,body{height:100%;margin:0;background:transparent}',
+        'body{display:flex;align-items:center;justify-content:center;overflow:hidden}',
+        'svg{max-width:100%;max-height:100%}',
+        '</style></head><body>',
+        markup,
+        '</body></html>',
+      ].join('');
+
     function SvgDoc(props) {
       const { doc, sessionId } = props;
-      const [state, setState] = React.useState({ status: 'idle', markup: '', error: '' });
+      const [state, setState] = React.useState({ status: 'idle', url: '', error: '' });
       const [anim, setAnim] = React.useState({ paused: false, duration: 0, current: 0, count: 0 });
-      const hostRef = React.useRef(null);
+      const frameRef = React.useRef(null);
       const rootRef = React.useRef(null);
-      const animRef = React.useRef(null);
-      const dwellRef = React.useRef({ element: null, timer: null });
-      animRef.current = anim;
+      const pausedRef = React.useRef(false);
 
+      const post = (cmd, extra) => {
+        const frame = frameRef.current;
+        if (!frame || !frame.contentWindow) return;
+        frame.contentWindow.postMessage(Object.assign({ source: 'dshcv-cmd', cmd }, extra || {}), '*');
+      };
+
+      // Rail hover spotlights the matching layer inside the sandbox.
       const hovered = useHoverMark(doc.path);
+      const hoverSelector = hovered && hovered.kind === 'layer' ? hovered.selector || '' : '';
       React.useEffect(() => {
-        const host = hostRef.current;
-        if (!host) return;
-        if (!hovered || hovered.kind !== 'layer' || !hovered.selector) {
-          clearSpot();
-          return;
-        }
-        let resolved = null;
-        try {
-          resolved = host.querySelector(hovered.selector);
-        } catch {
-          resolved = null;
-        }
-        if (resolved) markSpot(resolved);
+        if (state.status !== 'ready') return;
+        post('spot', { selector: hoverSelector });
         // eslint-disable-next-line react-hooks/exhaustive-deps
-      }, [hovered && hovered.id, state.markup]);
+      }, [hoverSelector, state.status]);
 
       React.useEffect(() => {
         if (!sessionId) {
-          setState({ status: 'idle', markup: '', error: '等待会话…' });
+          setState({ status: 'idle', url: '', error: '等待会话…' });
           return undefined;
         }
         const controller = new AbortController();
         let cancelled = false;
+        let objectUrl = '';
         readTextPages(sessionId, doc.path, controller.signal)
           .then(async (page) => {
             let text = page.text;
@@ -3279,130 +3284,71 @@ window.__ModuleLoader__.load({
               const bytes = await readBytesFile(sessionId, doc.path, controller.signal);
               if (bytes) text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
             }
-            const markup = sanitizeSvg(text);
             if (cancelled) return;
+            // The filter is defence in depth now, not the only boundary: the document
+            // never runs in this origin even if a bypass exists.
+            const markup = sanitizeSvg(text);
             if (!markup) {
-              setState({ status: 'failed', markup: '', error: '无法解析 SVG' });
+              setState({ status: 'failed', url: '', error: '无法解析 SVG' });
               return;
             }
-            setState({ status: 'ready', markup, error: '' });
+            const html = buildSvgDocument(markup);
+            objectUrl = URL.createObjectURL(
+              new Blob([injectScriptAllowed() ? injectPicker(html) : html], { type: 'text/html' }),
+            );
+            setState({ status: 'ready', url: objectUrl, error: '' });
           })
           .catch((error) => {
             if (cancelled) return;
-            setState({ status: 'failed', markup: '', error: errText(error) });
+            setState({ status: 'failed', url: '', error: errText(error) });
           });
         return () => {
           cancelled = true;
           controller.abort();
+          if (objectUrl) URL.revokeObjectURL(objectUrl);
         };
       }, [doc.path, sessionId]);
 
-      const svg = () => hostRef.current && hostRef.current.querySelector('svg');
-      const sync = () => {
-        const root = svg();
-        const paused = root && typeof root.animationsPaused === 'function' ? root.animationsPaused() : false;
-        const current = root && typeof root.getCurrentTime === 'function' ? Math.round(root.getCurrentTime() * 1000) : 0;
-        setAnim((previous) => Object.assign({}, previous, { paused, current, count: root ? 1 : 0 }));
-      };
-      const pause = () => {
-        const root = svg();
-        if (root && root.pauseAnimations) root.pauseAnimations();
-        sync();
-      };
-      const resume = () => {
-        const root = svg();
-        if (root && root.unpauseAnimations) root.unpauseAnimations();
-        sync();
-      };
-      const seek = (time) => {
-        const root = svg();
-        if (root && root.setCurrentTime) root.setCurrentTime(Math.max(0, time) / 1000);
-        sync();
-      };
-
-      const spotting = () => Boolean(hostRef.current && hostRef.current.hasAttribute('data-dshcv-spotlight'));
-      const clearSpot = () => {
-        const host = hostRef.current;
-        if (!host) return;
-        for (const node of Array.from(host.querySelectorAll('[data-dshcv-focus],[data-dshcv-path]'))) {
-          node.removeAttribute('data-dshcv-focus');
-          node.removeAttribute('data-dshcv-path');
-        }
-        host.removeAttribute('data-dshcv-spotlight');
-      };
-      const markSpot = (element) => {
-        clearSpot();
-        let node = element;
-        let first = true;
-        let guard = 0;
-        while (node && node.nodeType === 1 && node !== hostRef.current && guard < 64) {
-          node.setAttribute(first ? 'data-dshcv-focus' : 'data-dshcv-path', '');
-          first = false;
-          node = node.parentElement;
-          guard += 1;
-        }
-        if (hostRef.current) hostRef.current.setAttribute('data-dshcv-spotlight', '');
-      };
-      const onHover = (event) => {
-        const target = event.target;
-        if (!target || target.nodeType !== 1) return;
-        // The spotlight belongs to the frozen frame: while playing, the SVG
-        // keeps its own behaviour untouched.
-        if (!(animRef.current && animRef.current.paused)) {
-          if (spotting()) clearSpot();
-          return;
-        }
-        const dwell = dwellRef.current;
-        if (dwell.element === target) return;
-        dwell.element = target;
-        clearSpot();
-        clearTimeout(dwell.timer);
-        dwell.timer = setTimeout(() => {
-          if (dwellRef.current.element === target) markSpot(target);
-        }, 500);
-      };
-      const onLeave = () => {
-        dwellRef.current.element = null;
-        clearTimeout(dwellRef.current.timer);
-        clearSpot();
-      };
-      const onClick = (event) => {
-        const target = event.target;
-        if (!target || target.nodeType !== 1) return;
-        // Only a frozen frame turns clicks into layer marks; while playing the
-        // SVG keeps its own behaviour.
-        if (!(animRef.current && animRef.current.paused)) return;
-        const id = target.getAttribute && target.getAttribute('id');
-        const tag = target.tagName ? target.tagName.toLowerCase() : 'node';
-        if (!id && tag === 'svg') return;
-        addMark({ kind: 'layer', path: doc.path, selector: id ? '#' + id : tag, quote: tag });
-      };
+      React.useEffect(() => {
+        const onMessage = (event) => {
+          const frame = frameRef.current;
+          if (!frame || event.source !== frame.contentWindow) return;
+          const data = event.data;
+          if (!data) return;
+          if (data.source === 'dshcv-anim' && data.state) {
+            pausedRef.current = Boolean(data.state.paused);
+            setAnim(data.state);
+            return;
+          }
+          if (data.source !== 'dshcv-picker') return;
+          // Only a frozen frame creates marks; the picker enforces the same rule.
+          if (!pausedRef.current) return;
+          const target = String(data.selector || '');
+          if (!target) return;
+          addMark({ kind: 'layer', path: doc.path, selector: target, quote: String(data.tag || '') });
+        };
+        window.addEventListener('message', onMessage);
+        return () => window.removeEventListener('message', onMessage);
+      }, [doc.path]);
 
       React.useEffect(() => {
         const onKey = (event) => {
           if (!ownsKeyboard(event, rootRef.current)) return;
           if (event.altKey && (event.key === 's' || event.key === 'S')) {
             event.preventDefault();
-            if (animRef.current && animRef.current.paused) resume();
-            else pause();
+            post(pausedRef.current ? 'resume' : 'pause');
             return;
           }
           if (event.altKey && (event.key === 'a' || event.key === 'A' || event.key === 'd' || event.key === 'D')) {
             event.preventDefault();
-            pause();
             const forward = event.key === 'd' || event.key === 'D';
-            seek((animRef.current && animRef.current.current ? animRef.current.current : 0) + (forward ? 16 : -16));
+            post('pause');
+            post('step', { dir: forward ? 1 : -1 });
           }
         };
         window.addEventListener('keydown', onKey, true);
         return () => window.removeEventListener('keydown', onKey, true);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
       }, []);
-
-      React.useEffect(() => {
-        if (state.status === 'ready') sync();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-      }, [state.status, state.markup]);
 
       if (state.status === 'failed') {
         return h('div', { className: 'dshcv-empty' }, h('div', null, '无法预览该 SVG'), h('div', null, state.error));
@@ -3415,21 +3361,21 @@ window.__ModuleLoader__.load({
         { ref: rootRef, style: { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' } },
         h(AnimBar, {
           anim,
-          onPause: pause,
-          onResume: resume,
-          onSeek: seek,
+          onPause: () => post('pause'),
+          onResume: () => post('resume'),
+          onSeek: (time) => post('seek', { time }),
+          onStep: (dir) => post('step', { dir }),
         }),
-        h('div', {
-          ref: hostRef,
-          className: 'dshcv-svg',
-          onMouseOver: onHover,
-          onMouseLeave: onLeave,
-          onClick,
-          dangerouslySetInnerHTML: { __html: state.markup },
+        h('iframe', {
+          ref: frameRef,
+          src: state.url,
+          title: 'canvas svg preview',
+          sandbox: 'allow-scripts',
+          onLoad: () => post('state'),
+          style: { flex: '1 1 auto', minHeight: 0, width: '100%', border: '0', background: 'transparent' },
         }),
       );
     }
-
     // Long parses yield to the event loop so the UI keeps painting, a cancel can
     // take effect, and progress can be reported.
     const yieldFrame = () => new Promise((resolve) => setTimeout(resolve, 0));

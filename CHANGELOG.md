@@ -2,7 +2,15 @@
 
 本项目的版本按 `主.次.修订` 递增；`npm` 上已发布的版本不可撤回，修正一律走新版本。
 
-## 0.4.0（未发布）
+## 0.4.1（未发布）
+
+### 安全
+
+- **SVG 预览移入沙箱 iframe**。此前 SVG 以 `dangerouslySetInnerHTML` 内联注入主页面（为了点选图层），因此与页面同源：恶意 SVG 可以读取 `localStorage` 里的标注、带 `sessionId` 调用 `/dsh-canvas/save` 改写工作区文件。现在与 HTML 预览一致，运行在 `sandbox="allow-scripts"`（**无** `allow-same-origin`）的 iframe 中；图层点选、聚光、SMIL 暂停/步进/定位全部改由 `postMessage` 驱动，回传消息校验 `event.source === frame.contentWindow`。
+- **清洗器加固**（第二道防线）：除原有的 `<script>`、`on*`、`javascript:` 之外，新增移除 `foreignObject / iframe / object / embed / handler / audio / video`；`href / src` 白名单仅保留 `#fragment` 与 `data:image/`；删除可把属性改回危险值的 SMIL 节点（`<set>` / `<animate attributeName="on*|href|src">`）；删除含 `@import` 或远程 `url()` 的 `<style>`。
+- 新增 `test/svg-sanitize.test.cjs`（26 项断言），把清洗规则与"不得再内联注入"、"沙箱不得放行 same-origin"固定为契约。
+
+## 0.4.0
 
 这一轮把面板从"能看能标"推到"标得准、发得清、找得回"。
 

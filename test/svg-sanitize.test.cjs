@@ -44,10 +44,24 @@ check(/child\.remove\(\)/.test(body), '不安全的动画节点被移除');
 // 5) 样式表不能 @import 远程资源
 check(/@import/.test(body), '移除 @import 样式');
 
-// 6) 必须有解析失败保护
+// 6) 沙箱化：清洗只是第二道防线，真正的边界是 iframe
+const svgStart = src.indexOf('function SvgDoc(props) {');
+const svgEnd = src.indexOf('// Long parses yield to the event loop', svgStart);
+const svgDoc = src.slice(svgStart, svgEnd > svgStart ? svgEnd : svgStart + 12000);
+check(!/dangerouslySetInnerHTML/.test(src), '全文件不再内联注入 HTML');
+check(/sandbox: 'allow-scripts'/.test(svgDoc), 'SVG 预览运行在沙箱 iframe 中');
+check(!/allow-same-origin/.test(svgDoc), '沙箱不放行 same-origin，拿不到本页 localStorage');
+check(svgDoc.includes('.source !== frame.contentWindow'), '只接受自己 iframe 的消息');
+check(/kind: 'layer'/.test(svgDoc), '点选仍然生成图层标注');
+check(/injectPicker/.test(svgDoc), '沙箱内复用同一个选取脚本');
+
+// 7) 必须有解析失败保护
 check(/parsererror/.test(body), '解析失败时返回 null 而不是注入');
 
 if (failures) {
   console.log('失败 ' + failures + ' 项');
   process.exit(1);
 }
+
+
+

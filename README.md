@@ -100,7 +100,7 @@
 | 网页 | `.html` `.htm` | 沙箱 iframe（注入元素选取与动效控制） |
 | 文档 | `.md` `.txt` | Markdown 渲染 / 纯文本，可编辑保存 |
 | 图片 | `.png` `.jpg` `.webp` `.gif` `.bmp` `.ico` `.avif` | 位图缩放 + 框选区域标注 |
-| 矢量 | `.svg` | 内联渲染，可悬停聚光、点选图层、暂停 SMIL |
+| 矢量 | `.svg` | **沙箱 iframe** 内渲染（`sandbox="allow-scripts"`，不透明来源），可悬停聚光、点选图层、暂停 SMIL |
 | PDF | `.pdf` | 运行时内置阅读器（不可用时提示路径与大小） |
 | Office | `.docx` `.xlsx` `.pptx` | 解 OOXML：段落 / 表格（≤3 表 × 300 行）/ 分页文本 |
 | 表格 | `.csv` `.tsv` | 自解析渲染表格（支持引号内逗号换行） |
@@ -116,7 +116,7 @@
 | 文件读取 | 走 DSH 进程内通道 `remote.workspaceFiles`；HTTP 路由**只返回元数据**（大小、mtime），不返回任何字节 |
 | 文件写入 | 仅限**该会话工作目录内**，显式 `workspace-write` 沙箱策略，单次 ≤ 4 MiB |
 | 路由来源 | 仅接受 `dsh-app://app`、桌面端的不透明来源，以及**与本服务同端口**的 loopback 页面；其它本机端口的页面一律拒绝 |
-| 预览隔离 | HTML 预览运行在 `sandbox="allow-scripts"` 的 iframe（不透明来源），注入脚本只能读该预览自身 |
+| 预览隔离 | HTML 与 **SVG** 预览都运行在 `sandbox="allow-scripts"` 的 iframe（不透明来源，无 `allow-same-origin`），注入脚本只能读到该预览自身，拿不到本页的标注与保存路由 |
 | 本地留存 | `localStorage` 保存打开的路径、标注（含 ≤240 字符原文引用）与面板尺寸；不上传，可随时「清空」 |
 
 已知残余风险：桌面端页面以不透明来源发起请求，因此无法用来源区分"同一台机器上的恶意页面"；两条路由仍以 `sessionId` 作为凭据（UUID 级）。若需要更强的隔离，可再加"进程内下发的一次性令牌"，但那需要宿主暴露客户端↔主进程的服务通道。
@@ -132,6 +132,11 @@
 - `npm test`：13 组、116 项断言，覆盖 Markdown、Collada、标注重定位（文本与三维）、冲突判定、发送语义与控件契约。
 
 ## 最近的变化
+
+### 0.4.1 · SVG 彻底沙箱化
+
+- **SVG 移入沙箱 iframe**：此前为了点选图层而内联注入页面，等于让工作区里的 SVG 与本页面同源——恶意文件可以读标注、带 `sessionId` 调用保存路由。现在与 HTML 预览一样跑在 `sandbox="allow-scripts"`（无 `allow-same-origin`）里，点选、聚光、SMIL 控制改由 `postMessage` 驱动，消息回传校验 `event.source === frame.contentWindow`。
+- **清洗器作为第二道防线加固**：除 `<script>` 与 `on*` 之外，还移除 `foreignObject / iframe / object / embed / handler`，`href/src` 只允许 `#fragment` 与 `data:image/`，并删除可改写危险属性的 SMIL 节点与 `@import` 远程样式的 `<style>`。
 
 ### 0.4.0 · 标得准、发得清、找得回
 
