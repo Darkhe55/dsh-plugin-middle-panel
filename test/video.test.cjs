@@ -96,6 +96,11 @@ check(/\.dshcv-videostage\{[^}]*align-items:center/.test(src), '舞台居中');
 check(/event\.key === ' '/.test(src), '空格播放/暂停');
 check(/\.dshcv-trackband\{/.test(src), '选区有可视条带');
 
+// —— 并排时只有聚焦的那个视频出声 ——
+check(/focused: !splitState\(\)\.on \|\| \(store\.splitFocus === 'b'/.test(src), '窗格焦点传给视频');
+check(/const focused = props\.focused !== false;/.test(src), '未传 focused 时视为聚焦');
+check(/if \(focused\) return;\s*\n\s*const node = videoRef\.current;\s*\n\s*if \(node && !node\.paused\) node\.pause\(\);/.test(src), '失去焦点时自动暂停');
+
 if (failures) {
   console.log('失败 ' + failures + ' 项');
   process.exit(1);

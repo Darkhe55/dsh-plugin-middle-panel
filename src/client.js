@@ -1644,7 +1644,7 @@ return Math.abs(Number(left.start) - Number(right.start)) <= 0.2 && Math.abs(Num
     // one that says so clearly, so every heavy reader asks for the size first.
     // Reading a large file is fine; editing one inline is not, because the draft,
     // the baseline and every snapshot copy the whole string. So the two limits differ.
-    const LIMITS = { model: 64, design: 64, office: 32, pdf: 256, html: 16, sheet: 32, text: 16 };
+    const LIMITS = { model: 64, design: 64, office: 32, pdf: 256, html: 16, sheet: 32, text: 16, video: 256 };
     const EDIT_LIMIT = { text: 4 };
     const MB = 1024 * 1024;
 
@@ -1704,7 +1704,13 @@ return Math.abs(Number(left.start) - Number(right.start)) <= 0.2 && Math.abs(Num
       const size = await readFileSize(sessionId, path, signal);
       if (size !== null && size > limit) {
         throw new Error(
-          '文件 ' + (size / MB).toFixed(1) + ' MB，超过预览上限 ' + Math.round(limit / MB) + ' MB；请先转换或裁切后再看。',
+          kind === 'video'
+        ? '视频 ' +
+          (size / MB).toFixed(1) +
+          ' MB，超过预览上限 ' +
+          Math.round(limit / MB) +
+          ' MB；请先裁切，或用更低的码率重新导出。'
+        : '文件 ' + (size / MB).toFixed(1) + ' MB，超过预览上限 ' + Math.round(limit / MB) + ' MB；请先转换或裁切后再看。',
         );
       }
       return size;
@@ -6882,7 +6888,12 @@ doc.view === 'html'
             ? h(SvgDoc, { key: doc.id + '-svg', doc, sessionId: store.sessionId })
             : h(ImageDoc, { key: doc.id + '-image', doc, sessionId: store.sessionId })
           : doc.view === 'video'
-          ? h(VideoDoc, { key: doc.id + '-video', doc, sessionId: store.sessionId })
+          ? h(VideoDoc, {
+              key: doc.id + '-video',
+              doc,
+              sessionId: store.sessionId,
+              focused: !splitState().on || (store.splitFocus === 'b' ? doc.id === splitState().secondId : doc.id === store.activeId),
+            })
         : doc.view === 'pdf'
             ? h(PdfDoc, { key: doc.id + '-pdf', doc, sessionId: store.sessionId, fit: splitState().on })
             : doc.view === 'model'
@@ -7032,6 +7043,9 @@ function SplitDivider(props) {
     function VideoDoc(props) {
       const { doc, sessionId } = props;
       const native = VIDEO_NATIVE.includes(videoExtOf(doc.path));
+      // Two panes playing at once fight for the same speakers; only the focused
+      // half keeps the sound going.
+      const focused = props.focused !== false;
       const [state, setState] = React.useState({ status: native ? 'loading' : 'unsupported', url: '', error: '' });
       const [info, setInfo] = React.useState({ duration: 0, current: 0, playing: false, rate: 1 });
       // A selection on the timeline being dragged right now.
@@ -7064,6 +7078,12 @@ function SplitDivider(props) {
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [doc.path, native]);
+
+      React.useEffect(() => {
+        if (focused) return;
+        const node = videoRef.current;
+        if (node && !node.paused) node.pause();
+      }, [focused]);
 
       // The rail can jump to a moment; playhead follows the newest request.
       const seek = store.seek;
