@@ -14,6 +14,17 @@ return action + '失败：请求没有到达本机服务（' + location.origin +
 return action + '失败：' + raw;
 };
 const basename = (path) => String(path || '').split(/[\\/]/).pop() || String(path || '');
+const shortenPath = (path, max) => {
+const value = String(path || '');
+const limit = max || 30;
+if (value.length <= limit) return value;
+const parts = value.split('/');
+const name = parts[parts.length - 1] || value;
+const head = parts.length > 1 ? parts[0] : '';
+if (head && name.length + head.length + 4 <= limit) return head + '/…/' + name;
+if (name.length + 2 <= limit) return '…/' + name;
+return '…' + value.slice(-(limit - 1));
+};
 const normalizePath = (path) => {
 let value = String(path || '').trim().replace(/\\/g, '/');
 while (value.startsWith('./')) value = value.slice(2);
@@ -763,6 +774,9 @@ const CSS_PANEL = [
 '.dshcv-table td.dshcv-spot,.dshcv-table th.dshcv-spot{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 26%,transparent);outline:1px solid color-mix(in srgb,var(--dsw-alias-brand-primary) 60%,transparent)}',
 '.dshcv-mark-done{opacity:.55}',
 '.dshcv-badge-done{background:color-mix(in srgb,#2ea043 22%,transparent);color:color-mix(in srgb,#2ea043 82%,var(--dsw-alias-label-primary))}',
+'.dshcv-mpath{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;letter-spacing:-.01em;white-space:nowrap}',
+'.dshcv-railgroup{display:flex;align-items:center;gap:4px;min-width:0}',
+'.dshcv-railgroup>.dshcv-mpath{min-width:0;overflow:hidden;text-overflow:ellipsis}',
 '.dshcv-markrow-on{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 10%,transparent);border-radius:6px}',
 '.dshcv-template-menu{position:absolute;z-index:20;top:26px;left:0;width:260px;max-height:220px;overflow:auto;overscroll-behavior:contain;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:8px;box-shadow:0 10px 28px rgba(0,0,0,.24);padding:4px;display:flex;flex-direction:column;gap:4px}',
 '.dshcv-template-list{display:flex;flex-direction:column;gap:2px}',
@@ -2289,7 +2303,11 @@ h(
 h(
 'div',
 { className: 'dshcv-meta' },
-showGroupHeaders ? markWhere(mark) : basename(mark.path) + ' · ' + markWhere(mark),
+showGroupHeaders
+? markWhere(mark)
+: h('span', { className: 'dshcv-mpath', title: mark.path }, shortenPath(mark.path)) +
+' · ' +
+markWhere(mark),
 ),
 mark.quote ? h('div', { className: 'dshcv-quote' }, mark.quote.split('\n').slice(0, 3).join('\n')) : null,
 h('input', {
@@ -2456,7 +2474,11 @@ h(
 React.Fragment,
 { key: group.key },
 showGroupHeaders
-? h('div', { className: 'dshcv-railgroup' }, basename(group.path) + ' · ' + group.marks.length + ' 条')
+? h(
+'div',
+{ className: 'dshcv-railgroup', title: group.path },
+h('span', { className: 'dshcv-mpath' }, shortenPath(group.path, 40)) + ' · ' + group.marks.length + ' 条',
+)
 : null,
 group.marks.map((mark) => renderMark(mark)),
 ),
