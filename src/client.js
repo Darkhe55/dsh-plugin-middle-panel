@@ -82,6 +82,8 @@ window.__ModuleLoader__.load({
       actions: undefined,
       docs: [],
       activeId: undefined,
+      // Targets waiting for the session id, drained in order once it arrives.
+      pendingList: undefined,
       marks: [],
       seq: 0,
       restored: false,
@@ -483,12 +485,34 @@ window.__ModuleLoader__.load({
       persist();
     };
 
+    // One tool call may carry several deliverables: open them all, then make the
+    // first one active so the call still lands on the thing it named first.
+    const openDocs = (inputs) => {
+      if (!Array.isArray(inputs) || !inputs.length) return '';
+      let firstPath = '';
+      for (const input of inputs) {
+        const target = normalizePath(input && input.path);
+        if (!target) continue;
+        if (!firstPath) firstPath = target;
+        openDoc(input);
+      }
+      if (firstPath) {
+        const target = store.docs.find((doc) => sameFile(doc.path, firstPath));
+        if (target && target.id !== store.activeId) mutate({ activeId: target.id });
+      }
+      return firstPath;
+    };
+
     const openDoc = (input) => {
       const path = normalizePath(input && input.path);
       if (!path) return;
       const view = resolveView(input && input.view, path);
+      // The session may not be known yet; queue every target instead of only the
+      // last one, otherwise a multi-file call would silently drop the earlier tabs.
       if (!store.sessionId) {
-        store.pending = { path, view: input && input.view, note: input && input.note, line: input && input.line };
+        const queue = Array.isArray(store.pendingList) ? store.pendingList : [];
+        queue.push({ path, view: input && input.view, note: input && input.note, line: input && input.line });
+        store.pendingList = queue;
         devlog('doc-pending', ['path=' + path]);
         return;
       }
@@ -980,10 +1004,10 @@ window.__ModuleLoader__.load({
           store.seq = 0;
           store.restored = false;
           restore();
-          if (store.pending) {
-            const pending = store.pending;
-            store.pending = undefined;
-            openDoc(pending);
+          if (Array.isArray(store.pendingList) && store.pendingList.length) {
+            const queue = store.pendingList;
+            store.pendingList = undefined;
+            openDocs(queue);
           }
         }
         if (!store.reportedBridge) {
@@ -1047,10 +1071,13 @@ window.__ModuleLoader__.load({
       const opened = React.useRef('');
       const args = readToolArgs(props);
       const path = args && typeof args.path === 'string' ? args.path : '';
+      const listed = args && Array.isArray(args.paths) ? args.paths.filter((item) => typeof item === 'string' && item.trim()) : [];
+      // A single call may name several deliverables; the card opens all of them.
+      const targets = listed.length ? listed : path ? [path] : [];
 
       React.useEffect(() => {
         if (props.phase === 'preparing') return;
-        const key = String(props.callId || '') + '|' + path;
+        const key = String(props.callId || '') + '|' + targets.join('|');
         if (opened.current === key) return;
         opened.current = key;
         // Open the panel once per call. Without this, switching back to the
@@ -1059,8 +1086,18 @@ window.__ModuleLoader__.load({
         if (autoOpened.has(key)) return;
         autoOpened.add(key);
         selectPanel(PANEL_KEY);
-        if (path) openDoc({ path, view: args && args.view, note: args && args.note, line: args && args.line });
-      }, [props.phase, props.callId, path]);
+        if (targets.length) {
+          openDocs(
+            targets.map((item, index) => ({
+              path: item,
+              view: args && args.view,
+              // The note and the focus line belong to the deliverable named first.
+              note: index === 0 ? args && args.note : undefined,
+              line: index === 0 ? args && args.line : undefined,
+            })),
+          );
+        }
+      }, [props.phase, props.callId, targets.join('|')]);
 
       const glyph = h(
         'svg',

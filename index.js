@@ -93,7 +93,15 @@ export function apply(ctx) {
       properties: {
         path: {
           type: 'string',
-          description: 'Workspace-relative or absolute path of the deliverable to show.',
+          description:
+            'Workspace-relative or absolute path of the deliverable to show. Use paths instead when showing several at once.',
+        },
+        paths: {
+          type: 'array',
+          items: { type: 'string' },
+          maxItems: 12,
+          description:
+            'Several deliverables to open together, one tab each. The first becomes the active tab; the rest stay open beside it.',
         },
         view: {
           type: 'string',
@@ -109,7 +117,7 @@ export function apply(ctx) {
           description: 'Optional one-line hint shown at the top of the panel, e.g. what changed.',
         },
       },
-      required: ['path'],
+      required: [],
       additionalProperties: false,
     },
     output: {
@@ -118,23 +126,42 @@ export function apply(ctx) {
         properties: {
           opened: { type: 'boolean' },
           path: { type: 'string' },
+          paths: { type: 'array', items: { type: 'string' } },
           view: { type: 'string' },
         },
-        required: ['opened', 'path', 'view'],
+        required: ['opened', 'path', 'paths', 'view'],
       },
       render: (args, value) => [
         {
           type: 'text',
           text:
             value && value.opened
-              ? 'Opened ' + value.path + ' in the canvas panel (' + value.view + '). The user may send numbered annotations from it.'
+              ? value.paths && value.paths.length > 1
+                ? 'Opened ' +
+                  value.paths.length +
+                  ' deliverables in the canvas panel, one tab each (' +
+                  value.view +
+                  '): ' +
+                  value.paths.join(', ') +
+                  '. The user may send numbered annotations from them.'
+                : 'Opened ' +
+                  value.path +
+                  ' in the canvas panel (' +
+                  value.view +
+                  '). The user may send numbered annotations from it.'
               : 'Canvas panel is unavailable in this window.',
         },
       ],
     },
     async execute(args, exec) {
-      const path = String((args && args.path) || '').trim()
-      if (!path) throw new Error('path is required')
+      // One call may carry several deliverables; each opens as its own tab.
+      const listed = Array.isArray(args && args.paths)
+        ? args.paths.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 12)
+        : []
+      const single = String((args && args.path) || '').trim()
+      const targets = listed.length ? listed : single ? [single] : []
+      if (!targets.length) throw new Error('path or paths is required')
+      const path = targets[0]
       const requested = String((args && args.view) || 'auto')
       const view = VIEWS.includes(requested) ? requested : 'auto'
       // Remember this Session's workspace so the save route can confine writes.
@@ -148,7 +175,7 @@ export function apply(ctx) {
         }
       }
       // Tool output must be lossless JSON: return exactly the declared fields.
-      return { opened: true, path, view }
+      return { opened: true, path, paths: targets, view }
     },
   }
   ctx.effect(() => ctx.tools.register(tool))

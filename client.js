@@ -53,6 +53,7 @@ sessionId: undefined,
 actions: undefined,
 docs: [],
 activeId: undefined,
+pendingList: undefined,
 marks: [],
 seq: 0,
 restored: false,
@@ -398,12 +399,29 @@ const clearMarks = () => {
 mutate({ marks: [], seq: 0 });
 persist();
 };
+const openDocs = (inputs) => {
+if (!Array.isArray(inputs) || !inputs.length) return '';
+let firstPath = '';
+for (const input of inputs) {
+const target = normalizePath(input && input.path);
+if (!target) continue;
+if (!firstPath) firstPath = target;
+openDoc(input);
+}
+if (firstPath) {
+const target = store.docs.find((doc) => sameFile(doc.path, firstPath));
+if (target && target.id !== store.activeId) mutate({ activeId: target.id });
+}
+return firstPath;
+};
 const openDoc = (input) => {
 const path = normalizePath(input && input.path);
 if (!path) return;
 const view = resolveView(input && input.view, path);
 if (!store.sessionId) {
-store.pending = { path, view: input && input.view, note: input && input.note, line: input && input.line };
+const queue = Array.isArray(store.pendingList) ? store.pendingList : [];
+queue.push({ path, view: input && input.view, note: input && input.note, line: input && input.line });
+store.pendingList = queue;
 devlog('doc-pending', ['path=' + path]);
 return;
 }
@@ -833,10 +851,10 @@ store.marks = [];
 store.seq = 0;
 store.restored = false;
 restore();
-if (store.pending) {
-const pending = store.pending;
-store.pending = undefined;
-openDoc(pending);
+if (Array.isArray(store.pendingList) && store.pendingList.length) {
+const queue = store.pendingList;
+store.pendingList = undefined;
+openDocs(queue);
 }
 }
 if (!store.reportedBridge) {
@@ -893,16 +911,27 @@ useVersion();
 const opened = React.useRef('');
 const args = readToolArgs(props);
 const path = args && typeof args.path === 'string' ? args.path : '';
+const listed = args && Array.isArray(args.paths) ? args.paths.filter((item) => typeof item === 'string' && item.trim()) : [];
+const targets = listed.length ? listed : path ? [path] : [];
 React.useEffect(() => {
 if (props.phase === 'preparing') return;
-const key = String(props.callId || '') + '|' + path;
+const key = String(props.callId || '') + '|' + targets.join('|');
 if (opened.current === key) return;
 opened.current = key;
 if (autoOpened.has(key)) return;
 autoOpened.add(key);
 selectPanel(PANEL_KEY);
-if (path) openDoc({ path, view: args && args.view, note: args && args.note, line: args && args.line });
-}, [props.phase, props.callId, path]);
+if (targets.length) {
+openDocs(
+targets.map((item, index) => ({
+path: item,
+view: args && args.view,
+note: index === 0 ? args && args.note : undefined,
+line: index === 0 ? args && args.line : undefined,
+})),
+);
+}
+}, [props.phase, props.callId, targets.join('|')]);
 const glyph = h(
 'svg',
 {
