@@ -4568,6 +4568,27 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
       return parts.map((part) => part.text).join("");
     };
 
+    // item.width is the sum of the advances the PDF declares, and those can be shorter
+    // than the drawn glyphs; the error then accumulates along a line. The rendered
+    // pixels are the ground truth, so each run is measured once and cached in page
+    // units, which a later zoom only scales.
+    const inkWidthCache = new WeakMap();
+    // Returns the absolute right edge of ink inside the box, in device pixels.
+    const measureInkRight = (data, dataWidth, x0, x1, y0, y1) => {
+      let right = -1;
+      for (let y = y0; y < y1; y += 1) {
+        const row = y * dataWidth;
+        for (let x = x1 - 1; x >= x0; x -= 1) {
+          const at = (row + x) * 4;
+          if (data[at + 3] < 8) continue;
+          if (data[at] > 245 && data[at + 1] > 245 && data[at + 2] > 245) continue;
+          if (x > right) right = x;
+          break;
+        }
+      }
+      return right;
+    };
+
     function PdfPage(props) {
       const {
         pdf,
@@ -4662,19 +4683,53 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
             setItems([]);
             return;
           }
-          const measure = document.createElement('canvas').getContext('2d');
+          const measure = document.createElement("canvas").getContext("2d");
           const spans = [];
-          for (const item of content.items || []) {
-            if (!item || typeof item.str !== 'string' || !item.str.trim()) continue;
+          const rawItems = content.items || [];
+          let bucket = inkWidthCache.get(pdf);
+          if (!bucket) {
+            bucket = new Map();
+            inkWidthCache.set(pdf, bucket);
+          }
+          const keyOf = (index) => pageNumber + ":" + index;
+          const needsInk = rawItems.some((entry, index) =>
+            entry && typeof entry.str === "string" && entry.str.trim() && !bucket.has(keyOf(index)),
+          );
+          // Reading a full page costs a few milliseconds, so it happens once per page.
+          const ink = needsInk && buffer.width ? bufferCtx.getImageData(0, 0, buffer.width, buffer.height) : null;
+          for (let index = 0; index < rawItems.length; index += 1) {
+            const item = rawItems[index];
+            if (!item || typeof item.str !== "string" || !item.str.trim()) continue;
             const transform = Util.transform(viewport.transform, item.transform);
             const fontHeight = Math.hypot(transform[2], transform[3]);
             if (!fontHeight) continue;
-            const spanWidth = Math.max(0, Number(item.width) || 0) * viewport.scale;
+            const declared = Math.max(0, Number(item.width) || 0) * viewport.scale;
+            let spanWidth = declared;
+            const cached = bucket.get(keyOf(index));
+            if (cached !== undefined) {
+              spanWidth = cached * viewport.scale;
+            } else if (ink && declared > 0) {
+              const x0 = Math.max(0, Math.floor(transform[4] * ratio));
+              const x1 = Math.min(ink.width, Math.ceil((transform[4] + declared * 1.6) * ratio));
+              const y0 = Math.max(0, Math.floor((transform[5] - fontHeight) * ratio));
+              const y1 = Math.min(ink.height, Math.ceil((transform[5] + 2) * ratio));
+              let measured = declared;
+              if (x1 > x0 && y1 > y0) {
+                const right = measureInkRight(ink.data, ink.width, x0, x1, y0, y1);
+                if (right >= 0) {
+                  const inkCss = right / ratio - transform[4];
+                  // Widen only: a shorter reading means a neighbour bled into the box.
+                  if (inkCss > declared) measured = inkCss;
+                }
+              }
+              bucket.set(keyOf(index), measured / viewport.scale);
+              spanWidth = measured;
+            }
             let scaleX = 1;
             if (measure && spanWidth > 0) {
-              measure.font = fontHeight + 'px sans-serif';
-              const measured = measure.measureText(item.str).width;
-              if (measured > 0) scaleX = spanWidth / measured;
+              measure.font = fontHeight + "px sans-serif";
+              const natural = measure.measureText(item.str).width;
+              if (natural > 0) scaleX = spanWidth / natural;
             }
             spans.push({
               str: item.str,
@@ -4683,9 +4738,8 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
               fontHeight,
               width: spanWidth,
               scaleX,
-              // The rect a selection reports is the transformed one, so a fixed layout
-              // width would shrink with scaleX and leave the band short on the right.
-              // Dividing by scaleX makes layoutWidth * scaleX equal the item width exactly.
+              // A selection reports the transformed rect, so the layout width is divided
+              // by scaleX: layoutWidth * scaleX equals spanWidth exactly.
               layoutWidth: scaleX ? spanWidth / scaleX : spanWidth,
             });
           }

@@ -21,7 +21,10 @@ check(
   '仍按测量结果做横向缩放',
 );
 check(!page.includes("overflow: 'hidden',"), '不再裁剪（避免切掉最后一个字形）');
-check(page.includes('const spanWidth = Math.max(0, Number(item.width) || 0) * viewport.scale;'), '基准宽度来自 item.width');
+check(page.includes('const declared = Math.max(0, Number(item.width) || 0) * viewport.scale;'), '声明宽度作为基准');
+check(page.includes('if (inkCss > declared) measured = inkCss;'), '墨迹更宽时以墨迹为准');
+check(page.includes('const measureInkRight = (data, dataWidth, x0, x1, y0, y1) => {') || src.includes('const measureInkRight = (data, dataWidth, x0, x1, y0, y1) => {'), '有像素测量函数');
+check(src.includes('const inkWidthCache = new WeakMap();'), '测量结果按文档缓存');
 
 // 反算恒等式：layoutWidth * scaleX === spanWidth
 const layout = 'spanWidth / scaleX';
