@@ -1440,15 +1440,16 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
     const ownsKeyboard = (event, root) => {
       if (!root) return false;
       if (event.isComposing || event.keyCode === 229) return false;
-      // The pointer resting over the panel is the strongest signal: a shortcut
-      // there is meant for the panel, so it is intercepted (and the keystroke
-      // swallowed) even when focus sits elsewhere.
-      if (typeof root.matches === 'function' && root.matches(':hover')) return true;
+      // Typing wins over hovering. The pointer habitually rests over the panel, and
+      // the hover shortcut used to swallow arrows inside inputs (the caret could not
+      // be moved) — so the editable check runs first.
       const target = event.target;
       if (target && target.isContentEditable) return false;
       if (target && typeof target.closest === 'function') {
         if (target.closest('input,textarea,select,[contenteditable="true"]')) return false;
       }
+      // Otherwise the pointer resting over the panel means a shortcut is meant for it.
+      if (typeof root.matches === 'function' && root.matches(':hover')) return true;
       const active = document.activeElement;
       return Boolean(active && root.contains(active));
     };
@@ -2699,6 +2700,17 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         store.flash = '';
         notify();
       }, 1800);
+    };
+
+    // Same toast, but it stays long enough to be read and reported.
+    const flashLong = (text) => {
+      store.flash = String(text || '');
+      notify();
+      clearTimeout(flashTimer);
+      flashTimer = setTimeout(() => {
+        store.flash = '';
+        notify();
+      }, 4000);
     };
 
     // One clipboard path for text: the async API when available, a hidden textarea
@@ -7402,7 +7414,8 @@ function SplitDivider(props) {
         if (Math.abs(node.currentTime - target) <= 0.3) return;
         if (attempt >= 3) {
           const seekable = node.seekable && node.seekable.length ? node.seekable.end(0) : 0;
-          flash(
+          // Long enough to read and copy.
+          flashLong(
             '定位没生效：目标 ' +
               formatTime(target) +
               '，当前 ' +
@@ -7419,6 +7432,34 @@ function SplitDivider(props) {
         window.setTimeout(() => verifySeek(node, target, attempt + 1), 300 * (attempt + 1));
       };
 
+      // A paused element can accept currentTime without presenting the new frame.
+      // requestVideoFrameCallback tells us whether a frame arrived; if none did, one
+      // play/pause pulse forces the decoder to produce it.
+      const nudgeFrame = (node) => {
+        if (!node || typeof node.requestVideoFrameCallback !== 'function') return;
+        let presented = false;
+        try {
+          node.requestVideoFrameCallback(() => {
+            presented = true;
+          });
+        } catch (error) {
+          return;
+        }
+        window.setTimeout(() => {
+          if (presented) return;
+          const current = video();
+          if (!current || current !== node) return;
+          const wasPaused = current.paused;
+          if (!wasPaused) return;
+          const started = current.play();
+          const stop = () => {
+            current.pause();
+          };
+          if (started && typeof started.then === 'function') started.then(stop).catch(() => {});
+          else stop();
+        }, 220);
+      };
+
       const seekTo = (time) => {
         const node = video();
         if (!node) return;
@@ -7427,6 +7468,7 @@ function SplitDivider(props) {
         committedAt.current = Date.now();
         setInfo((current) => Object.assign({}, current, { current: target }));
         window.setTimeout(() => verifySeek(node, target, 0), 250);
+        nudgeFrame(node);
         // A committed move is the new resting place: any later preview captures it
         // as the position to return to.
         hoverBase.current = target;

@@ -1240,12 +1240,12 @@ h('span', { className: 'dshcv-rowname' }, entry.name + (entry.dir ? '/' : '')),
 const ownsKeyboard = (event, root) => {
 if (!root) return false;
 if (event.isComposing || event.keyCode === 229) return false;
-if (typeof root.matches === 'function' && root.matches(':hover')) return true;
 const target = event.target;
 if (target && target.isContentEditable) return false;
 if (target && typeof target.closest === 'function') {
 if (target.closest('input,textarea,select,[contenteditable="true"]')) return false;
 }
+if (typeof root.matches === 'function' && root.matches(':hover')) return true;
 const active = document.activeElement;
 return Boolean(active && root.contains(active));
 };
@@ -2356,6 +2356,15 @@ flashTimer = setTimeout(() => {
 store.flash = '';
 notify();
 }, 1800);
+};
+const flashLong = (text) => {
+store.flash = String(text || '');
+notify();
+clearTimeout(flashTimer);
+flashTimer = setTimeout(() => {
+store.flash = '';
+notify();
+}, 4000);
 };
 const copyText = (text, label) => {
 const value = String(text == null ? '' : text);
@@ -6694,7 +6703,7 @@ if (!node) return;
 if (Math.abs(node.currentTime - target) <= 0.3) return;
 if (attempt >= 3) {
 const seekable = node.seekable && node.seekable.length ? node.seekable.end(0) : 0;
-flash(
+flashLong(
 '定位没生效：目标 ' +
 formatTime(target) +
 '，当前 ' +
@@ -6710,6 +6719,30 @@ return;
 node.currentTime = target;
 window.setTimeout(() => verifySeek(node, target, attempt + 1), 300 * (attempt + 1));
 };
+const nudgeFrame = (node) => {
+if (!node || typeof node.requestVideoFrameCallback !== 'function') return;
+let presented = false;
+try {
+node.requestVideoFrameCallback(() => {
+presented = true;
+});
+} catch (error) {
+return;
+}
+window.setTimeout(() => {
+if (presented) return;
+const current = video();
+if (!current || current !== node) return;
+const wasPaused = current.paused;
+if (!wasPaused) return;
+const started = current.play();
+const stop = () => {
+current.pause();
+};
+if (started && typeof started.then === 'function') started.then(stop).catch(() => {});
+else stop();
+}, 220);
+};
 const seekTo = (time) => {
 const node = video();
 if (!node) return;
@@ -6718,6 +6751,7 @@ const target = applySeek(node, time);
 committedAt.current = Date.now();
 setInfo((current) => Object.assign({}, current, { current: target }));
 window.setTimeout(() => verifySeek(node, target, 0), 250);
+nudgeFrame(node);
 hoverBase.current = target;
 };
 const play = () => {
