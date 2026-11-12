@@ -7253,7 +7253,9 @@ function SplitDivider(props) {
       const rootRef = React.useRef(null);
       const trackRef = React.useRef(null);
       const hoverBase = React.useRef(0);
-      const previewing = React.useRef(false);
+      // A preview session moves the media element away from the committed time, so
+      // it must remember where to put it back and keep timeupdate out of the state.
+      const preview = React.useRef({ active: false, origin: 0 });
       const committedAt = React.useRef(0);
       const previewFrame = React.useRef(0);
       const pressRef = React.useRef(null);
@@ -7343,9 +7345,12 @@ function SplitDivider(props) {
       const previewAt = (time) => {
         const node = video();
         if (!node) return;
-        // A commit wins: a preview that was queued just before it must not undo it.
+        // A commit wins: a preview queued just before it must not undo it.
         if (Date.now() - committedAt.current < 200) return;
-        previewing.current = true;
+        if (!preview.current.active) {
+          preview.current.active = true;
+          preview.current.origin = info.current;
+        }
         if (previewFrame.current) cancelAnimationFrame(previewFrame.current);
         previewFrame.current = requestAnimationFrame(() => {
           previewFrame.current = 0;
@@ -7358,6 +7363,17 @@ function SplitDivider(props) {
         if (previewFrame.current) {
           cancelAnimationFrame(previewFrame.current);
           previewFrame.current = 0;
+        }
+      };
+      // Leaving the track, or committing, ends the session; the picture returns to
+      // the committed time while the dashed indicator disappears.
+      const endPreview = (restore) => {
+        cancelPreview();
+        if (!preview.current.active) return;
+        preview.current.active = false;
+        const node = video();
+        if (restore && node && Math.abs(node.currentTime - preview.current.origin) > 0.01) {
+          node.currentTime = Math.max(0, preview.current.origin);
         }
       };
 
@@ -7378,25 +7394,41 @@ function SplitDivider(props) {
         return target;
       };
 
+      // A commit is verified, not assumed: the element can refuse a seek when it has
+      // no seekable range yet, and something else can move it afterwards. Retry a
+      // few times and, if it still refuses, say so with the element's own state.
+      const verifySeek = (node, target, attempt) => {
+        if (!node) return;
+        if (Math.abs(node.currentTime - target) <= 0.3) return;
+        if (attempt >= 3) {
+          const seekable = node.seekable && node.seekable.length ? node.seekable.end(0) : 0;
+          flash(
+            '定位没生效：目标 ' +
+              formatTime(target) +
+              '，当前 ' +
+              formatTime(node.currentTime) +
+              '（readyState ' +
+              node.readyState +
+              '，可定位范围 0–' +
+              formatTime(seekable) +
+              '）',
+          );
+          return;
+        }
+        node.currentTime = target;
+        window.setTimeout(() => verifySeek(node, target, attempt + 1), 300 * (attempt + 1));
+      };
+
       const seekTo = (time) => {
         const node = video();
         if (!node) return;
-        cancelPreview();
-        previewing.current = false;
+        endPreview(false);
         const target = applySeek(node, time);
         committedAt.current = Date.now();
         setInfo((current) => Object.assign({}, current, { current: target }));
-        // Self-check: if something silently moved the media after the commit (a
-        // late preview frame, a stale seek), put it back once.
-        window.setTimeout(() => {
-          const again = video();
-          if (!again || !again.readyState) return;
-          if (Math.abs(again.currentTime - target) <= 0.3) return;
-          again.currentTime = target;
-          setInfo((current) => Object.assign({}, current, { current: target }));
-        }, 250);
-        // A committed move is the new resting place: leaving the track must not
-        // spring back to where the pointer happened to enter.
+        window.setTimeout(() => verifySeek(node, target, 0), 250);
+        // A committed move is the new resting place: any later preview captures it
+        // as the position to return to.
         hoverBase.current = target;
       };
 
@@ -7500,6 +7532,7 @@ function SplitDivider(props) {
         const moved = drag.moved || Math.abs(event.clientX - (pressRef.current ? pressRef.current.clientX : event.clientX)) > 4;
         setDrag(null);
         pressRef.current = null;
+        endPreview(false);
         if (!moved) {
           // A click only moves the playhead; it must not create a clip.
           seekTo(time);
@@ -7515,10 +7548,10 @@ function SplitDivider(props) {
       const onTrackLeave = () => {
         if (drag) return;
         if (hover === null) return;
-        // Leaving only drops the dashed indicator: the picture stays on the frame
-        // you were looking at, so nothing "snaps back" under the cursor.
         setHover(null);
-        previewing.current = false;
+        // Restore the picture to the committed time: the element must never stay at
+        // a scrubbed position, or its timeupdate would drag the slider with it.
+        endPreview(true);
       };
 
       // React binds wheel as a passive listener, so preventDefault there is ignored
@@ -7697,6 +7730,9 @@ function SplitDivider(props) {
             ref: videoRef,
             src: state.url,
             playsInline: true,
+            // Without preload the element may stay at HAVE_NOTHING while paused, and
+            // then every seek is silently ignored.
+            preload: 'auto',
             onLoadedMetadata: (event) => {
               const node = event.currentTarget;
               setInfo((current) => Object.assign({}, current, { duration: Number(node.duration) || 0 }));
@@ -7721,7 +7757,7 @@ function SplitDivider(props) {
             onTimeUpdate: (event) => {
               // A scrubbing preview fires timeupdate too; it must not move the
               // committed playhead.
-              if (previewing.current) return;
+              if (preview.current.active) return;
               const node = event.currentTarget;
               setInfo((current) => Object.assign({}, current, { current: node.currentTime }));
             },

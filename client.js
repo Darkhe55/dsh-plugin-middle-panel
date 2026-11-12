@@ -6575,7 +6575,7 @@ const stageRef = React.useRef(null);
 const rootRef = React.useRef(null);
 const trackRef = React.useRef(null);
 const hoverBase = React.useRef(0);
-const previewing = React.useRef(false);
+const preview = React.useRef({ active: false, origin: 0 });
 const committedAt = React.useRef(0);
 const previewFrame = React.useRef(0);
 const pressRef = React.useRef(null);
@@ -6648,7 +6648,10 @@ const previewAt = (time) => {
 const node = video();
 if (!node) return;
 if (Date.now() - committedAt.current < 200) return;
-previewing.current = true;
+if (!preview.current.active) {
+preview.current.active = true;
+preview.current.origin = info.current;
+}
 if (previewFrame.current) cancelAnimationFrame(previewFrame.current);
 previewFrame.current = requestAnimationFrame(() => {
 previewFrame.current = 0;
@@ -6661,6 +6664,15 @@ const cancelPreview = () => {
 if (previewFrame.current) {
 cancelAnimationFrame(previewFrame.current);
 previewFrame.current = 0;
+}
+};
+const endPreview = (restore) => {
+cancelPreview();
+if (!preview.current.active) return;
+preview.current.active = false;
+const node = video();
+if (restore && node && Math.abs(node.currentTime - preview.current.origin) > 0.01) {
+node.currentTime = Math.max(0, preview.current.origin);
 }
 };
 const applySeek = (node, time) => {
@@ -6677,21 +6689,35 @@ return target;
 node.currentTime = target;
 return target;
 };
+const verifySeek = (node, target, attempt) => {
+if (!node) return;
+if (Math.abs(node.currentTime - target) <= 0.3) return;
+if (attempt >= 3) {
+const seekable = node.seekable && node.seekable.length ? node.seekable.end(0) : 0;
+flash(
+'定位没生效：目标 ' +
+formatTime(target) +
+'，当前 ' +
+formatTime(node.currentTime) +
+'（readyState ' +
+node.readyState +
+'，可定位范围 0–' +
+formatTime(seekable) +
+'）',
+);
+return;
+}
+node.currentTime = target;
+window.setTimeout(() => verifySeek(node, target, attempt + 1), 300 * (attempt + 1));
+};
 const seekTo = (time) => {
 const node = video();
 if (!node) return;
-cancelPreview();
-previewing.current = false;
+endPreview(false);
 const target = applySeek(node, time);
 committedAt.current = Date.now();
 setInfo((current) => Object.assign({}, current, { current: target }));
-window.setTimeout(() => {
-const again = video();
-if (!again || !again.readyState) return;
-if (Math.abs(again.currentTime - target) <= 0.3) return;
-again.currentTime = target;
-setInfo((current) => Object.assign({}, current, { current: target }));
-}, 250);
+window.setTimeout(() => verifySeek(node, target, 0), 250);
 hoverBase.current = target;
 };
 const play = () => {
@@ -6782,6 +6808,7 @@ const end = Math.max(drag.from, time);
 const moved = drag.moved || Math.abs(event.clientX - (pressRef.current ? pressRef.current.clientX : event.clientX)) > 4;
 setDrag(null);
 pressRef.current = null;
+endPreview(false);
 if (!moved) {
 seekTo(time);
 setHover(null);
@@ -6795,7 +6822,7 @@ const onTrackLeave = () => {
 if (drag) return;
 if (hover === null) return;
 setHover(null);
-previewing.current = false;
+endPreview(true);
 };
 const wheelRef = React.useRef(null);
 wheelRef.current = (event) => {
@@ -6956,6 +6983,7 @@ h('video', {
 ref: videoRef,
 src: state.url,
 playsInline: true,
+preload: 'auto',
 onLoadedMetadata: (event) => {
 const node = event.currentTarget;
 setInfo((current) => Object.assign({}, current, { duration: Number(node.duration) || 0 }));
@@ -6977,7 +7005,7 @@ if (count < 240) node.requestVideoFrameCallback(sample);
 node.requestVideoFrameCallback(sample);
 },
 onTimeUpdate: (event) => {
-if (previewing.current) return;
+if (preview.current.active) return;
 const node = event.currentTarget;
 setInfo((current) => Object.assign({}, current, { current: node.currentTime }));
 },
