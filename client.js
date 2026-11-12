@@ -4026,8 +4026,9 @@ const box = span.getBoundingClientRect();
 parts.push({ text: node.nodeValue.slice(start, end), top: box.top, left: box.left });
 }
 if (!parts.length) return String(range.toString() || "");
+const joined = parts.map((part) => part.text).join("");
+return joined.trim() ? joined : String(range.toString() || "");
 parts.sort((a, b) => (Math.abs(a.top - b.top) > 4 ? a.top - b.top : a.left - b.left));
-return parts.map((part) => part.text).join("");
 };
 const MEASURE_FONT = "Arial, Helvetica, sans-serif";
 let measureCtx = null;
@@ -4356,8 +4357,13 @@ const bands = merged.map((item) => [
 ]);
 setLive(bands);
 if (!onSelect) return;
-const text = selectedTextInVisualOrder(wrap, range).replace(/\s+$/g, "");
-if (!text.trim()) return;
+let text = "";
+try {
+text = selectedTextInVisualOrder(wrap, range).replace(/\s+$/g, "");
+} catch (error) {
+text = "";
+}
+if (!text.trim()) text = String(range.toString() || "").replace(/\s+$/g, "");
 const left = Math.min(...bands.map((item) => item[0]));
 const top = Math.min(...bands.map((item) => item[1]));
 const right = Math.max(...bands.map((item) => item[0] + item[2]));

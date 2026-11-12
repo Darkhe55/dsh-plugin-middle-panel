@@ -4569,8 +4569,11 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         parts.push({ text: node.nodeValue.slice(start, end), top: box.top, left: box.left });
       }
       if (!parts.length) return String(range.toString() || "");
+      const joined = parts.map((part) => part.text).join("");
+      // A per-character scan can come up empty on unusual encodings; the browser
+      // string is still correct for documents whose order matches the DOM.
+      return joined.trim() ? joined : String(range.toString() || "");
       parts.sort((a, b) => (Math.abs(a.top - b.top) > 4 ? a.top - b.top : a.left - b.left));
-      return parts.map((part) => part.text).join("");
     };
 
     // item.width is the sum of the advances the PDF declares, and those can be shorter
@@ -4950,8 +4953,17 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         ]);
         setLive(bands);
         if (!onSelect) return;
-        const text = selectedTextInVisualOrder(wrap, range).replace(/\s+$/g, "");
-        if (!text.trim()) return;
+        let text = "";
+        try {
+          text = selectedTextInVisualOrder(wrap, range).replace(/\s+$/g, "");
+        } catch (error) {
+          // A per-character scan can trip on exotic encodings; the browser string is
+          // still usable and must not take the whole handler down with it.
+          text = "";
+        }
+        if (!text.trim()) text = String(range.toString() || "").replace(/\s+$/g, "");
+        // An empty string still describes a real area: the bands are the locator, so the
+        // mark button appears even when no characters could be recovered.
         const left = Math.min(...bands.map((item) => item[0]));
         const top = Math.min(...bands.map((item) => item[1]));
         const right = Math.max(...bands.map((item) => item[0] + item[2]));
