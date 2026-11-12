@@ -4069,6 +4069,7 @@ baseSize,
 markMode,
 onRegion,
 onSelect,
+onClear,
 onVisible,
 registerEl,
 pageHits,
@@ -4310,12 +4311,18 @@ const readSelection = (keepIfLost) => {
 const wrap = wrapRef.current;
 const active = window.getSelection ? window.getSelection() : null;
 if (!wrap || !active || !active.rangeCount || active.isCollapsed) {
-if (!keepIfLost) setLive([]);
+if (!keepIfLost) {
+setLive([]);
+if (onClear) onClear();
+}
 return;
 }
 const range = active.getRangeAt(0);
 if (!range || !wrap.contains(range.commonAncestorContainer)) {
-if (!keepIfLost) setLive([]);
+if (!keepIfLost) {
+setLive([]);
+if (onClear) onClear();
+}
 return;
 }
 const box = wrap.getBoundingClientRect();
@@ -4324,7 +4331,10 @@ const rects = Array.from(range.getClientRects()).filter(
 (item) => item.width > 1 && item.height > 1,
 );
 if (!rects.length) {
-if (!keepIfLost) setLive([]);
+if (!keepIfLost) {
+setLive([]);
+if (onClear) onClear();
+}
 return;
 }
 const merged = [];
@@ -4958,6 +4968,7 @@ baseSize: pageSizes[pageNumber] || baseSize,
 markMode,
 onRegion,
 onSelect,
+onClear: () => setSelection(null),
 onVisible,
 registerEl,
 pageHits: pagesOfHits.get(pageNumber) || [],

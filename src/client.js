@@ -4624,6 +4624,7 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         markMode,
         onRegion,
         onSelect,
+        onClear,
         onVisible,
         registerEl,
         pageHits,
@@ -4899,12 +4900,20 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         const wrap = wrapRef.current;
         const active = window.getSelection ? window.getSelection() : null;
         if (!wrap || !active || !active.rangeCount || active.isCollapsed) {
-          if (!keepIfLost) setLive([]);
+          if (!keepIfLost) {
+            setLive([]);
+            // The toolbar button is parent state, so it has to be told as well.
+            if (onClear) onClear();
+          }
           return;
         }
         const range = active.getRangeAt(0);
         if (!range || !wrap.contains(range.commonAncestorContainer)) {
-          if (!keepIfLost) setLive([]);
+          if (!keepIfLost) {
+            setLive([]);
+            // The toolbar button is parent state, so it has to be told as well.
+            if (onClear) onClear();
+          }
           return;
         }
         const box = wrap.getBoundingClientRect();
@@ -4913,7 +4922,11 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
           (item) => item.width > 1 && item.height > 1,
         );
         if (!rects.length) {
-          if (!keepIfLost) setLive([]);
+          if (!keepIfLost) {
+            setLive([]);
+            // The toolbar button is parent state, so it has to be told as well.
+            if (onClear) onClear();
+          }
           return;
         }
         // Merge fragments that sit on one line: adjacent boxes painted separately
@@ -5598,6 +5611,7 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
                       markMode,
                       onRegion,
                       onSelect,
+                      onClear: () => setSelection(null),
                       onVisible,
                       registerEl,
                       pageHits: pagesOfHits.get(pageNumber) || [],
