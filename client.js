@@ -1126,7 +1126,7 @@ const CSS_PANEL = [
 '.dshcv-markhead{position:absolute;top:-3px;bottom:-3px;width:2px;margin-left:-1px;background:rgba(79,140,255,.95);box-shadow:0 0 8px rgba(79,140,255,.85);pointer-events:none}',
 '.dshcv-pdftext{position:absolute;inset:0;overflow:hidden;line-height:1;pointer-events:auto;user-select:text}',
 '.dshcv-pdftext span{position:absolute;white-space:pre;color:transparent;transform-origin:0 0;cursor:text}',
-'.dshcv-pdftext span::selection{background:rgba(79,140,255,.34);color:transparent}',
+'.dshcv-pdftext span::selection{background:transparent;color:transparent}',
 '.dshcv-pdftext span::-moz-selection{background:rgba(79,140,255,.34);color:transparent}',
 '.dshcv-pdfdocwrap{overflow:hidden;display:flex;flex-direction:column;padding:6px 8px 0}',
 '.dshcv-pdfdocwrap .dshcv-tools{flex:0 0 auto;position:sticky;top:0;z-index:5;background:var(--dsw-alias-bg-layer-2,#fff);padding-top:4px}',
@@ -1153,6 +1153,9 @@ const CSS_PANEL = [
 '.dshcv-pdflayer{position:absolute;inset:0;cursor:crosshair;touch-action:none}',
 '.dshcv-pdflayer:not(.dshcv-pdflayer-on){cursor:default}',
 '.dshcv-pdfmarquee{position:absolute;border:1.5px solid rgba(79,140,255,.95);background:rgba(79,140,255,.16);box-shadow:0 0 10px rgba(79,140,255,.45);pointer-events:none;border-radius:2px}',
+'.dshcv-pdftext ::selection{background:transparent;color:transparent}',
+'.dshcv-pdftext::selection{background:transparent;color:transparent}',
+'.dshcv-pdfsel{position:absolute;background:rgba(79,140,255,.24);border-radius:2px;pointer-events:none}',
 '.dshcv-pdftexthit{position:absolute;background:rgba(79,140,255,.10);border-radius:2px;pointer-events:none}',
 '.dshcv-pdftexthit-hot{background:rgba(79,140,255,.12);box-shadow:inset 0 -1px 0 rgba(79,140,255,.65)}',
 '.dshcv-pdfregion{position:absolute;border:1.5px dashed rgba(79,140,255,.9);background:rgba(79,140,255,.10);box-shadow:0 0 12px rgba(79,140,255,.5);pointer-events:none;border-radius:2px}',
@@ -4081,6 +4084,7 @@ const [items, setItems] = React.useState([]);
 const [renderedAt, setRenderedAt] = React.useState(0);
 const [visible, setVisible] = React.useState(pageNumber <= 2);
 const [drag, setDrag] = React.useState(null);
+const [live, setLive] = React.useState([]);
 const canvasRef = React.useRef(null);
 const wrapRef = React.useRef(null);
 const pressRef = React.useRef(null);
@@ -4251,6 +4255,15 @@ return () => {
 cancelled = true;
 };
 }, [visible, pageNumber, width, pdf]);
+React.useEffect(() => {
+const handler = () => readSelection();
+document.addEventListener("selectionchange", handler);
+return () => document.removeEventListener("selectionchange", handler);
+}, []);
+React.useEffect(() => {
+if (!live.length) return;
+readSelection();
+}, [width]);
 const toFraction = (event) => {
 const wrap = wrapRef.current;
 if (!wrap) return null;
@@ -4296,36 +4309,55 @@ if (onRegion) onRegion(pageNumber, [x, y, w, h]);
 const readSelection = () => {
 const wrap = wrapRef.current;
 const active = window.getSelection ? window.getSelection() : null;
-if (!wrap || !active || active.isCollapsed) return;
+if (!wrap || !active || !active.rangeCount || active.isCollapsed) {
+setLive([]);
+return;
+}
 const range = active.getRangeAt(0);
-const text = selectedTextInVisualOrder(wrap, range).replace(/\s+$/g, "");
-if (!text.trim()) return;
+if (!range || !wrap.contains(range.commonAncestorContainer)) {
+setLive([]);
+return;
+}
 const box = wrap.getBoundingClientRect();
-const fragments = Array.from(range.getClientRects()).filter(
+if (!box.width || !box.height) return;
+const rects = Array.from(range.getClientRects()).filter(
 (item) => item.width > 1 && item.height > 1,
 );
-if (!fragments.length) return;
-const bands = fragments
-.map((item) => [
+if (!rects.length) {
+setLive([]);
+return;
+}
+const merged = [];
+for (const rect of rects.slice().sort((a, b) => a.top - b.top || a.left - b.left)) {
+const last = merged[merged.length - 1];
+if (last && Math.abs(rect.top - last.top) < Math.max(2, rect.height * 0.4) && rect.left <= last.right + 0.6) {
+last.right = Math.max(last.right, rect.right);
+last.bottom = Math.max(last.bottom, rect.bottom);
+last.top = Math.min(last.top, rect.top);
+continue;
+}
+merged.push({ left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom });
+}
+const bands = merged.map((item) => [
 (item.left - box.left) / box.width,
 (item.top - box.top) / box.height,
-item.width / box.width,
-item.height / box.height,
-])
-.sort((a, b) => a[1] - b[1] || a[0] - b[0]);
+(item.right - item.left) / box.width,
+(item.bottom - item.top) / box.height,
+]);
+setLive(bands);
+if (!onSelect) return;
+const text = selectedTextInVisualOrder(wrap, range).replace(/\s+$/g, "");
+if (!text.trim()) return;
 const left = Math.min(...bands.map((item) => item[0]));
 const top = Math.min(...bands.map((item) => item[1]));
 const right = Math.max(...bands.map((item) => item[0] + item[2]));
 const bottom = Math.max(...bands.map((item) => item[1] + item[3]));
-if (right <= left || bottom <= top) return;
-if (onSelect) {
 onSelect(
 pageNumber,
 [left, top, right - left, bottom - top],
 bands.map((item) => item.map((value) => Math.round(value * 10000) / 10000)),
 text,
 );
-}
 };
 return h(
 'div',
@@ -4339,7 +4371,7 @@ style: width ? { width: width + 'px', height: height + 'px' } : null,
 h('canvas', { ref: canvasRef, className: 'dshcv-pdfcanvas' }),
 h(
 'div',
-{ className: 'dshcv-pdftext', onMouseUp: readSelection },
+{ className: 'dshcv-pdftext' },
 items.map((item, index) =>
 h(
 'span',
@@ -4358,6 +4390,18 @@ display: 'block',
 item.str,
 ),
 ),
+),
+live.map((band, bandIndex) =>
+h("div", {
+key: "live" + bandIndex,
+className: "dshcv-pdfsel",
+style: {
+left: band[0] * 100 + "%",
+top: band[1] * 100 + "%",
+width: band[2] * 100 + "%",
+height: band[3] * 100 + "%",
+},
+}),
 ),
 pageHits.map((hit, index) =>
 (hit.rects || [hit.rect]).map((rect, rectIndex) =>

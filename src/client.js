@@ -1310,10 +1310,10 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
       '.dshcv-markband{position:absolute;top:-1px;bottom:-1px;background:rgba(79,140,255,.22);box-shadow:0 0 10px rgba(79,140,255,.55),inset 0 0 6px rgba(79,140,255,.35);pointer-events:none;border-radius:3px}',
       '.dshcv-markhead{position:absolute;top:-3px;bottom:-3px;width:2px;margin-left:-1px;background:rgba(79,140,255,.95);box-shadow:0 0 8px rgba(79,140,255,.85);pointer-events:none}',
     // The text is transparent and sits exactly over the bitmap: selecting it looks
-    // like selecting the page, and ::selection paints the highlight.
+    // like selecting the page, and the highlight is painted by us instead.
     '.dshcv-pdftext{position:absolute;inset:0;overflow:hidden;line-height:1;pointer-events:auto;user-select:text}',
     '.dshcv-pdftext span{position:absolute;white-space:pre;color:transparent;transform-origin:0 0;cursor:text}',
-    '.dshcv-pdftext span::selection{background:rgba(79,140,255,.34);color:transparent}',
+    '.dshcv-pdftext span::selection{background:transparent;color:transparent}',
     '.dshcv-pdftext span::-moz-selection{background:rgba(79,140,255,.34);color:transparent}',
     // The viewer owns its own scrolling: the toolbar must never scroll away, or the
     // mark buttons become unreachable once a long document is scrolled.
@@ -1348,6 +1348,11 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
     '.dshcv-pdfmarquee{position:absolute;border:1.5px solid rgba(79,140,255,.95);background:rgba(79,140,255,.16);box-shadow:0 0 10px rgba(79,140,255,.45);pointer-events:none;border-radius:2px}',
     // A text mark is a set of line bands that sit exactly on the glyphs: no outline,
     // so it reads as highlighted text rather than a selected box.
+    // Browser selection is invisible here: the same renderer that draws a stored mark
+    // draws the live selection, so the two can never disagree.
+    '.dshcv-pdftext ::selection{background:transparent;color:transparent}',
+    '.dshcv-pdftext::selection{background:transparent;color:transparent}',
+    '.dshcv-pdfsel{position:absolute;background:rgba(79,140,255,.24);border-radius:2px;pointer-events:none}',
     '.dshcv-pdftexthit{position:absolute;background:rgba(79,140,255,.10);border-radius:2px;pointer-events:none}',
     '.dshcv-pdftexthit-hot{background:rgba(79,140,255,.12);box-shadow:inset 0 -1px 0 rgba(79,140,255,.65)}',
     '.dshcv-pdfregion{position:absolute;border:1.5px dashed rgba(79,140,255,.9);background:rgba(79,140,255,.10);box-shadow:0 0 12px rgba(79,140,255,.5);pointer-events:none;border-radius:2px}',
@@ -4634,6 +4639,7 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
       const [renderedAt, setRenderedAt] = React.useState(0);
       const [visible, setVisible] = React.useState(pageNumber <= 2);
       const [drag, setDrag] = React.useState(null);
+      const [live, setLive] = React.useState([]);
       const canvasRef = React.useRef(null);
       const wrapRef = React.useRef(null);
       const pressRef = React.useRef(null);
@@ -4825,6 +4831,21 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [visible, pageNumber, width, pdf]);
 
+      // Native selection drives it; every change repaints our own bands.
+      React.useEffect(() => {
+        const handler = () => readSelection();
+        document.addEventListener("selectionchange", handler);
+        return () => document.removeEventListener("selectionchange", handler);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, []);
+      
+      // Zoom re-lays the text layer, so the stored rects would drift: recompute.
+      React.useEffect(() => {
+        if (!live.length) return;
+        readSelection();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [width]);
+      
       const toFraction = (event) => {
         const wrap = wrapRef.current;
         if (!wrap) return null;
@@ -4870,39 +4891,63 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         if (onRegion) onRegion(pageNumber, [x, y, w, h]);
       };
 
+      // Native selection stays the engine; only its appearance is ours. Browser
+      // ::selection is hidden in the text layer and these rects are painted instead,
+      // so the selection, the hover band and the stored mark share one renderer.
       const readSelection = () => {
         const wrap = wrapRef.current;
         const active = window.getSelection ? window.getSelection() : null;
-        if (!wrap || !active || active.isCollapsed) return;
+        if (!wrap || !active || !active.rangeCount || active.isCollapsed) {
+          setLive([]);
+          return;
+        }
         const range = active.getRangeAt(0);
-        const text = selectedTextInVisualOrder(wrap, range).replace(/\s+$/g, "");
-        if (!text.trim()) return;
+        if (!range || !wrap.contains(range.commonAncestorContainer)) {
+          setLive([]);
+          return;
+        }
         const box = wrap.getBoundingClientRect();
-        const fragments = Array.from(range.getClientRects()).filter(
+        if (!box.width || !box.height) return;
+        const rects = Array.from(range.getClientRects()).filter(
           (item) => item.width > 1 && item.height > 1,
         );
-        if (!fragments.length) return;
-        const bands = fragments
-          .map((item) => [
-            (item.left - box.left) / box.width,
-            (item.top - box.top) / box.height,
-            item.width / box.width,
-            item.height / box.height,
-          ])
-          .sort((a, b) => a[1] - b[1] || a[0] - b[0]);
+        if (!rects.length) {
+          setLive([]);
+          return;
+        }
+        // Merge fragments that sit on one line: adjacent boxes painted separately
+        // darker where they touch, which read as a seam.
+        const merged = [];
+        for (const rect of rects.slice().sort((a, b) => a.top - b.top || a.left - b.left)) {
+          const last = merged[merged.length - 1];
+          if (last && Math.abs(rect.top - last.top) < Math.max(2, rect.height * 0.4) && rect.left <= last.right + 0.6) {
+            last.right = Math.max(last.right, rect.right);
+            last.bottom = Math.max(last.bottom, rect.bottom);
+            last.top = Math.min(last.top, rect.top);
+            continue;
+          }
+          merged.push({ left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom });
+        }
+        const bands = merged.map((item) => [
+          (item.left - box.left) / box.width,
+          (item.top - box.top) / box.height,
+          (item.right - item.left) / box.width,
+          (item.bottom - item.top) / box.height,
+        ]);
+        setLive(bands);
+        if (!onSelect) return;
+        const text = selectedTextInVisualOrder(wrap, range).replace(/\s+$/g, "");
+        if (!text.trim()) return;
         const left = Math.min(...bands.map((item) => item[0]));
         const top = Math.min(...bands.map((item) => item[1]));
         const right = Math.max(...bands.map((item) => item[0] + item[2]));
         const bottom = Math.max(...bands.map((item) => item[1] + item[3]));
-        if (right <= left || bottom <= top) return;
-        if (onSelect) {
-          onSelect(
-            pageNumber,
-            [left, top, right - left, bottom - top],
-            bands.map((item) => item.map((value) => Math.round(value * 10000) / 10000)),
-            text,
-          );
-        }
+        onSelect(
+          pageNumber,
+          [left, top, right - left, bottom - top],
+          bands.map((item) => item.map((value) => Math.round(value * 10000) / 10000)),
+          text,
+        );
       };
 
       return h(
@@ -4917,7 +4962,7 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         h('canvas', { ref: canvasRef, className: 'dshcv-pdfcanvas' }),
         h(
           'div',
-          { className: 'dshcv-pdftext', onMouseUp: readSelection },
+          { className: 'dshcv-pdftext' },
           items.map((item, index) =>
             h(
               'span',
@@ -4936,6 +4981,18 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
               item.str,
             ),
           ),
+        ),
+        live.map((band, bandIndex) =>
+          h("div", {
+            key: "live" + bandIndex,
+            className: "dshcv-pdfsel",
+            style: {
+              left: band[0] * 100 + "%",
+              top: band[1] * 100 + "%",
+              width: band[2] * 100 + "%",
+              height: band[3] * 100 + "%",
+            },
+          }),
         ),
         pageHits.map((hit, index) =>
           (hit.rects || [hit.rect]).map((rect, rectIndex) =>

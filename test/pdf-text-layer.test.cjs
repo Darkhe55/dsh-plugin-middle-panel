@@ -29,14 +29,14 @@ check(body.includes('item.str,'), '写入真实文本');
 // —— 样式 ——
 check(has("'.dshcv-pdftext{position:absolute;inset:0"), '文字层覆盖页面');
 check(has('color:transparent'), '文字透明，视觉仍为位图');
-check(has('span::selection{background:rgba(79,140,255,.34)'), '选中可见');
+check(src.includes("'.dshcv-pdfsel{position:absolute;background:rgba(79,140,255,.24)"), '选区由我们绘制');
 check(has('user-select:text'), '允许选中');
 
 // —— 选中 → 标注 ——
 check(body.includes('const readSelection = () => {'), '能读取选区');
 check(body.includes('active.getRangeAt(0)'), '支持多行选区');
 check(body.includes('const range = active.getRangeAt(0);'), '取一次选区区间');
-check(body.includes('onMouseUp: readSelection'), '松手时记录选区');
+check(body.includes('document.addEventListener("selectionchange", handler);'), '选区随选择变化记录');
 check(src.includes('const markSelection = () => {'), '可把选区变成标注');
 check(src.includes('text: true,'), '标注标记为文字来源');
 check(src.includes('quote: selection.text,'), '引用原文');
