@@ -1,0 +1,33 @@
+// 可选区域的宽度必须等于页面文字宽度：scaleX 会同时缩小布局盒，
+// 所以布局宽度要按缩放反算回来。
+const fs = require('fs');
+const src = fs.readFileSync('src/client.js', 'utf8');
+
+let failures = 0;
+const check = (ok, label, detail) => {
+  console.log((ok ? 'PASS ' : 'FAIL ') + label + (ok || !detail ? '' : ' → ' + detail));
+  if (!ok) failures += 1;
+};
+
+const start = src.indexOf('function PdfPage(props) {');
+const end = src.indexOf('function PdfThumb(props) {');
+const page = src.slice(start, end);
+
+check(page.includes('layoutWidth: scaleX ? spanWidth / scaleX : spanWidth,'), '布局宽度按缩放反算');
+check(page.includes("width: item.layoutWidth ? item.layoutWidth + 'px' : undefined,"), 'span 使用反算宽度');
+check(page.includes("transformOrigin: '0 0',"), '缩放从左侧开始，左边界不动');
+check(
+  page.includes("transform: item.scaleX && item.scaleX !== 1 ? 'scaleX(' + item.scaleX + ')' : undefined,"),
+  '仍按测量结果做横向缩放',
+);
+check(!page.includes("overflow: 'hidden',"), '不再裁剪（避免切掉最后一个字形）');
+check(page.includes('const spanWidth = Math.max(0, Number(item.width) || 0) * viewport.scale;'), '基准宽度来自 item.width');
+
+// 反算恒等式：layoutWidth * scaleX === spanWidth
+const layout = 'spanWidth / scaleX';
+check(page.includes(layout), '恒等式 layoutWidth*scaleX = spanWidth 成立');
+
+if (failures) {
+  console.log('失败 ' + failures + ' 项');
+  process.exit(1);
+}

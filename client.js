@@ -4134,6 +4134,7 @@ top: transform[5] - fontHeight,
 fontHeight,
 width: spanWidth,
 scaleX,
+layoutWidth: scaleX ? spanWidth / scaleX : spanWidth,
 });
 }
 setItems(spans);
@@ -4240,11 +4241,10 @@ style: {
 left: item.left + 'px',
 top: item.top + 'px',
 fontSize: item.fontHeight + 'px',
-width: item.width ? item.width + 'px' : undefined,
+width: item.layoutWidth ? item.layoutWidth + 'px' : undefined,
 transform: item.scaleX && item.scaleX !== 1 ? 'scaleX(' + item.scaleX + ')' : undefined,
 transformOrigin: '0 0',
 display: 'block',
-overflow: 'hidden',
 },
 },
 item.str,

@@ -4683,6 +4683,10 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
               fontHeight,
               width: spanWidth,
               scaleX,
+              // The rect a selection reports is the transformed one, so a fixed layout
+              // width would shrink with scaleX and leave the band short on the right.
+              // Dividing by scaleX makes layoutWidth * scaleX equal the item width exactly.
+              layoutWidth: scaleX ? spanWidth / scaleX : spanWidth,
             });
           }
           setItems(spans);
@@ -4795,11 +4799,10 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
                   left: item.left + 'px',
                   top: item.top + 'px',
                   fontSize: item.fontHeight + 'px',
-                  width: item.width ? item.width + 'px' : undefined,
+                  width: item.layoutWidth ? item.layoutWidth + 'px' : undefined,
                   transform: item.scaleX && item.scaleX !== 1 ? 'scaleX(' + item.scaleX + ')' : undefined,
                   transformOrigin: '0 0',
                   display: 'block',
-                  overflow: 'hidden',
                 },
               },
               item.str,
