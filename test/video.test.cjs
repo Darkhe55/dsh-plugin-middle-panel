@@ -130,7 +130,7 @@ if (parseStart > 0 && parseEnd > parseStart) {
   check(parse(' 8 ') === 8, '忽略首尾空格');
   check(Number.isNaN(parse('')), '空字符串不可用');
   check(Number.isNaN(parse('abc')), '非数字不可用');
-  check(Number.isNaN(parse('1::2')), '空段不可用');
+check(parse('1::2') === 3602, '空缺段按 0 补齐（1:00:02）', String(parse('1::2')));
   check(Number.isNaN(parse('-3')), '负数不可用');
   check(Number.isNaN(parse('1:2:3:4')), '超过三段不可用');
   check(parse('0') === 0, '0 是合法时间');

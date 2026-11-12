@@ -28,8 +28,8 @@ check(has('border-left:1px dashed rgba(79,140,255,.85)'), '淡蓝虚线');
 check(/hover !== null && !drag/.test(src), '拖动时不画悬停虚线');
 
 // —— 右键菜单定位 ——
-check(has("const rect = root ? root.getBoundingClientRect() : { left: 0, top: 0 };"), '按面板矩形换算坐标');
-check(has('x: event.clientX - rect.left'), '菜单坐标是面板内坐标');
+check(has('const rect = root ? root.getBoundingClientRect() : { left: 0, top: 0, width: 0, height: 0 };'), '按面板矩形换算坐标');
+check(has('const localX = event.clientX - rect.left;'), '菜单坐标是面板内坐标');
 check(has("position:absolute;z-index:60"), '菜单为绝对定位');
 check(has('padding:10px 12px 12px;position:relative}'), '视频面板是定位上下文');
 
@@ -49,7 +49,7 @@ check(
 );
 // —— 回车跳转仍然走 seekTo ——
 check(has('seekTo(target);'), '回车调用 seekTo');
-check(has('previewing.current = false;\n        node.currentTime'), 'seekTo 先结束预览再定位');
+check(has('previewing.current = false;') && has('const target = applySeek(node, time);'), 'seekTo 先结束预览再定位');
 
 if (failures) {
   console.log('失败 ' + failures + ' 项');

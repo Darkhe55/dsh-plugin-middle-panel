@@ -235,14 +235,18 @@ if (left.kind === 'text') return Boolean(left.lines && right.lines) && left.line
 if (left.kind === 'element' || left.kind === 'layer') return left.selector === right.selector;
 if (left.kind === 'paragraph') return left.paragraph === right.paragraph;
 const parseTime = (text) => {
-const raw = String(text === undefined || text === null ? '' : text).trim();
+const raw = String(text === undefined || text === null ? '' : text).replace(/\s+/g, '');
 if (!raw) return NaN;
 const parts = raw.split(':');
 if (parts.length > 3) return NaN;
 let total = 0;
 for (const part of parts) {
-if (!/^\d+(\.\d+)?$/.test(part.trim())) return NaN;
-total = total * 60 + Number(part.trim());
+if (part === '') {
+total *= 60;
+continue;
+}
+if (!/^\d+(\.\d+)?$/.test(part)) return NaN;
+total = total * 60 + Number(part);
 }
 return total;
 };
@@ -834,6 +838,8 @@ const CSS_PANEL = [
 '.dshcv-track{position:relative;height:22px;border-radius:11px;background:color-mix(in srgb,var(--dsw-alias-bg-layer-2) 88%,transparent);cursor:pointer;touch-action:none;overflow:hidden}',
 '.dshcv-trackfill{position:absolute;left:0;top:0;bottom:0;background:color-mix(in srgb,var(--dsw-alias-brand-primary) 18%,transparent)}',
 '.dshcv-trackhead{position:absolute;top:-2px;bottom:-2px;width:2px;margin-left:-1px;background:var(--dsw-alias-brand-primary)}',
+'.dshcv-markband{position:absolute;top:-1px;bottom:-1px;background:rgba(79,140,255,.22);box-shadow:0 0 10px rgba(79,140,255,.55),inset 0 0 6px rgba(79,140,255,.35);pointer-events:none;border-radius:3px}',
+'.dshcv-markhead{position:absolute;top:-3px;bottom:-3px;width:2px;margin-left:-1px;background:rgba(79,140,255,.95);box-shadow:0 0 8px rgba(79,140,255,.85);pointer-events:none}',
 '.dshcv-hoverhead{position:absolute;top:-2px;bottom:-2px;width:0;margin-left:-0.5px;border-left:1px dashed rgba(79,140,255,.85);pointer-events:none}',
 '.dshcv-trackband{position:absolute;top:0;bottom:0;background:rgba(79,140,255,.35);border-left:1px solid rgba(79,140,255,.8);border-right:1px solid rgba(79,140,255,.8)}',
 '.dshcv-tracktip{position:absolute;bottom:calc(100% + 6px);transform:translateX(-50%);background:#0f1115;color:#fff;font:11px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;padding:3px 7px;border-radius:6px;white-space:nowrap;pointer-events:none;font-variant-numeric:tabular-nums}',
@@ -6651,14 +6657,28 @@ cancelAnimationFrame(previewFrame.current);
 previewFrame.current = 0;
 }
 };
+const applySeek = (node, time) => {
+const requested = Math.max(0, Number(time) || 0);
+const total = Number(node.duration);
+const target = Number.isFinite(total) && total > 0 ? Math.min(total, requested) : requested;
+if (!node.readyState) {
+const once = () => {
+node.currentTime = target;
+};
+node.addEventListener('loadedmetadata', once, { once: true });
+return target;
+}
+node.currentTime = target;
+return target;
+};
 const seekTo = (time) => {
 const node = video();
 if (!node) return;
 cancelPreview();
 previewing.current = false;
-node.currentTime = Math.min(node.duration || 0, Math.max(0, time));
-setInfo((current) => Object.assign({}, current, { current: node.currentTime }));
-hoverBase.current = node.currentTime;
+const target = applySeek(node, time);
+setInfo((current) => Object.assign({}, current, { current: target }));
+hoverBase.current = target;
 };
 const play = () => {
 const node = video();
@@ -6794,8 +6814,14 @@ const onTrackMenu = (event) => {
 if (!duration) return;
 event.preventDefault();
 const root = rootRef.current;
-const rect = root ? root.getBoundingClientRect() : { left: 0, top: 0 };
-setMenuAt({ x: event.clientX - rect.left, y: event.clientY - rect.top });
+const rect = root ? root.getBoundingClientRect() : { left: 0, top: 0, width: 0, height: 0 };
+const localX = event.clientX - rect.left;
+const localY = event.clientY - rect.top;
+const width = 220;
+const height = 148;
+const left = Math.max(8, Math.min(rect.width - width - 8, localX - 24));
+const top = localY + height + 12 > rect.height ? Math.max(8, localY - height) : localY + 6;
+setMenuAt({ x: left, y: top });
 };
 const onStageDown = (event) => {
 if (!boxing) return;
@@ -7010,6 +7036,26 @@ setTimeDraft('');
 event.currentTarget.blur();
 },
 }),
+(() => {
+const typed = parseTime(timeDraft);
+if (!Number.isFinite(typed)) return null;
+if (Math.abs(typed - info.current) <= frame / 2) return null;
+if (duration && typed > duration + 0.05) return null;
+return h(
+'button',
+{
+type: 'button',
+className: 'dshcv-btn',
+'data-kind': 'primary',
+title: '跳到 ' + formatTime(typed),
+onClick: () => {
+seekTo(typed);
+setTimeDraft('');
+},
+},
+'跳到 ' + formatTime(typed),
+);
+})(),
 h('span', { className: 'dshcv-videotime' }, '/ ' + formatTime(duration)),
 h('span', { style: { flex: '1 1 auto' } }),
 h(
@@ -7072,6 +7118,21 @@ h('div', { className: 'dshcv-trackhead', style: { left: headPercent + '%' } }),
 hover !== null && !drag
 ? h('div', { className: 'dshcv-hoverhead', style: { left: timeToPercent(hover) + '%' } })
 : null,
+hovered && hovered.kind === 'video'
+? h('div', {
+className: 'dshcv-markband',
+style: {
+left: timeToPercent(hovered.start) + '%',
+width: Math.max(timeToPercent(hovered.end) - timeToPercent(hovered.start), 0) + '%',
+},
+})
+: null,
+hovered && hovered.kind === 'video'
+? h('div', { className: 'dshcv-markhead', style: { left: timeToPercent(hovered.start) + '%' } })
+: null,
+hovered && hovered.kind === 'video' && hovered.end > hovered.start
+? h('div', { className: 'dshcv-markhead', style: { left: timeToPercent(hovered.end) + '%' } })
+: null,
 hover !== null || drag
 ? h(
 'div',
@@ -7108,7 +7169,7 @@ menuAt
 'div',
 {
 className: 'dshcv-videomenu',
-style: { left: Math.max(8, menuAt.x - 160) + 'px', top: Math.max(8, menuAt.y) + 'px' },
+style: { left: menuAt.x + 'px', top: menuAt.y + 'px' },
 },
 h(
 'button',

@@ -298,14 +298,19 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
       if (left.kind === 'paragraph') return left.paragraph === right.paragraph;
       // Accepts 12.4 / 1:23.4 / 01:02:03.5 — the three shapes a reviewer types.
     const parseTime = (text) => {
-      const raw = String(text === undefined || text === null ? '' : text).trim();
+      // Lenient on purpose: "1:" means one minute, ":30" means half a minute.
+      const raw = String(text === undefined || text === null ? '' : text).replace(/\s+/g, '');
       if (!raw) return NaN;
       const parts = raw.split(':');
       if (parts.length > 3) return NaN;
       let total = 0;
       for (const part of parts) {
-        if (!/^\d+(\.\d+)?$/.test(part.trim())) return NaN;
-        total = total * 60 + Number(part.trim());
+        if (part === '') {
+          total *= 60;
+          continue;
+        }
+        if (!/^\d+(\.\d+)?$/.test(part)) return NaN;
+        total = total * 60 + Number(part);
       }
       return total;
     };
@@ -989,6 +994,8 @@ return Math.abs(Number(left.start) - Number(right.start)) <= 0.2 && Math.abs(Num
       '.dshcv-track{position:relative;height:22px;border-radius:11px;background:color-mix(in srgb,var(--dsw-alias-bg-layer-2) 88%,transparent);cursor:pointer;touch-action:none;overflow:hidden}',
       '.dshcv-trackfill{position:absolute;left:0;top:0;bottom:0;background:color-mix(in srgb,var(--dsw-alias-brand-primary) 18%,transparent)}',
       '.dshcv-trackhead{position:absolute;top:-2px;bottom:-2px;width:2px;margin-left:-1px;background:var(--dsw-alias-brand-primary)}',
+      '.dshcv-markband{position:absolute;top:-1px;bottom:-1px;background:rgba(79,140,255,.22);box-shadow:0 0 10px rgba(79,140,255,.55),inset 0 0 6px rgba(79,140,255,.35);pointer-events:none;border-radius:3px}',
+      '.dshcv-markhead{position:absolute;top:-3px;bottom:-3px;width:2px;margin-left:-1px;background:rgba(79,140,255,.95);box-shadow:0 0 8px rgba(79,140,255,.85);pointer-events:none}',
       '.dshcv-hoverhead{position:absolute;top:-2px;bottom:-2px;width:0;margin-left:-0.5px;border-left:1px dashed rgba(79,140,255,.85);pointer-events:none}',
       '.dshcv-trackband{position:absolute;top:0;bottom:0;background:rgba(79,140,255,.35);border-left:1px solid rgba(79,140,255,.8);border-right:1px solid rgba(79,140,255,.8)}',
       '.dshcv-tracktip{position:absolute;bottom:calc(100% + 6px);transform:translateX(-50%);background:#0f1115;color:#fff;font:11px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;padding:3px 7px;border-radius:6px;white-space:nowrap;pointer-events:none;font-variant-numeric:tabular-nums}',
@@ -7345,16 +7352,33 @@ function SplitDivider(props) {
         }
       };
 
+      // Assigning currentTime before the media is ready throws, and a NaN duration
+      // would clamp every target to 0. Queue in that case and never clamp on NaN.
+      const applySeek = (node, time) => {
+        const requested = Math.max(0, Number(time) || 0);
+        const total = Number(node.duration);
+        const target = Number.isFinite(total) && total > 0 ? Math.min(total, requested) : requested;
+        if (!node.readyState) {
+          const once = () => {
+            node.currentTime = target;
+          };
+          node.addEventListener('loadedmetadata', once, { once: true });
+          return target;
+        }
+        node.currentTime = target;
+        return target;
+      };
+
       const seekTo = (time) => {
         const node = video();
         if (!node) return;
         cancelPreview();
         previewing.current = false;
-        node.currentTime = Math.min(node.duration || 0, Math.max(0, time));
-        setInfo((current) => Object.assign({}, current, { current: node.currentTime }));
+        const target = applySeek(node, time);
+        setInfo((current) => Object.assign({}, current, { current: target }));
         // A committed move is the new resting place: leaving the track must not
         // spring back to where the pointer happened to enter.
-        hoverBase.current = node.currentTime;
+        hoverBase.current = target;
       };
 
       const play = () => {
@@ -7512,8 +7536,16 @@ function SplitDivider(props) {
         // Anchored to the panel, not the viewport: an ancestor transform makes
         // position:fixed resolve against that ancestor, which put the menu offscreen.
         const root = rootRef.current;
-        const rect = root ? root.getBoundingClientRect() : { left: 0, top: 0 };
-        setMenuAt({ x: event.clientX - rect.left, y: event.clientY - rect.top });
+        const rect = root ? root.getBoundingClientRect() : { left: 0, top: 0, width: 0, height: 0 };
+        const localX = event.clientX - rect.left;
+        const localY = event.clientY - rect.top;
+        // Keep the whole menu inside the panel: flip above when there is no room
+        // below, and clamp both axes by the menu's own size.
+        const width = 220;
+        const height = 148;
+        const left = Math.max(8, Math.min(rect.width - width - 8, localX - 24));
+        const top = localY + height + 12 > rect.height ? Math.max(8, localY - height) : localY + 6;
+        setMenuAt({ x: left, y: top });
       };
 
       const onStageDown = (event) => {
@@ -7740,6 +7772,26 @@ function SplitDivider(props) {
               event.currentTarget.blur();
             },
           }),
+          (() => {
+            const typed = parseTime(timeDraft);
+            if (!Number.isFinite(typed)) return null;
+            if (Math.abs(typed - info.current) <= frame / 2) return null;
+            if (duration && typed > duration + 0.05) return null;
+            return h(
+              'button',
+              {
+                type: 'button',
+                className: 'dshcv-btn',
+                'data-kind': 'primary',
+                title: '跳到 ' + formatTime(typed),
+                onClick: () => {
+                  seekTo(typed);
+                  setTimeDraft('');
+                },
+              },
+              '跳到 ' + formatTime(typed),
+            );
+          })(),
           h('span', { className: 'dshcv-videotime' }, '/ ' + formatTime(duration)),
           h('span', { style: { flex: '1 1 auto' } }),
           h(
@@ -7802,6 +7854,22 @@ function SplitDivider(props) {
           hover !== null && !drag
             ? h('div', { className: 'dshcv-hoverhead', style: { left: timeToPercent(hover) + '%' } })
             : null,
+          // Hovering a clip mark in the rail lights up its moment (or range) here.
+          hovered && hovered.kind === 'video'
+            ? h('div', {
+                className: 'dshcv-markband',
+                style: {
+                  left: timeToPercent(hovered.start) + '%',
+                  width: Math.max(timeToPercent(hovered.end) - timeToPercent(hovered.start), 0) + '%',
+                },
+              })
+            : null,
+          hovered && hovered.kind === 'video'
+            ? h('div', { className: 'dshcv-markhead', style: { left: timeToPercent(hovered.start) + '%' } })
+            : null,
+          hovered && hovered.kind === 'video' && hovered.end > hovered.start
+            ? h('div', { className: 'dshcv-markhead', style: { left: timeToPercent(hovered.end) + '%' } })
+            : null,
           hover !== null || drag
             ? h(
                 'div',
@@ -7838,7 +7906,7 @@ function SplitDivider(props) {
               'div',
               {
                 className: 'dshcv-videomenu',
-                style: { left: Math.max(8, menuAt.x - 160) + 'px', top: Math.max(8, menuAt.y) + 'px' },
+                style: { left: menuAt.x + 'px', top: menuAt.y + 'px' },
               },
               h(
                 'button',

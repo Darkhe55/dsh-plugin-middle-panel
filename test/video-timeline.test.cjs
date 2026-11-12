@@ -100,7 +100,7 @@ check(has('if (hasOut && next >= outPoint) setOutPoint(null);'), '设入点晚�
 check(has('if (hasIn && next <= inPoint) setInPoint(null);'), '设出点早于入点时删掉入点');
 check(has('addClip(action.start, action.end);'), '标记区间用入出点');
 check(has("if (action.kind === 'now')"), '无点时按当前位置打点');
-check(has('hoverBase.current = node.currentTime;'), '跳转后把新位置记为基准');
+check(src.includes('hoverBase.current = target;'), '跳转后把新位置记为基准');
 check(has('if (!moved) {'), '单击不生成区间');
 check(has("event.key === 'i' || event.key === 'I'"), 'I 键插入入点');
 check(has("event.key === 'o' || event.key === 'O'"), 'O 键插入出点');
