@@ -4572,6 +4572,27 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
     // than the drawn glyphs; the error then accumulates along a line. The rendered
     // pixels are the ground truth, so each run is measured once and cached in page
     // units, which a later zoom only scales.
+    // Helvetica-compatible measurement: the generic `sans-serif` family resolves to
+    // a UI font on Windows whose per-character widths differ from the PDF font,
+    // which shifts every glyph box inside a run. Arial is metric-compatible.
+    const MEASURE_FONT = "Arial, Helvetica, sans-serif";
+    let measureCtx = null;
+    // Cumulative advance table for a string, in the measuring font.
+    const advanceTable = (text, fontSize) => {
+      if (!measureCtx) measureCtx = document.createElement("canvas").getContext("2d");
+      if (!measureCtx || !text) return null;
+      measureCtx.font = fontSize + "px " + MEASURE_FONT;
+      const chars = Array.from(text);
+      const cumulative = [0];
+      let running = 0;
+      for (const ch of chars) {
+        running += measureCtx.measureText(ch).width;
+        cumulative.push(running);
+      }
+      if (!(running > 0)) return null;
+      return { cumulative, total: running, chars };
+    };
+
     const inkWidthCache = new WeakMap();
     // Returns the absolute right edge of ink inside the box, in device pixels.
     const measureInkRight = (data, dataWidth, x0, x1, y0, y1) => {
@@ -4759,13 +4780,9 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
           const glyphs = [];
           for (const span of spans) {
             const chars = Array.from(span.str);
-            let shares = null;
-            let total = 0;
-            if (measure && chars.length > 1) {
-              measure.font = span.fontHeight + "px sans-serif";
-              shares = chars.map((ch) => measure.measureText(ch).width);
-              for (const share of shares) total += share;
-            }
+            const table = chars.length > 1 ? advanceTable(span.str, span.fontHeight) : null;
+            const shares = table ? table.cumulative : null;
+            const total = table ? table.total : 0;
             if (!shares || !(total > 0)) {
               const natural = measure ? measure.measureText(span.str).width : 0;
               const one = natural > 0 ? span.width / natural : 1;
@@ -4780,13 +4797,15 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
               });
               continue;
             }
-            let before = 0;
             for (let index = 0; index < chars.length; index += 1) {
-              const share = shares[index];
-              const left = span.left + span.width * (before / total);
-              const width = span.width * (share / total);
-              before += share;
-              const scaleX = share > 0 ? width / share : 1;
+              // Each glyph gets its own slice of the run width, taken from the cumulative
+              // advance table, so the slices always add up to the run width exactly.
+              const from = shares[index] / total;
+              const to = shares[index + 1] / total;
+              const left = span.left + span.width * from;
+              const width = span.width * (to - from);
+              const natural = shares[index + 1] - shares[index];
+              const scaleX = natural > 0 ? width / natural : 1;
               glyphs.push({
                 str: chars[index],
                 left,
@@ -5301,6 +5320,20 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
               previousTop = top;
             }
             if (!joined) continue;
+            // Character counts are not widths: the same cumulative advance table the text
+            // layer uses maps a character offset onto a position, or the box ends short.
+            const measureCtx2 = document.createElement("canvas").getContext("2d");
+            for (const piece of pieces) {
+              const cumulative = [0];
+              let running = 0;
+              if (measureCtx2) measureCtx2.font = Math.max(4, piece.height) + "px " + MEASURE_FONT;
+              for (const ch of piece.str) {
+                running += measureCtx2 ? measureCtx2.measureText(ch).width : 1;
+                cumulative.push(running);
+              }
+              piece.cumulative = cumulative;
+              piece.cumTotal = running;
+            }
             const haystack = joined.toLowerCase();
             let at = haystack.indexOf(needle);
             while (at >= 0) {
@@ -5310,8 +5343,9 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
                 if (piece.end <= at || piece.start >= to) continue;
                 const from = Math.max(at, piece.start) - piece.start;
                 const tail = Math.min(to, piece.end) - piece.start;
-                const a = from / Math.max(1, piece.length);
-                const b = tail / Math.max(1, piece.length);
+                const total = piece.cumTotal > 0 ? piece.cumTotal : Math.max(1, piece.length);
+                const a = piece.cumTotal > 0 ? piece.cumulative[from] / total : from / Math.max(1, piece.length);
+                const b = piece.cumTotal > 0 ? piece.cumulative[tail] / total : tail / Math.max(1, piece.length);
                 rects.push([
                   (piece.left + piece.width * a) / viewport.width,
                   piece.top / viewport.height,

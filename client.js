@@ -4026,6 +4026,22 @@ if (!parts.length) return String(range.toString() || "");
 parts.sort((a, b) => (Math.abs(a.top - b.top) > 4 ? a.top - b.top : a.left - b.left));
 return parts.map((part) => part.text).join("");
 };
+const MEASURE_FONT = "Arial, Helvetica, sans-serif";
+let measureCtx = null;
+const advanceTable = (text, fontSize) => {
+if (!measureCtx) measureCtx = document.createElement("canvas").getContext("2d");
+if (!measureCtx || !text) return null;
+measureCtx.font = fontSize + "px " + MEASURE_FONT;
+const chars = Array.from(text);
+const cumulative = [0];
+let running = 0;
+for (const ch of chars) {
+running += measureCtx.measureText(ch).width;
+cumulative.push(running);
+}
+if (!(running > 0)) return null;
+return { cumulative, total: running, chars };
+};
 const inkWidthCache = new WeakMap();
 const measureInkRight = (data, dataWidth, x0, x1, y0, y1) => {
 let right = -1;
@@ -4194,13 +4210,9 @@ for (const span of group) span.width *= factor;
 const glyphs = [];
 for (const span of spans) {
 const chars = Array.from(span.str);
-let shares = null;
-let total = 0;
-if (measure && chars.length > 1) {
-measure.font = span.fontHeight + "px sans-serif";
-shares = chars.map((ch) => measure.measureText(ch).width);
-for (const share of shares) total += share;
-}
+const table = chars.length > 1 ? advanceTable(span.str, span.fontHeight) : null;
+const shares = table ? table.cumulative : null;
+const total = table ? table.total : 0;
 if (!shares || !(total > 0)) {
 const natural = measure ? measure.measureText(span.str).width : 0;
 const one = natural > 0 ? span.width / natural : 1;
@@ -4215,13 +4227,13 @@ layoutWidth: one ? span.width / one : span.width,
 });
 continue;
 }
-let before = 0;
 for (let index = 0; index < chars.length; index += 1) {
-const share = shares[index];
-const left = span.left + span.width * (before / total);
-const width = span.width * (share / total);
-before += share;
-const scaleX = share > 0 ? width / share : 1;
+const from = shares[index] / total;
+const to = shares[index + 1] / total;
+const left = span.left + span.width * from;
+const width = span.width * (to - from);
+const natural = shares[index + 1] - shares[index];
+const scaleX = natural > 0 ? width / natural : 1;
 glyphs.push({
 str: chars[index],
 left,
@@ -4692,6 +4704,18 @@ previousRight = left + width;
 previousTop = top;
 }
 if (!joined) continue;
+const measureCtx2 = document.createElement("canvas").getContext("2d");
+for (const piece of pieces) {
+const cumulative = [0];
+let running = 0;
+if (measureCtx2) measureCtx2.font = Math.max(4, piece.height) + "px " + MEASURE_FONT;
+for (const ch of piece.str) {
+running += measureCtx2 ? measureCtx2.measureText(ch).width : 1;
+cumulative.push(running);
+}
+piece.cumulative = cumulative;
+piece.cumTotal = running;
+}
 const haystack = joined.toLowerCase();
 let at = haystack.indexOf(needle);
 while (at >= 0) {
@@ -4701,8 +4725,9 @@ for (const piece of pieces) {
 if (piece.end <= at || piece.start >= to) continue;
 const from = Math.max(at, piece.start) - piece.start;
 const tail = Math.min(to, piece.end) - piece.start;
-const a = from / Math.max(1, piece.length);
-const b = tail / Math.max(1, piece.length);
+const total = piece.cumTotal > 0 ? piece.cumTotal : Math.max(1, piece.length);
+const a = piece.cumTotal > 0 ? piece.cumulative[from] / total : from / Math.max(1, piece.length);
+const b = piece.cumTotal > 0 ? piece.cumulative[tail] / total : tail / Math.max(1, piece.length);
 rects.push([
 (piece.left + piece.width * a) / viewport.width,
 piece.top / viewport.height,
