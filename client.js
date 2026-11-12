@@ -1135,6 +1135,8 @@ const CSS_PANEL = [
 '.dshcv-pdfdocwrap .dshcv-tools{flex:0 0 auto;position:sticky;top:0;z-index:5;background:var(--dsw-alias-bg-layer-2,#fff);padding-top:4px}',
 '.dshcv-pdfdocwrap .dshcv-msg{position:static}',
 '.dshcv-pdfnote{flex:0 0 auto;padding:4px 10px 6px;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary)}',
+'.dshcv-pdfunlock{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:6px 10px 8px;flex-wrap:wrap}',
+'.dshcv-pdfunlocktitle{font-size:12px;color:var(--dsw-alias-label-secondary)}',
 '.dshcv-pdfmain{display:flex;gap:10px;min-height:0;flex:1 1 auto;overflow:hidden}',
 '.dshcv-pdfthumbs{flex:0 0 116px;min-height:0;overflow:auto;padding:4px;border-right:1px solid var(--dshcv-line)}',
 '.dshcv-pdfthumb{display:block;width:100%;margin:0 0 8px;padding:3px;border:0;background:transparent;cursor:pointer;border-radius:6px}',
@@ -4533,6 +4535,9 @@ const [searching, setSearching] = React.useState(false);
 const [searchNote, setSearchNote] = React.useState("");
 const [pageSizes, setPageSizes] = React.useState({});
 const [baseSize, setBaseSize] = React.useState(null);
+const [unlock, setUnlock] = React.useState(null);
+const [unlockInput, setUnlockInput] = React.useState("");
+const unlockRef = React.useRef(null);
 const docRef = React.useRef(null);
 const pdfjsRef = React.useRef(null);
 const scrollRef = React.useRef(null);
@@ -4566,6 +4571,11 @@ cMapPacked: vendorShape === 'prefix',
 standardFontDataUrl: vendorShape === 'prefix' ? VENDOR_PREFIX + 'standard_fonts/' : undefined,
 data: bytes,
 });
+task.onPassword = (updatePassword, reason) => {
+if (cancelled) return;
+unlockRef.current = updatePassword;
+setUnlock({ wrong: reason === 2 });
+};
 const loaded = await task.promise;
 if (cancelled) return;
 docRef.current = loaded;
@@ -4587,6 +4597,9 @@ table[n] = { width: box.width, height: box.height };
 if (!cancelled) setPageSizes(table);
 })();
 }
+unlockRef.current = null;
+setUnlock(null);
+setUnlockInput("");
 setState({ status: 'ready', error: '', pages: loaded.numPages });
 })
 .catch((error) => {
@@ -4826,6 +4839,14 @@ if (found.length) scrollToPage(found[0].page, found[0].rect || (found[0].rects &
 if (searchToken.current === token) setSearching(false);
 }
 };
+const submitPassword = () => {
+const update = unlockRef.current;
+if (!update) return;
+const value = unlockInput;
+setUnlockInput("");
+setUnlock({ wrong: false, waiting: true });
+update(value);
+};
 const gotoHit = (next) => {
 if (!hits.length) return;
 const index = (next + hits.length) % hits.length;
@@ -4950,6 +4971,26 @@ onClick: markSelection,
 h(
 'div',
 searchNote ? h('div', { className: 'dshcv-pdfnote' }, searchNote) : null,
+unlock
+? h(
+'div',
+{ className: 'dshcv-pdfunlock' },
+h('div', { className: 'dshcv-pdfunlocktitle' }, '该 PDF 已加密，请输入打开密码'),
+h('input', {
+type: 'password',
+className: 'dshcv-searchinput',
+placeholder: unlock.wrong ? '密码错误，请重试' : '密码',
+value: unlockInput,
+onChange: (event) => setUnlockInput(event.target.value),
+onKeyDown: (event) => {
+if (event.key !== 'Enter') return;
+event.preventDefault();
+submitPassword();
+},
+}),
+h('button', { type: 'button', className: 'dshcv-btn', 'data-kind': 'primary', onClick: submitPassword }, unlock.waiting ? '验证中…' : '打开'),
+)
+: null,
 { className: 'dshcv-pdfmain' },
 h(
 'div',

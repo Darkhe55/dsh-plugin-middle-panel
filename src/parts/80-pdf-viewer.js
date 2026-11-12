@@ -16,6 +16,11 @@
       // Page geometry, so a page box can be sized without waiting for its bitmap.
       const [pageSizes, setPageSizes] = React.useState({});
       const [baseSize, setBaseSize] = React.useState(null);
+      // A password-protected document stays pending until a password is supplied, so
+      // this state drives a small form instead of an error.
+      const [unlock, setUnlock] = React.useState(null);
+      const [unlockInput, setUnlockInput] = React.useState("");
+      const unlockRef = React.useRef(null);
       const docRef = React.useRef(null);
       const pdfjsRef = React.useRef(null);
       const scrollRef = React.useRef(null);
@@ -50,6 +55,12 @@
               standardFontDataUrl: vendorShape === 'prefix' ? VENDOR_PREFIX + 'standard_fonts/' : undefined,
               data: bytes,
             });
+            // reason 1 = needs a password, 2 = the previous one was wrong.
+            task.onPassword = (updatePassword, reason) => {
+              if (cancelled) return;
+              unlockRef.current = updatePassword;
+              setUnlock({ wrong: reason === 2 });
+            };
             const loaded = await task.promise;
             if (cancelled) return;
             docRef.current = loaded;
@@ -74,6 +85,9 @@
                 if (!cancelled) setPageSizes(table);
               })();
             }
+            unlockRef.current = null;
+            setUnlock(null);
+            setUnlockInput("");
             setState({ status: 'ready', error: '', pages: loaded.numPages });
           })
           .catch((error) => {
@@ -349,6 +363,17 @@
         }
       };
 
+      const submitPassword = () => {
+        const update = unlockRef.current;
+        if (!update) return;
+        const value = unlockInput;
+        setUnlockInput("");
+        setUnlock({ wrong: false, waiting: true });
+        // A wrong password re-enters onPassword with reason 2, so the form updates
+        // itself; nothing here has to guess.
+        update(value);
+      };
+
       const gotoHit = (next) => {
         if (!hits.length) return;
         const index = (next + hits.length) % hits.length;
@@ -480,6 +505,26 @@
         h(
           'div',
           searchNote ? h('div', { className: 'dshcv-pdfnote' }, searchNote) : null,
+          unlock
+            ? h(
+                'div',
+                { className: 'dshcv-pdfunlock' },
+                h('div', { className: 'dshcv-pdfunlocktitle' }, '该 PDF 已加密，请输入打开密码'),
+                h('input', {
+                  type: 'password',
+                  className: 'dshcv-searchinput',
+                  placeholder: unlock.wrong ? '密码错误，请重试' : '密码',
+                  value: unlockInput,
+                  onChange: (event) => setUnlockInput(event.target.value),
+                  onKeyDown: (event) => {
+                    if (event.key !== 'Enter') return;
+                    event.preventDefault();
+                    submitPassword();
+                  },
+                }),
+                h('button', { type: 'button', className: 'dshcv-btn', 'data-kind': 'primary', onClick: submitPassword }, unlock.waiting ? '验证中…' : '打开'),
+              )
+            : null,
           { className: 'dshcv-pdfmain' },
           h(
             'div',
