@@ -4570,6 +4570,7 @@ cMapUrl: vendorShape === 'prefix' ? VENDOR_PREFIX + 'cmaps/' : undefined,
 cMapPacked: vendorShape === 'prefix',
 standardFontDataUrl: vendorShape === 'prefix' ? VENDOR_PREFIX + 'standard_fonts/' : undefined,
 data: bytes,
+isEvalSupported: false,
 });
 task.onPassword = (updatePassword, reason) => {
 if (cancelled) return;

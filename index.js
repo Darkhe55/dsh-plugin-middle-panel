@@ -75,7 +75,10 @@ const corsFor = (request, hostHeader) => {
   if (loopback && (!requestPort || loopback[1] !== requestPort)) return undefined
   if (!opaque && origin !== 'dsh-app://app' && !loopback) return undefined
   return {
-    'access-control-allow-origin': opaque ? '*' : origin,
+    // `null` is the serialized origin of the desktop page and of a sandboxed
+      // iframe. Echoing the literal `null` grants that one origin instead of every
+      // origin, which is what a wildcard would do.
+      'access-control-allow-origin': opaque ? 'null' : origin,
     'access-control-allow-methods': 'GET, POST, OPTIONS',
     'access-control-allow-headers': 'content-type',
     'access-control-max-age': '600',

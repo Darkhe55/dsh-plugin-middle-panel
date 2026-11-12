@@ -54,6 +54,9 @@
               cMapPacked: vendorShape === 'prefix',
               standardFontDataUrl: vendorShape === 'prefix' ? VENDOR_PREFIX + 'standard_fonts/' : undefined,
               data: bytes,
+              // A loaded document is untrusted input: refuse the eval path pdf.js offers
+              // for some font programs.
+              isEvalSupported: false,
             });
             // reason 1 = needs a password, 2 = the previous one was wrong.
             task.onPassword = (updatePassword, reason) => {
