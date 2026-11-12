@@ -23,7 +23,7 @@ check(size('pdf.min.mjs') < 2, '主模块体积可控', size('pdf.min.mjs').toFi
 
 // —— 宿主路由 ——
 const route = fs.readFileSync(path.join(__dirname, '..', 'vendor-route.js'), 'utf8');
-check(route.includes("VENDOR_PATHS = ['/dsh-canvas/vendor/pdfjs/*', '/dsh-canvas/vendor']"), '注册了前缀与精确两条路由');
+check(route.includes('for (const relative of listVendorFiles()) add(PREFIX + relative, relative)'), '逐文件注册精确路由');
 check(route.includes('path.relative(VENDOR_ROOT, absolute)'), '限制在插件目录内');
 check(route.includes("relative.startsWith('..')"), '拒绝目录穿越');
 check(route.includes('immutable'), '允许强缓存');
@@ -56,7 +56,8 @@ check(body.includes('page,'), '记录页码');
 
 // —— 兜底 ——
 check(has('function PdfDoc(props) {') && has('function EmbeddedPdfDoc(props) {'), '保留内嵌阅读器');
-check(has('if (fallback) return h(EmbeddedPdfDoc, props);'), 'pdf.js 失败时回退');
+check(has('h(EmbeddedPdfDoc, props)'), 'pdf.js 失败时回退');
+check(has("'已回退到系统阅读器：' + fallback"), '回退时说明原因');
 
 if (failures) {
   console.log('失败 ' + failures + ' 项');

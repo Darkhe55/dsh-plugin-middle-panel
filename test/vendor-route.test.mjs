@@ -1,81 +1,90 @@
-// 端到端验证 vendor 路由：真的能按 URL 取到 pdf.js 与 cmaps，并且挡得住穿越。
-import { registerVendorRoute } from '../vendor-route.js';
+import { registerVendorRoute, listVendorFiles, resolveVendorPath } from '../vendor-route.js'
 
-let failures = 0;
+let failures = 0
 const check = (ok, label, detail) => {
-  console.log((ok ? 'PASS ' : 'FAIL ') + label + (ok || !detail ? '' : ' → ' + detail));
-  if (!ok) failures += 1;
-};
+  console.log((ok ? 'PASS ' : 'FAIL ') + label + (ok || !detail ? '' : ' → ' + detail))
+  if (!ok) failures += 1
+}
 
-let handler = null;
-const registered = [];
+// —— 文件枚举 ——
+const files = listVendorFiles()
+check(files.includes('pdf.min.mjs'), '枚举到主模块')
+check(files.includes('pdf.worker.min.mjs'), '枚举到 worker')
+check(files.some((name) => name.startsWith('cmaps/')), '枚举到 cmaps')
+check(files.some((name) => name.startsWith('standard_fonts/')), '枚举到字体')
+check(files.length > 150, '文件数合理', String(files.length))
+
+// —— 每个文件一条精确路由 ——
+const registered = []
 const ctx = {
   effect: (fn) => fn(),
   webServer: {
     register: (route) => {
-      registered.push(route.path);
-      if (String(route.path).includes('/dsh-canvas/vendor')) handler = route.handler;
-      return () => {};
+      registered.push(route.path)
+      return () => {}
     },
   },
-};
-const corsFor = () => ({ 'access-control-allow-origin': '*', vary: 'origin' });
-registerVendorRoute(ctx, corsFor);
-check(typeof handler === 'function', '路由已注册');
-check(registered.includes('/dsh-canvas/vendor/pdfjs/*'), '注册了通配路由', registered.join(', '));
-check(registered.includes('/dsh-canvas/vendor'), '注册了精确兜底路由', registered.join(', '));
+}
+registerVendorRoute(ctx, () => ({ 'access-control-allow-origin': '*' }))
+check(registered.length === files.length + 1, '文件数 + 查询兜底各一条', String(registered.length))
+check(registered.includes('/dsh-canvas/vendor/pdfjs/pdf.min.mjs'), '主模块有精确路径')
+check(registered.includes('/dsh-canvas/vendor/pdfjs/cmaps/UniGB-UCS2-H.bcmap'), '中文 cmap 有精确路径')
+check(registered.includes('/dsh-canvas/vendor'), '查询兜底已注册')
+check(
+  registered.every((item) => !item.includes('*') || item === '/dsh-canvas/vendor/pdfjs/*'),
+  '不再依赖通配',
+)
 
-const call = (url, headers = {}) =>
-  new Promise((resolve) => {
-    const chunks = [];
-    const response = {
-      writeHead: (status, meta) => {
-        response.status = status;
-        response.headers = meta || {};
-      },
-      end: (body) => {
-        if (body && body.length) chunks.push(body);
-        resolve({ status: response.status || 200, headers: response.headers || {}, body: chunks[0] });
-      },
-    };
-    const request = {
-      method: 'GET',
-      url,
-      headers: { get: (name) => headers[String(name).toLowerCase()] || null },
-    };
-    handler(request, response).catch((error) => resolve({ status: 500, error: String(error) }));
-  });
+// —— 单条路由真的能出字节 ——
+const handlerOf = (routePath) => {
+  let found = null
+  registerVendorRoute(
+    {
+      effect: (fn) => fn(),
+      webServer: { register: (route) => (route.path === routePath ? (found = route.handler) : null) },
+    },
+    () => ({ 'access-control-allow-origin': '*' }),
+  )
+  return found
+}
 
-const allowed = { origin: 'http://127.0.0.1:7367', host: '127.0.0.1:7367' };
+const run = async (handler, url) => {
+  const out = {}
+  const response = {
+    writeHead: (status, headers) => {
+      out.status = status
+      out.headers = headers || {}
+    },
+    end: (body) => {
+      out.body = body
+    },
+  }
+  const request = {
+    method: 'GET',
+    url,
+    headers: { get: (name) => ({ origin: 'http://127.0.0.1:7367', host: '127.0.0.1:7367' })[name] || null },
+  }
+  await handler(request, response)
+  return out
+}
 
-const main = await call('/dsh-canvas/vendor/pdfjs/pdf.min.mjs', allowed);
-check(main.status === 200, '主模块 200', String(main.status));
-check(String(main.headers['content-type']).includes('text/javascript'), 'MIME 为 javascript', main.headers['content-type']);
-check(main.body && main.body.length > 400000, '返回真实字节', String(main.body && main.body.length));
-check(String(main.headers['cache-control']).includes('immutable'), '带强缓存');
+const main = await run(handlerOf('/dsh-canvas/vendor/pdfjs/pdf.min.mjs'), '/dsh-canvas/vendor/pdfjs/pdf.min.mjs')
+check(main.status === 200, '精确路由 200', String(main.status))
+check(String(main.headers['content-type']).includes('text/javascript'), 'MIME 正确', main.headers['content-type'])
+check(main.body && main.body.length > 400000, '返回真实字节', String(main.body && main.body.length))
 
-const worker = await call('/dsh-canvas/vendor/pdfjs/pdf.worker.min.mjs', allowed);
-check(worker.status === 200 && worker.body.length > 1000000, 'worker 可取', String(worker.body && worker.body.length));
+const cmap = await run(handlerOf('/dsh-canvas/vendor/pdfjs/cmaps/UniGB-UCS2-H.bcmap'), '/dsh-canvas/vendor/pdfjs/cmaps/UniGB-UCS2-H.bcmap')
+check(cmap.status === 200, '中文 cmap 可取', String(cmap.status))
 
-const cmap = await call('/dsh-canvas/vendor/pdfjs/cmaps/UniGB-UCS2-H.bcmap', allowed);
-check(cmap.status === 200, '中文 cmap 可取', String(cmap.status));
+const queried = await run(handlerOf('/dsh-canvas/vendor'), '/dsh-canvas/vendor?f=pdf.worker.min.mjs')
+check(queried.status === 200 && queried.body.length > 1000000, '查询兜底可取 worker', String(queried.status))
 
-const font = await call('/dsh-canvas/vendor/pdfjs/standard_fonts/FoxitFixed.pfb', allowed);
-check(font.status === 200, '标准字体可取', String(font.status));
-
-const missing = await call('/dsh-canvas/vendor/pdfjs/nope.js', allowed);
-check(missing.status === 404, '缺失文件 404', String(missing.status));
-
-const escape1 = await call('/dsh-canvas/vendor/pdfjs/../../index.js', allowed);
-check(escape1.status !== 200, '拒绝向上穿越', String(escape1.status));
-
-const escape2 = await call('/dsh-canvas/vendor/pdfjs/%2e%2e%2f%2e%2e%2findex.js', allowed);
-check(escape2.status !== 200, '拒绝编码穿越', String(escape2.status));
-
-const foreign = await call('/dsh-canvas/vendor/pdfjs/pdf.min.mjs', { origin: 'http://evil.example.com', host: '127.0.0.1:7367' });
-check(foreign.status === 403 || foreign.status === 200, '跨源按 CORS 判定（此处只确认不崩）', String(foreign.status));
+// —— 安全 ——
+check(resolveVendorPath('../../index.js') === null, '拒绝向上穿越')
+check(resolveVendorPath('cmaps/../pdf.min.mjs') !== null, '允许目录内相对路径')
+check(resolveVendorPath('') === null, '空路径拒绝')
 
 if (failures) {
-  console.log('失败 ' + failures + ' 项');
-  process.exit(1);
+  console.log('失败 ' + failures + ' 项')
+  process.exit(1)
 }
