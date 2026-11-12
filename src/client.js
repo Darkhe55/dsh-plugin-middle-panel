@@ -3601,8 +3601,9 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
             return;
           }
           if (data.source !== 'dshcv-picker') return;
-          // Only a frozen frame creates marks; the picker enforces the same rule.
-          if (!pausedRef.current) return;
+          // The iframe decides when picking is allowed (frozen, or nothing to
+          // animate). Re-checking paused here silently dropped every click in a
+          // still document.
           const target = String(data.selector || '');
           if (!target) return;
           addMark({ kind: 'layer', path: doc.path, selector: target, quote: String(data.tag || '') });
@@ -4445,16 +4446,9 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         );
       }
       if (state.mode === 'pdf') {
-        return h(
-          'div',
-          { style: { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' } },
-          header,
-          h('iframe', {
-            title: 'canvas ai preview',
-            src: state.info,
-            style: { flex: '1 1 auto', minHeight: 0, width: '100%', border: '0', background: '#fff' },
-          }),
-        );
+        // A PDF-compatible .ai gets the full PDF viewer, not a bare embed: that is
+        // where page navigation and the page/doc mark buttons live.
+        return h(PdfDoc, { doc, sessionId });
       }
       return h(
         'div',

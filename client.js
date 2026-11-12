@@ -3159,7 +3159,6 @@ setAnim(data.state);
 return;
 }
 if (data.source !== 'dshcv-picker') return;
-if (!pausedRef.current) return;
 const target = String(data.selector || '');
 if (!target) return;
 addMark({ kind: 'layer', path: doc.path, selector: target, quote: String(data.tag || '') });
@@ -3961,16 +3960,7 @@ pointerEvents: 'none',
 );
 }
 if (state.mode === 'pdf') {
-return h(
-'div',
-{ style: { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' } },
-header,
-h('iframe', {
-title: 'canvas ai preview',
-src: state.info,
-style: { flex: '1 1 auto', minHeight: 0, width: '100%', border: '0', background: '#fff' },
-}),
-);
+return h(PdfDoc, { doc, sessionId });
 }
 return h(
 'div',
