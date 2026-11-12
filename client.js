@@ -239,6 +239,9 @@ return Math.abs(Number(left.start) - Number(right.start)) <= 0.2 && Math.abs(Num
 }
 if (left.kind === 'spot') return left.label === right.label;
 if (left.kind === 'region') {
+if (left.text || right.text) {
+if (String(left.quote || '') !== String(right.quote || '')) return false;
+}
 if (Boolean(left.norm) !== Boolean(right.norm)) return false;
 if (left.norm && Number(left.page || 0) !== Number(right.page || 0)) return false;
 const a = left.rect || [];
@@ -4064,8 +4067,9 @@ hoverBands,
 hoverRect,
 pdfjs,
 } = props;
-const width = Math.max(0, (baseSize && baseSize.width ? baseSize.width : 612) * scale);
-const height = Math.max(0, (baseSize && baseSize.height ? baseSize.height : 792) * scale);
+const known = Boolean(baseSize && baseSize.width && baseSize.height);
+const width = known ? Math.max(0, baseSize.width * scale) : 0;
+const height = known ? Math.max(0, baseSize.height * scale) : 0;
 const [items, setItems] = React.useState([]);
 const [visible, setVisible] = React.useState(pageNumber <= 2);
 const [drag, setDrag] = React.useState(null);
@@ -4101,14 +4105,14 @@ observer.observe(node);
 return () => observer.disconnect();
 }, [pageNumber]);
 React.useEffect(() => {
-if (!visible || !pdf || !width) return undefined;
+if (!visible || !pdf || !width || !known) return undefined;
 const token = tokenRef.current + 1;
 tokenRef.current = token;
 let cancelled = false;
 (async () => {
 const page = await pdf.getPage(pageNumber);
 if (cancelled || tokenRef.current !== token) return;
-const viewport = page.getViewport({ scale: width / (baseSize && baseSize.width ? baseSize.width : 612) });
+const viewport = page.getViewport({ scale: known ? width / baseSize.width : 1 });
 const ratio = Math.min(3, window.devicePixelRatio || 1);
 const buffer = document.createElement('canvas');
 buffer.width = Math.max(1, Math.round(viewport.width * ratio));
@@ -4492,6 +4496,8 @@ const scrollRef = React.useRef(null);
 const boxRef = React.useRef(null);
 const pageEls = React.useRef(new Map());
 const zoomAnchor = React.useRef(null);
+const zoomToken = React.useRef(0);
+const scrollIntent = React.useRef(0);
 const searchToken = React.useRef(0);
 const hovered = useHoverMark(doc.path);
 const marks = store.marks || [];
@@ -4605,8 +4611,15 @@ const node = pageEls.current.get(pageNumber);
 if (node && node.scrollIntoView) node.scrollIntoView({ block: "center" });
 return;
 }
-window.requestAnimationFrame(() => place());
-window.setTimeout(() => place(), 140);
+zoomToken.current += 1;
+const intent = scrollIntent.current + 1;
+scrollIntent.current = intent;
+window.requestAnimationFrame(() => {
+if (scrollIntent.current === intent) place();
+});
+window.setTimeout(() => {
+if (scrollIntent.current === intent) place();
+}, 140);
 };
 React.useEffect(() => {
 const node = scrollRef.current;

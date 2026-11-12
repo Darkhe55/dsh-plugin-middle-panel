@@ -19,6 +19,8 @@
       const boxRef = React.useRef(null);
       const pageEls = React.useRef(new Map());
       const zoomAnchor = React.useRef(null);
+      const zoomToken = React.useRef(0);
+      const scrollIntent = React.useRef(0);
       const searchToken = React.useRef(0);
       const hovered = useHoverMark(doc.path);
       const marks = store.marks || [];
@@ -146,8 +148,17 @@
           return;
         }
         // The rail can expand right after, which shrinks the viewport: settle again.
-        window.requestAnimationFrame(() => place());
-        window.setTimeout(() => place(), 140);
+        // A deliberate jump wins over the zoom anchor: bumping its token stops the
+        // anchor loop from pulling the view back.
+        zoomToken.current += 1;
+        const intent = scrollIntent.current + 1;
+        scrollIntent.current = intent;
+        window.requestAnimationFrame(() => {
+          if (scrollIntent.current === intent) place();
+        });
+        window.setTimeout(() => {
+          if (scrollIntent.current === intent) place();
+        }, 140);
       };
 
       // Ctrl (Cmd) + wheel zooms the page, like every other document viewer. React

@@ -31,8 +31,12 @@ check(
   '页面尺寸同步算出（不等渲染）',
 );
 check(
-  src.includes('const width = Math.max(0, (baseSize && baseSize.width ? baseSize.width : 612) * scale);'),
-  '尺寸 = 页面基准 × 缩放',
+  src.includes('const width = known ? Math.max(0, baseSize.width * scale) : 0;'),
+  '尺寸 = 基准 × 缩放（几何已知时）',
+);
+check(
+  src.includes('const known = Boolean(baseSize && baseSize.width && baseSize.height);'),
+  '几何未知时不渲染，避免跳变',
 );
 check(src.includes('canvas.width = buffer.width;'), '位图另存于离屏缓冲');
 check(src.includes('ctx.drawImage(buffer, 0, 0);'), '一次 drawImage 完成替换');

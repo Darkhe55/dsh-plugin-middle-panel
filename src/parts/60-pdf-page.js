@@ -17,8 +17,11 @@
         hoverRect,
         pdfjs,
       } = props;
-      const width = Math.max(0, (baseSize && baseSize.width ? baseSize.width : 612) * scale);
-      const height = Math.max(0, (baseSize && baseSize.height ? baseSize.height : 792) * scale);
+      // Until the page geometry is known nothing is drawn: assuming Letter first made
+      // the column jump once the real size arrived.
+      const known = Boolean(baseSize && baseSize.width && baseSize.height);
+      const width = known ? Math.max(0, baseSize.width * scale) : 0;
+      const height = known ? Math.max(0, baseSize.height * scale) : 0;
       const [items, setItems] = React.useState([]);
 
       const [visible, setVisible] = React.useState(pageNumber <= 2);
@@ -62,14 +65,14 @@
       // Render into an offscreen canvas, then swap in one paint: the visible canvas is
       // never left half-drawn, and its CSS size already fills the (new) box.
       React.useEffect(() => {
-        if (!visible || !pdf || !width) return undefined;
+        if (!visible || !pdf || !width || !known) return undefined;
         const token = tokenRef.current + 1;
         tokenRef.current = token;
         let cancelled = false;
         (async () => {
           const page = await pdf.getPage(pageNumber);
           if (cancelled || tokenRef.current !== token) return;
-          const viewport = page.getViewport({ scale: width / (baseSize && baseSize.width ? baseSize.width : 612) });
+          const viewport = page.getViewport({ scale: known ? width / baseSize.width : 1 });
           const ratio = Math.min(3, window.devicePixelRatio || 1);
           const buffer = document.createElement('canvas');
           buffer.width = Math.max(1, Math.round(viewport.width * ratio));

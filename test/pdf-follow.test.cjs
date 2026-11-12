@@ -20,8 +20,8 @@ check(
   view.includes('scroller.scrollTop = Math.max(0, box.absolute - (scroller.clientHeight - box.height) / 2);'),
   '把目标放到可视区中央',
 );
-check(view.includes('window.requestAnimationFrame(() => place());'), '下一帧再校正');
-check(view.includes('window.setTimeout(() => place(), 140);'), '布局稳定后再校正（列表展开）');
+check(view.includes('const intent = scrollIntent.current + 1;'), '有滚动意图令牌');
+check(view.includes('if (scrollIntent.current === intent) place();'), '意图未变才校正');
 
 // —— 命中跳转带上矩形 ——
 check(view.includes('scrollToPage(hit.page, hit.rect || (hit.rects && hit.rects[0]));'), '命中跳转定位到具体矩形');

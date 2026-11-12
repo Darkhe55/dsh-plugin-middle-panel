@@ -18,11 +18,11 @@ const view = src.slice(docStart, docEnd);
 
 // —— 1. 布局尺寸同步 ——
 check(
-  page.includes('const width = Math.max(0, (baseSize && baseSize.width ? baseSize.width : 612) * scale);'),
-  '宽度由基准尺寸乘缩放直接得出',
+  page.includes('const width = known ? Math.max(0, baseSize.width * scale) : 0;'),
+  '宽度由基准尺寸乘缩放得出',
 );
 check(
-  page.includes('const height = Math.max(0, (baseSize && baseSize.height ? baseSize.height : 792) * scale);'),
+  page.includes('const height = known ? Math.max(0, baseSize.height * scale) : 0;'),
   '高度同理',
 );
 check(

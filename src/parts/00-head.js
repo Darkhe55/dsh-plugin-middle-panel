@@ -305,6 +305,11 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
       // its human-readable locator.
       if (left.kind === 'spot') return left.label === right.label;
       if (left.kind === 'region') {
+        // A text mark is identified by its quote too: two different quotes can share one
+        // line box, and collapsing them would silently drop the second mark.
+        if (left.text || right.text) {
+          if (String(left.quote || '') !== String(right.quote || '')) return false;
+        }
         if (Boolean(left.norm) !== Boolean(right.norm)) return false;
         if (left.norm && Number(left.page || 0) !== Number(right.page || 0)) return false;
         const a = left.rect || [];
