@@ -3163,7 +3163,11 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
       'function anims(){try{return document.getAnimations?document.getAnimations():[];}catch(e){return [];}}',
       'function svgRoots(){return document.querySelectorAll("svg");}',
 // Nothing animates here, so picking needs no pause: the page is already still.
-'function frozen(){if(paused)return true;try{if(anims().length)return false;var roots=svgRoots();for(var j=0;j<roots.length;j++){if(roots[j].getCurrentTime&&roots[j].getCurrentTime()>0)return false;}}catch(e){}return true;}',
+// A document is still when nothing animates. getCurrentTime() is the SVG document
+// timeline and keeps counting in a static file, so it cannot be used as a signal:
+// look for actual SMIL elements plus CSS/WAAPI animations instead.
+'function smilCount(){try{return document.querySelectorAll("animate,animateMotion,animateTransform,animateColor,set").length;}catch(e){return 0;}}',
+'function frozen(){if(paused)return true;try{if(anims().length)return false;}catch(e){}if(smilCount())return false;return true;}',
       'function pauseAll(){var list=anims();for(var i=0;i<list.length;i++){try{list[i].pause();}catch(e){}}',
       'var roots=svgRoots();for(var j=0;j<roots.length;j++){try{roots[j].pauseAnimations&&roots[j].pauseAnimations();}catch(e){}}paused=true;report();}',
       'function resumeAll(){var list=anims();for(var i=0;i<list.length;i++){try{list[i].play();}catch(e){}}',
@@ -3530,6 +3534,9 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
       const { doc, sessionId } = props;
       const [state, setState] = React.useState({ status: 'idle', url: '', error: '' });
       const [anim, setAnim] = React.useState({ paused: false, duration: 0, current: 0, count: 0 });
+  // Whether the injected picker ever reported: a silent miss looks like a still
+  // document, so it is tracked and surfaced instead.
+  const [picker, setPicker] = React.useState('waiting');
       const frameRef = React.useRef(null);
       const rootRef = React.useRef(null);
       const pausedRef = React.useRef(false);
@@ -3596,6 +3603,7 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
           const data = event.data;
           if (!data) return;
           if (data.source === 'dshcv-anim' && data.state) {
+            setPicker('ready');
             pausedRef.current = Boolean(data.state.paused);
             setAnim(data.state);
             return;
@@ -3631,6 +3639,14 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         return () => window.removeEventListener('keydown', onKey, true);
       }, []);
 
+      React.useEffect(() => {
+        if (state.status !== 'ready') return undefined;
+        const timer = setTimeout(() => {
+          setPicker((now) => (now === 'waiting' ? 'missing' : now));
+        }, 1500);
+        return () => clearTimeout(timer);
+      }, [state.status]);
+
       if (state.status === 'failed') {
         return h('div', { className: 'dshcv-empty' }, h('div', null, '无法预览该 SVG'), h('div', null, state.error));
       }
@@ -3650,6 +3666,13 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
             onSeek: (time) => post('seek', { time }),
             onStep: (dir) => post('step', { dir }),
           })
+          : null,
+        picker === 'missing'
+          ? h(
+              'div',
+              { className: 'dshcv-msg', style: { padding: '4px 2px 8px' } },
+              '选择器未注入：右上角菜单里的「注入脚本」开关是关闭状态，打开后悬停元素才能选中。',
+            )
           : null,
         h('iframe', {
           ref: frameRef,
@@ -4140,7 +4163,7 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
           h(
             'span',
             { className: 'dshcv-msg' },
-            Math.round(state.size / 1024) + ' KB · ' + (state.pages ? '共 ' + state.pages + ' 页' : '页数未知（压缩流）') + ' · 阅读器在进程外，点击位置无法拦截',
+            Math.round(state.size / 1024) + ' KB · ' + (state.pages ? '共 ' + state.pages + ' 页' : '页数未知（压缩流）') + ' · 内置阅读器在独立进程，点不到具体位置；用右侧按钮按页标注',
           ),
           h('input', {
             type: 'number',
