@@ -33,8 +33,8 @@ check(has('hoverBase.current = target;'), '落定位置同步到基准');
 check(has('const typed = parseTime(timeDraft);'), '按钮用解析结果');
 check(has('if (Math.abs(typed - info.current) <= frame / 2) return null;'), '与当前位置相同则不显示');
 check(has('if (duration && typed > duration + 0.05) return null;'), '超出片长不显示');
-check(has("'跳到 ' + formatTime(typed)"), '按钮显示目标时间');
-check(has('onClick: () => {\n                  seekTo(typed);'), '点击按钮跳转');
+check(has("'跳转',"), '按钮只写「跳转」，不重复时间');
+check(has('seekTo(typed);'), '点击按钮跳转');
 
 // ---- 菜单不越界 ----
 check(has('const width = 220;'), '按菜单宽度夹取');
@@ -50,6 +50,14 @@ check(has('.dshcv-markband{position:absolute'), '区间有样式');
 check(has('box-shadow:0 0 10px rgba(79,140,255,.55)'), '区间带蓝色荧光');
 check(has('box-shadow:0 0 8px rgba(79,140,255,.85)'), '时间点带蓝色荧光');
 check(has('hovered.end > hovered.start'), '单点标注只画一条线');
+
+
+// —— 位置：在总时长右侧 ——
+const durationIdx = src.indexOf("'/ ' + formatTime(duration)");
+const jumpIdx = src.indexOf("              '跳转',");
+check(durationIdx > 0 && jumpIdx > durationIdx, '跳转按钮排在总时长之后');
+check(has("title: '跳转到 ' + formatTime(typed)"), '目标时间放进 title，方便悬停确认');
+check(has("'aria-label': '跳转到 ' + formatTime(typed)"), '无障碍名称带上目标时间');
 
 if (failures) {
   console.log('失败 ' + failures + ' 项');

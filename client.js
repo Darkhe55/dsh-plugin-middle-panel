@@ -7036,6 +7036,7 @@ setTimeDraft('');
 event.currentTarget.blur();
 },
 }),
+h('span', { className: 'dshcv-videotime' }, '/ ' + formatTime(duration)),
 (() => {
 const typed = parseTime(timeDraft);
 if (!Number.isFinite(typed)) return null;
@@ -7047,16 +7048,16 @@ return h(
 type: 'button',
 className: 'dshcv-btn',
 'data-kind': 'primary',
-title: '跳到 ' + formatTime(typed),
+title: '跳转到 ' + formatTime(typed),
+'aria-label': '跳转到 ' + formatTime(typed),
 onClick: () => {
 seekTo(typed);
 setTimeDraft('');
 },
 },
-'跳到 ' + formatTime(typed),
+'跳转',
 );
 })(),
-h('span', { className: 'dshcv-videotime' }, '/ ' + formatTime(duration)),
 h('span', { style: { flex: '1 1 auto' } }),
 h(
 'button',
