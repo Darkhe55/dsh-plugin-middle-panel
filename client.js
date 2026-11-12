@@ -6576,6 +6576,7 @@ const rootRef = React.useRef(null);
 const trackRef = React.useRef(null);
 const hoverBase = React.useRef(0);
 const previewing = React.useRef(false);
+const committedAt = React.useRef(0);
 const previewFrame = React.useRef(0);
 const pressRef = React.useRef(null);
 const hovered = useHoverMark(doc.path);
@@ -6604,12 +6605,16 @@ if (objectUrl) URL.revokeObjectURL(objectUrl);
 };
 }, [doc.path, native]);
 const seek = store.seek;
+const lastSeekStamp = React.useRef(seek && seek.stamp ? seek.stamp : 0);
 React.useEffect(() => {
 if (!seek || !sameFile(seek.path, doc.path)) return;
+if (seek.stamp && seek.stamp <= lastSeekStamp.current) return;
+lastSeekStamp.current = seek.stamp || 0;
 const node = videoRef.current;
 if (!node) return;
 if (Math.abs(node.currentTime - seek.time) < 0.05) return;
 node.currentTime = Math.max(0, Number(seek.time) || 0);
+committedAt.current = Date.now();
 setInfo((current) => Object.assign({}, current, { current: node.currentTime }));
 }, [seek && seek.stamp, doc.path]);
 React.useEffect(() => {
@@ -6642,6 +6647,7 @@ setView(zoomWindow(view.start, span, duration, anchorTime, factor, minSpan));
 const previewAt = (time) => {
 const node = video();
 if (!node) return;
+if (Date.now() - committedAt.current < 200) return;
 previewing.current = true;
 if (previewFrame.current) cancelAnimationFrame(previewFrame.current);
 previewFrame.current = requestAnimationFrame(() => {
@@ -6677,7 +6683,15 @@ if (!node) return;
 cancelPreview();
 previewing.current = false;
 const target = applySeek(node, time);
+committedAt.current = Date.now();
 setInfo((current) => Object.assign({}, current, { current: target }));
+window.setTimeout(() => {
+const again = video();
+if (!again || !again.readyState) return;
+if (Math.abs(again.currentTime - target) <= 0.3) return;
+again.currentTime = target;
+setInfo((current) => Object.assign({}, current, { current: target }));
+}, 250);
 hoverBase.current = target;
 };
 const play = () => {
@@ -6779,10 +6793,6 @@ if (drag) return;
 if (hover === null) return;
 setHover(null);
 previewing.current = false;
-const node = video();
-if (node && Math.abs(node.currentTime - hoverBase.current) > 0.01) {
-node.currentTime = Math.max(0, hoverBase.current);
-}
 };
 const wheelRef = React.useRef(null);
 wheelRef.current = (event) => {

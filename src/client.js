@@ -7254,6 +7254,7 @@ function SplitDivider(props) {
       const trackRef = React.useRef(null);
       const hoverBase = React.useRef(0);
       const previewing = React.useRef(false);
+      const committedAt = React.useRef(0);
       const previewFrame = React.useRef(0);
       const pressRef = React.useRef(null);
 
@@ -7288,12 +7289,18 @@ function SplitDivider(props) {
       }, [doc.path, native]);
 
       const seek = store.seek;
+      // Only a request newer than the one seen at mount may move the playhead, so a
+      // stale store.seek cannot replay after a remount.
+      const lastSeekStamp = React.useRef(seek && seek.stamp ? seek.stamp : 0);
       React.useEffect(() => {
         if (!seek || !sameFile(seek.path, doc.path)) return;
+        if (seek.stamp && seek.stamp <= lastSeekStamp.current) return;
+        lastSeekStamp.current = seek.stamp || 0;
         const node = videoRef.current;
         if (!node) return;
         if (Math.abs(node.currentTime - seek.time) < 0.05) return;
         node.currentTime = Math.max(0, Number(seek.time) || 0);
+        committedAt.current = Date.now();
         setInfo((current) => Object.assign({}, current, { current: node.currentTime }));
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [seek && seek.stamp, doc.path]);
@@ -7336,6 +7343,8 @@ function SplitDivider(props) {
       const previewAt = (time) => {
         const node = video();
         if (!node) return;
+        // A commit wins: a preview that was queued just before it must not undo it.
+        if (Date.now() - committedAt.current < 200) return;
         previewing.current = true;
         if (previewFrame.current) cancelAnimationFrame(previewFrame.current);
         previewFrame.current = requestAnimationFrame(() => {
@@ -7375,7 +7384,17 @@ function SplitDivider(props) {
         cancelPreview();
         previewing.current = false;
         const target = applySeek(node, time);
+        committedAt.current = Date.now();
         setInfo((current) => Object.assign({}, current, { current: target }));
+        // Self-check: if something silently moved the media after the commit (a
+        // late preview frame, a stale seek), put it back once.
+        window.setTimeout(() => {
+          const again = video();
+          if (!again || !again.readyState) return;
+          if (Math.abs(again.currentTime - target) <= 0.3) return;
+          again.currentTime = target;
+          setInfo((current) => Object.assign({}, current, { current: target }));
+        }, 250);
         // A committed move is the new resting place: leaving the track must not
         // spring back to where the pointer happened to enter.
         hoverBase.current = target;
@@ -7491,13 +7510,10 @@ function SplitDivider(props) {
       const onTrackLeave = () => {
         if (drag) return;
         if (hover === null) return;
+        // Leaving only drops the dashed indicator: the picture stays on the frame
+        // you were looking at, so nothing "snaps back" under the cursor.
         setHover(null);
         previewing.current = false;
-        // Put the picture back where the playhead actually is; the marker never moved.
-        const node = video();
-        if (node && Math.abs(node.currentTime - hoverBase.current) > 0.01) {
-          node.currentTime = Math.max(0, hoverBase.current);
-        }
       };
 
       // React binds wheel as a passive listener, so preventDefault there is ignored

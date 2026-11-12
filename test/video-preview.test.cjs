@@ -18,7 +18,7 @@ check(
 );
 check(has('if (previewing.current) return;'), 'timeupdate 在预览时被忽略');
 check(has('previewing.current = false;'), '落定或离开时清除预览态');
-check(has('node.currentTime = Math.max(0, hoverBase.current);'), '离开轨道回到落定位置');
+check(!has('node.currentTime = Math.max(0, hoverBase.current);'), '离开轨道不再把画面拉回去');
 
 // —— 实心滑块只跟落定值 ——
 check(has("h('div', { className: 'dshcv-trackhead', style: { left: headPercent + '%' } })"), '实心滑块用 headPercent');
@@ -50,6 +50,13 @@ check(
 // —— 回车跳转仍然走 seekTo ——
 check(has('seekTo(target);'), '回车调用 seekTo');
 check(has('previewing.current = false;') && has('const target = applySeek(node, time);'), 'seekTo 先结束预览再定位');
+
+// —— 防回滚 ——
+check(has('const committedAt = React.useRef(0);'), '记录落定时刻');
+check(has('if (Date.now() - committedAt.current < 200) return;'), '落定后 200ms 内预览不接管');
+check(has('if (Math.abs(again.currentTime - target) <= 0.3) return;'), '250ms 后自检位置');
+check(has('const lastSeekStamp = React.useRef('), '外部跳转带时间戳去重');
+check(has('if (seek.stamp && seek.stamp <= lastSeekStamp.current) return;'), '旧请求不会重播');
 
 if (failures) {
   console.log('失败 ' + failures + ' 项');
