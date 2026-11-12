@@ -1139,6 +1139,8 @@ const CSS_PANEL = [
 '.dshcv-pdfhit{position:absolute;background:rgba(255,196,0,.34);border-radius:2px;pointer-events:none}',
 '.dshcv-pdfhit[data-active="1"]{background:rgba(255,138,0,.55);box-shadow:0 0 0 1px rgba(255,138,0,.85)}',
 '.dshcv-pdfregion-hot{background:rgba(79,140,255,.22)!important;box-shadow:0 0 12px rgba(79,140,255,.65)!important;border-style:solid!important}',
+'.dshcv-pdfpagebox{position:relative;overflow:hidden;background:#fff;line-height:0;border-radius:2px;box-shadow:0 2px 14px rgba(0,0,0,.16)}',
+'.dshcv-pdfpagebox canvas{display:block}',
 '.dshcv-pdfcanvasbox{position:relative;align-self:center;margin:0 auto;line-height:0}',
 '.dshcv-pdfcanvas{display:block;background:#fff;box-shadow:0 2px 14px rgba(0,0,0,.16)}',
 '.dshcv-scroll{overflow:auto}',
