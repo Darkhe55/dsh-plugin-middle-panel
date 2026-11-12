@@ -285,6 +285,23 @@ for (let index = 0; index < rawItems.length; index += 1) {
           });
           parts.push({ text: node.nodeValue.slice(from, to), top: glyph.top, left: glyph.left });
         }
+        // The glyph model can lag a frame; the spans' visual rects are the same geometry
+        // (their transform is already applied), so fall back to those rather than leaving a
+        // drag with no feedback.
+        if (!raw.length) {
+          for (const span of spans) {
+            if (!range.intersectsNode || !range.intersectsNode(span)) continue;
+            const rect = span.getBoundingClientRect();
+            if (!rect.width || !rect.height) continue;
+            raw.push({
+              left: rect.left - box.left,
+              top: rect.top - box.top,
+              width: rect.width,
+              height: rect.height,
+            });
+            parts.push({ text: span.textContent || "", top: rect.top, left: rect.left });
+          }
+        }
         if (!raw.length) {
           if (!keepIfLost) {
             setLive([]);
@@ -348,7 +365,7 @@ for (let index = 0; index < rawItems.length; index += 1) {
         h('canvas', { ref: canvasRef, className: 'dshcv-pdfcanvas' }),
         h(
           'div',
-          { className: 'dshcv-pdftext' },
+          { className: 'dshcv-pdftext', 'data-own': live.length ? '1' : '0' },
           items.map((item, index) =>
             h(
               'span',

@@ -1318,7 +1318,7 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
     // like selecting the page, and the highlight is painted by us instead.
     '.dshcv-pdftext{position:absolute;inset:0;overflow:hidden;line-height:1;pointer-events:auto;user-select:text}',
     '.dshcv-pdftext span{position:absolute;white-space:pre;color:transparent;transform-origin:0 0;cursor:text}',
-    '.dshcv-pdftext span::selection{background:transparent;color:transparent}',
+    '.dshcv-pdftext[data-own="1"] span::selection{background:transparent;color:transparent}',
     '.dshcv-pdftext span::-moz-selection{background:rgba(79,140,255,.34);color:transparent}',
     // The viewer owns its own scrolling: the toolbar must never scroll away, or the
     // mark buttons become unreachable once a long document is scrolled.
@@ -1355,8 +1355,8 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
     // so it reads as highlighted text rather than a selected box.
     // Browser selection is invisible here: the same renderer that draws a stored mark
     // draws the live selection, so the two can never disagree.
-    '.dshcv-pdftext ::selection{background:transparent;color:transparent}',
-    '.dshcv-pdftext::selection{background:transparent;color:transparent}',
+    '.dshcv-pdftext[data-own="1"] ::selection{background:transparent;color:transparent}',
+    '.dshcv-pdftext[data-own="1"]::selection{background:transparent;color:transparent}',
     '.dshcv-pdfsel{position:absolute;background:rgba(79,140,255,.24);border-radius:2px;pointer-events:none}',
     '.dshcv-pdftexthit{position:absolute;background:rgba(79,140,255,.10);border-radius:2px;pointer-events:none}',
     '.dshcv-pdftexthit-hot{background:rgba(79,140,255,.12);box-shadow:inset 0 -1px 0 rgba(79,140,255,.65)}',

@@ -14,8 +14,8 @@ const end = src.indexOf('function PdfThumb(props) {');
 const page = src.slice(start, end);
 
 // 原生高亮关闭（含旧的 span 级规则）
-check(src.includes("'.dshcv-pdftext ::selection{background:transparent;color:transparent}'"), '全局选区透明');
-check(src.includes("'.dshcv-pdftext span::selection{background:transparent;color:transparent}'"), 'span 级选区也透明');
+check(src.includes('.dshcv-pdftext[data-own="1"] ::selection{background:transparent'), '自绘时才隐藏原生高亮');
+check(src.includes('.dshcv-pdftext[data-own="1"] span::selection{background:transparent'), 'span 级同样条件');
 check(!src.includes('span::selection{background:rgba(79,140,255'), '没有残留的原生配色');
 
 // 自绘色带

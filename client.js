@@ -1129,7 +1129,7 @@ const CSS_PANEL = [
 '.dshcv-markhead{position:absolute;top:-3px;bottom:-3px;width:2px;margin-left:-1px;background:rgba(79,140,255,.95);box-shadow:0 0 8px rgba(79,140,255,.85);pointer-events:none}',
 '.dshcv-pdftext{position:absolute;inset:0;overflow:hidden;line-height:1;pointer-events:auto;user-select:text}',
 '.dshcv-pdftext span{position:absolute;white-space:pre;color:transparent;transform-origin:0 0;cursor:text}',
-'.dshcv-pdftext span::selection{background:transparent;color:transparent}',
+'.dshcv-pdftext[data-own="1"] span::selection{background:transparent;color:transparent}',
 '.dshcv-pdftext span::-moz-selection{background:rgba(79,140,255,.34);color:transparent}',
 '.dshcv-pdfdocwrap{overflow:hidden;display:flex;flex-direction:column;padding:6px 8px 0}',
 '.dshcv-pdfdocwrap .dshcv-tools{flex:0 0 auto;position:sticky;top:0;z-index:5;background:var(--dsw-alias-bg-layer-2,#fff);padding-top:4px}',
@@ -1155,8 +1155,8 @@ const CSS_PANEL = [
 '.dshcv-pdflayer{position:absolute;inset:0;cursor:crosshair;touch-action:none}',
 '.dshcv-pdflayer:not(.dshcv-pdflayer-on){cursor:default}',
 '.dshcv-pdfmarquee{position:absolute;border:1.5px solid rgba(79,140,255,.95);background:rgba(79,140,255,.16);box-shadow:0 0 10px rgba(79,140,255,.45);pointer-events:none;border-radius:2px}',
-'.dshcv-pdftext ::selection{background:transparent;color:transparent}',
-'.dshcv-pdftext::selection{background:transparent;color:transparent}',
+'.dshcv-pdftext[data-own="1"] ::selection{background:transparent;color:transparent}',
+'.dshcv-pdftext[data-own="1"]::selection{background:transparent;color:transparent}',
 '.dshcv-pdfsel{position:absolute;background:rgba(79,140,255,.24);border-radius:2px;pointer-events:none}',
 '.dshcv-pdftexthit{position:absolute;background:rgba(79,140,255,.10);border-radius:2px;pointer-events:none}',
 '.dshcv-pdftexthit-hot{background:rgba(79,140,255,.12);box-shadow:inset 0 -1px 0 rgba(79,140,255,.65)}',
@@ -4297,6 +4297,20 @@ height: Math.max(glyph.fontHeight, 1),
 parts.push({ text: node.nodeValue.slice(from, to), top: glyph.top, left: glyph.left });
 }
 if (!raw.length) {
+for (const span of spans) {
+if (!range.intersectsNode || !range.intersectsNode(span)) continue;
+const rect = span.getBoundingClientRect();
+if (!rect.width || !rect.height) continue;
+raw.push({
+left: rect.left - box.left,
+top: rect.top - box.top,
+width: rect.width,
+height: rect.height,
+});
+parts.push({ text: span.textContent || "", top: rect.top, left: rect.left });
+}
+}
+if (!raw.length) {
 if (!keepIfLost) {
 setLive([]);
 if (onClear) onClear(pageNumber);
@@ -4355,7 +4369,7 @@ style: width ? { width: width + 'px', height: height + 'px' } : null,
 h('canvas', { ref: canvasRef, className: 'dshcv-pdfcanvas' }),
 h(
 'div',
-{ className: 'dshcv-pdftext' },
+{ className: 'dshcv-pdftext', 'data-own': live.length ? '1' : '0' },
 items.map((item, index) =>
 h(
 'span',
