@@ -215,7 +215,7 @@ const match = /\.([a-z0-9]+)$/i.exec(String(path || ''));
 const ext = match ? match[1].toLowerCase() : '';
 if (['html', 'htm', 'xhtml'].includes(ext)) return 'html';
 if (['md', 'markdown'].includes(ext)) return 'markdown';
-if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif'].includes(ext)) return 'image';
+if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif', 'apng'].includes(ext)) return 'image';
 if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg', 'mpeg', '3gp', 'ts', 'mts', 'm2ts'].includes(ext)) return 'video';
 if (ext === 'pdf') return 'pdf';
 if (['stl', 'obj', 'glb', 'gltf', 'ply', 'off', 'noff', 'coff', 'cnoff', '3mf', 'dae'].includes(ext)) return 'model';
@@ -1454,7 +1454,7 @@ return h('div', { className: 'dshcv-md' }, shown);
 const SAVE_PATH = '/dsh-canvas/save';
 const saveUrl = () => SAVE_PATH;
 const fileUrl = () => '/dsh-canvas/file';
-const LIMITS = { model: 64, design: 64, office: 32, pdf: 256, html: 16, sheet: 32, text: 16, video: 256 };
+const LIMITS = { model: 64, design: 64, office: 32, pdf: 256, html: 16, sheet: 32, text: 16, video: 256, image: 64 };
 const EDIT_LIMIT = { text: 4 };
 const MB = 1024 * 1024;
 const readFileInfo = async (sessionId, path, signal) => {
@@ -2776,6 +2776,7 @@ const PICKER_SCRIPT = [
 'document.documentElement.setAttribute("data-dshcv-spotlight","");spotEl=el;}',
 'function anims(){try{return document.getAnimations?document.getAnimations():[];}catch(e){return [];}}',
 'function svgRoots(){return document.querySelectorAll("svg");}',
+'function frozen(){if(paused)return true;try{if(anims().length)return false;var roots=svgRoots();for(var j=0;j<roots.length;j++){if(roots[j].getCurrentTime&&roots[j].getCurrentTime()>0)return false;}}catch(e){}return true;}',
 'function pauseAll(){var list=anims();for(var i=0;i<list.length;i++){try{list[i].pause();}catch(e){}}',
 'var roots=svgRoots();for(var j=0;j<roots.length;j++){try{roots[j].pauseAnimations&&roots[j].pauseAnimations();}catch(e){}}paused=true;report();}',
 'function resumeAll(){var list=anims();for(var i=0;i<list.length;i++){try{list[i].play();}catch(e){}}',
@@ -2793,11 +2794,11 @@ const PICKER_SCRIPT = [
 'var end=t&&t.endTime?t.endTime:0;if(isFinite(end)&&end>duration)duration=end;var c=Number(a.currentTime)||0;if(isFinite(c)&&c>current)current=c;}catch(e){}}',
 'parent.postMessage({source:"dshcv-anim",state:{paused:paused,duration:Math.round(duration),current:Math.round(current),count:list.length,raf:rafQueue.length}},"*");}',
 'document.addEventListener("mousemove",function(e){var el=e.target;if(!el||el.nodeType!==1)return;',
-'if(!paused){hideBox();dwellEl=el;if(spotEl||document.documentElement.hasAttribute("data-dshcv-spotlight"))clearSpot();return;}',
+'if(!frozen()){hideBox();dwellEl=el;if(spotEl||document.documentElement.hasAttribute("data-dshcv-spotlight"))clearSpot();return;}',
 'var b=overlay();var r=el.getBoundingClientRect();b.style.display="block";b.style.left=r.left+"px";b.style.top=r.top+"px";b.style.width=r.width+"px";b.style.height=r.height+"px";',
 'if(el!==dwellEl){dwellEl=el;clearSpot();clearTimeout(dwellTimer);dwellTimer=setTimeout(function(){if(dwellEl===el)markSpot(el);},500);}},true);',
 'document.addEventListener("mouseleave",function(){dwellEl=null;clearTimeout(dwellTimer);clearSpot();hideBox();},true);',
-'document.addEventListener("click",function(e){var el=e.target;if(!el||el.nodeType!==1)return;if(!paused)return;e.preventDefault();e.stopPropagation();',
+'document.addEventListener("click",function(e){var el=e.target;if(!el||el.nodeType!==1)return;if(!frozen())return;e.preventDefault();e.stopPropagation();',
 'var r=el.getBoundingClientRect();var text=(el.innerText||el.textContent||"").trim().slice(0,240);',
 'parent.postMessage({source:"dshcv-picker",selector:sel(el),tag:el.tagName.toLowerCase(),text:text,rect:[Math.round(r.left),Math.round(r.top),Math.round(r.width),Math.round(r.height)]},"*");},true);',
 'document.addEventListener("keydown",function(e){var t=e.target;if(t&&(t.isContentEditable||/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||"")))return;var step=e.shiftKey?100:16;',
@@ -3007,13 +3008,15 @@ return h('div', { className: 'dshcv-empty' }, h('div', null, state.status === 'l
 return h(
 'div',
 { ref: rootRef, style: { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' } },
-h(AnimBar, {
+anim.count > 0
+? h(AnimBar, {
 anim,
 onPause: () => post('pause'),
 onResume: () => post('resume'),
 onSeek: (time) => post('seek', { time }),
 onStep: (dir) => post('step', { dir }),
-}),
+})
+: null,
 h(
 FitStage,
 { enabled: props.fit, designWidth: 1280 },
@@ -3191,13 +3194,15 @@ return h('div', { className: 'dshcv-empty' }, h('div', null, state.status === 'l
 return h(
 'div',
 { ref: rootRef, style: { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' } },
-h(AnimBar, {
+anim.count > 0
+? h(AnimBar, {
 anim,
 onPause: () => post('pause'),
 onResume: () => post('resume'),
 onSeek: (time) => post('seek', { time }),
 onStep: (dir) => post('step', { dir }),
-}),
+})
+: null,
 h('iframe', {
 ref: frameRef,
 src: state.url,
@@ -5827,6 +5832,8 @@ const [state, setState] = React.useState({ status: 'idle', url: '', error: '' })
 const [zoom, setZoom] = React.useState(1);
 const [selecting, setSelecting] = React.useState(false);
 const [marquee, setMarquee] = React.useState(null);
+const [frozenFrame, setFrozenFrame] = React.useState(null);
+const animatedImage = /\.(gif|apng|webp)$/i.test(String(doc.path || ''));
 const marqueeRef = React.useRef(null);
 const [layers, setLayers] = React.useState([]);
 const imageRef = React.useRef(null);
@@ -6017,6 +6024,21 @@ const x = Math.round((event.clientX - box.left) * box.factor);
 const y = Math.round((event.clientY - box.top) * box.factor);
 setRuler({ on: true, points: ruler.points.concat([[x, y]]).slice(-2) });
 };
+const freezeFrame = () => {
+const image = imageRef.current;
+if (!image || !image.naturalWidth) return;
+const canvas = document.createElement('canvas');
+canvas.width = image.naturalWidth;
+canvas.height = image.naturalHeight;
+const context = canvas.getContext('2d');
+if (!context) return;
+try {
+context.drawImage(image, 0, 0);
+setFrozenFrame(canvas.toDataURL('image/png'));
+} catch (error) {
+flash('无法冻结动图：' + errText(error));
+}
+};
 const startSelect = (event) => {
 if (!selecting) return;
 const box = naturalRect();
@@ -6103,6 +6125,19 @@ hexOf(sample),
 sample
 ? h('span', { className: 'dshcv-msg dshcv-opt2' }, sample.x + ',' + sample.y + ' · a' + (sample.a / 255).toFixed(2))
 : null,
+animatedImage && state.status === "ready"
+? h(
+'button',
+{
+type: 'button',
+className: 'dshcv-btn',
+title: frozenFrame ? '继续播放动图' : '暂停动图（停在当前帧）',
+'aria-pressed': Boolean(frozenFrame),
+onClick: () => (frozenFrame ? setFrozenFrame(null) : freezeFrame()),
+},
+frozenFrame ? '播放' : '暂停',
+)
+: null,
 marquee
 ? h(
 'button',
@@ -6141,7 +6176,7 @@ onPointerDown: startSelect,
 },
 h('img', {
 ref: imageRef,
-src: state.url,
+src: frozenFrame || state.url,
 alt: doc.path,
 style: { display: 'block', maxWidth: '100%', userSelect: 'none' },
 draggable: false,
