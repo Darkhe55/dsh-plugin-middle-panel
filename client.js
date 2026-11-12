@@ -563,6 +563,234 @@ onClick: () => seekVideoMark(mark),
 timeLabel(mark) + (Array.isArray(mark.rect) ? ' · 画面区域' : ''),
 )
 : markWhere(mark);
+const CODE_LANG = {
+js: 'js', mjs: 'js', cjs: 'js', jsx: 'js',
+ts: 'ts', tsx: 'ts', mts: 'ts', cts: 'ts',
+json: 'json', jsonc: 'json', json5: 'json',
+html: 'html', htm: 'html', xml: 'html', xsl: 'html', vue: 'html',
+css: 'css', scss: 'css', sass: 'css', less: 'css', styl: 'css',
+py: 'py', pyw: 'py',
+rs: 'rs', go: 'go',
+java: 'java', kt: 'java', kts: 'java', scala: 'java', groovy: 'java',
+c: 'c', h: 'c', cc: 'c', cpp: 'c', cxx: 'c', hpp: 'c', cs: 'c',
+php: 'php', rb: 'rb', lua: 'lua',
+sh: 'sh', bash: 'sh', zsh: 'sh', fish: 'sh', ps1: 'sh', bat: 'sh', cmd: 'sh',
+yml: 'yaml', yaml: 'yaml', toml: 'yaml', ini: 'yaml', cfg: 'yaml', conf: 'yaml',
+sql: 'sql',
+graphql: 'js', gql: 'js', prisma: 'js',
+};
+const codeLangOf = (path) => {
+const match = /\.([a-z0-9]+)$/i.exec(String(path || ''));
+return match ? CODE_LANG[match[1].toLowerCase()] || '' : '';
+};
+const CODE_KEYWORDS = {
+js: 'const let var function return if else for while do switch case break continue new class extends super this import export from default async await try catch finally throw typeof instanceof in of delete void yield static null undefined true false',
+ts: 'const let var function return if else for while do switch case break continue new class extends super this import export from default async await try catch finally throw typeof instanceof in of delete void yield static null undefined true false interface type enum implements declare readonly public private protected abstract as satisfies namespace keyof infer never unknown any',
+json: 'true false null',
+css: 'important media supports keyframes import font-face root',
+py: 'def class return if elif else for while break continue import from as pass raise try except finally with lambda yield global nonlocal assert del in is not and or None True False async await self match case',
+rs: 'fn let mut const struct enum impl trait for while loop if else match return use mod pub crate self super as where async await move ref dyn box unsafe true false Some None Ok Err',
+go: 'func var const type struct interface map chan go defer select case switch default for range if else return break continue package import nil true false make new len cap append',
+java: 'public private protected class interface extends implements new return if else for while do switch case break continue static final void int long double float boolean char byte short this super try catch finally throw throws import package abstract synchronized volatile transient native enum record true false null instanceof var',
+c: 'int char float double void long short unsigned signed struct union enum typedef static const volatile extern return if else for while do switch case break continue sizeof goto class namespace template public private protected virtual override new delete this nullptr true false using include define',
+php: 'function class return if else elseif foreach for while switch case break continue new echo print public private protected static const use namespace try catch finally throw true false null array isset unset',
+rb: 'def end class module return if elsif else unless while until for in do begin rescue ensure raise yield lambda proc true false nil self require include attr_accessor',
+lua: 'function local return if then elseif else end for while repeat until do break in pairs ipairs true false nil and or not require',
+sh: 'if then else elif fi for while do done case esac function return export local set unset echo cd exit source alias read shift',
+yaml: 'true false null yes no on off',
+sql: 'select from where insert into values update set delete create table alter drop index join left right inner outer on group by order having limit offset union all distinct as and or not null is in like between case when then else end primary key foreign references default',
+};
+const CODE_BACKTICK = '\x60';
+const CODE_SINGLE = String.fromCharCode(39);
+const CODE_DOUBLE = String.fromCharCode(34);
+const CODE_COMMENT = {
+js: '//', ts: '//', css: '', json: '', html: '',
+py: '#', rs: '//', go: '//', java: '//', c: '//', php: '//',
+rb: '#', lua: '--', sh: '#', yaml: '#', sql: '--',
+};
+const CODE_BLOCK = {
+js: ['/*', '*/'], ts: ['/*', '*/'], css: ['/*', '*/'], c: ['/*', '*/'],
+java: ['/*', '*/'], php: ['/*', '*/'], rs: ['/*', '*/'], go: ['/*', '*/'],
+sql: ['/*', '*/'], html: ['<!--', '-->'],
+};
+const CODE_TYPE_LANGS = { ts: true, rs: true, go: true, java: true, c: true };
+const codeQuotes = (lang) => {
+const base = CODE_SINGLE + CODE_DOUBLE;
+if (lang === 'js' || lang === 'ts' || lang === 'go') return base + CODE_BACKTICK;
+if (lang === 'json') return CODE_DOUBLE;
+if (lang === 'rs' || lang === 'yaml' || lang === 'py') return base;
+if (lang === 'sql') return base;
+return base;
+};
+const codeKeywords = (lang) => new Set(String(CODE_KEYWORDS[lang] || '').split(' ').filter(Boolean));
+const tokensOf = (tokens) => {
+const push = (text, cls) => {
+if (!text) return;
+const last = tokens[tokens.length - 1];
+if (last && last[1] === cls) last[0] += text;
+else tokens.push([text, cls]);
+};
+return push;
+};
+const tokenizeCodeLine = (line, lang, state) => {
+const tokens = [];
+const push = tokensOf(tokens);
+const comment = CODE_COMMENT[lang] || '';
+const block = CODE_BLOCK[lang];
+const quotes = codeQuotes(lang);
+const keywords = codeKeywords(lang);
+let open = state && state.block ? state.block : '';
+let i = 0;
+while (i < line.length) {
+if (open) {
+const close = line.indexOf(open, i);
+if (close < 0) {
+push(line.slice(i), 'com');
+return { tokens, state: { block: open } };
+}
+push(line.slice(i, close + open.length), 'com');
+i = close + open.length;
+open = '';
+continue;
+}
+if (block && line.startsWith(block[0], i)) {
+open = block[1];
+i += block[0].length;
+continue;
+}
+if (comment && line.startsWith(comment, i)) {
+push(line.slice(i), 'com');
+return { tokens, state: { block: '' } };
+}
+const char = line[i];
+if (quotes.includes(char)) {
+let j = i + 1;
+while (j < line.length) {
+if (line[j] === '\\') {
+j += 2;
+continue;
+}
+if (line[j] === char) {
+j += 1;
+break;
+}
+j += 1;
+}
+push(line.slice(i, j), 'str');
+i = j;
+continue;
+}
+if (char >= '0' && char <= '9') {
+let j = i + 1;
+while (j < line.length && /[0-9a-fA-FxX._]/.test(line[j])) j += 1;
+push(line.slice(i, j), 'num');
+i = j;
+continue;
+}
+if (/[A-Za-z_$@]/.test(char)) {
+let j = i + 1;
+while (j < line.length && /[A-Za-z0-9_$-]/.test(line[j])) j += 1;
+const word = line.slice(i, j);
+const lower = word.toLowerCase();
+const isCall = /^\s*\(/.test(line.slice(j));
+let cls = '';
+if (keywords.has(word) || keywords.has(lower)) cls = 'kw';
+else if (isCall) cls = 'fn';
+else if (CODE_TYPE_LANGS[lang] && /^[A-Z]/.test(word)) cls = 'type';
+push(word, cls);
+i = j;
+continue;
+}
+if ('{}()[];,.:=+-*/%<>!&|^~?'.includes(char)) {
+push(char, 'punc');
+i += 1;
+continue;
+}
+push(char, '');
+i += 1;
+}
+return { tokens, state: { block: open } };
+};
+const tokenizeHtmlLine = (line, state) => {
+const tokens = [];
+const push = tokensOf(tokens);
+let open = state && state.block ? state.block : '';
+let i = 0;
+while (i < line.length) {
+if (open) {
+const close = line.indexOf('-->', i);
+if (close < 0) {
+push(line.slice(i), 'com');
+return { tokens, state: { block: open } };
+}
+push(line.slice(i, close + 3), 'com');
+i = close + 3;
+open = '';
+continue;
+}
+if (line.startsWith('<!--', i)) {
+open = '-->';
+i += 4;
+continue;
+}
+const char = line[i];
+if (char === '<') {
+const close = line.indexOf('>', i);
+const end = close < 0 ? line.length : close + 1;
+const chunk = line.slice(i, end);
+const match = /^(<\/?)([A-Za-z0-9:-]+)/.exec(chunk);
+if (match) {
+push(match[1], 'punc');
+push(match[2], 'tag');
+let rest = chunk.slice(match[0].length);
+let at = 0;
+while (at < rest.length) {
+const attr = /^\s*([A-Za-z_:@][-A-Za-z0-9_:.]*)(=)("[^"]*"|'[^']*')?/.exec(rest.slice(at));
+if (!attr) break;
+push(attr[1], 'attr');
+push(attr[2], 'punc');
+if (attr[3]) push(attr[3], 'str');
+at += attr[0].length;
+}
+push(rest.slice(at), 'punc');
+} else {
+push(chunk, 'punc');
+}
+i = end;
+continue;
+}
+if (char === CODE_DOUBLE || char === CODE_SINGLE) {
+const close = line.indexOf(char, i + 1);
+const end = close < 0 ? line.length : close + 1;
+push(line.slice(i, end), 'str');
+i = end;
+continue;
+}
+let j = i;
+while (j < line.length && line[j] !== '<' && line[j] !== CODE_DOUBLE && line[j] !== CODE_SINGLE) j += 1;
+push(line.slice(i, j), '');
+i = j;
+}
+return { tokens, state: { block: open } };
+};
+const HIGHLIGHT_LINE_BUDGET = 4000;
+const buildCodeLines = (text, lang) => {
+if (!lang) return null;
+const lines = String(text || '').split('\n');
+const out = [];
+let state = { block: '' };
+for (let index = 0; index < lines.length; index += 1) {
+if (index >= HIGHLIGHT_LINE_BUDGET) {
+out.push([[lines[index], '']]);
+continue;
+}
+const result =
+lang === 'html' ? tokenizeHtmlLine(lines[index], state) : tokenizeCodeLine(lines[index], lang, state);
+state = result.state || { block: '' };
+out.push(result.tokens.length ? result.tokens : [['', '']]);
+}
+return out;
+};
 const parseTime = (text) => {
 const raw = String(text === undefined || text === null ? '' : text).replace(/\s+/g, '');
 if (!raw) return NaN;
@@ -756,7 +984,7 @@ return 'failed';
 }
 };
 const CSS_BASE = [
-':root{--dshcv-ink:var(--dsw-alias-label-primary);--dshcv-ink-2:var(--dsw-alias-label-secondary);--dshcv-line:color-mix(in srgb,var(--dsw-alias-label-primary) 12%,transparent);--dshcv-line-strong:color-mix(in srgb,var(--dsw-alias-label-primary) 24%,transparent);--dshcv-tint:color-mix(in srgb,var(--dsw-alias-label-primary) 8%,transparent);--dshcv-wash:color-mix(in srgb,var(--dsw-alias-label-primary) 6%,transparent);--dshcv-off-mid:#e9a6ab;--dshcv-off-edge:#d88b92;--dshcv-on-mid:#8ec9a3;--dshcv-on-edge:#cdead8}',
+':root{--dshcv-ink:var(--dsw-alias-label-primary);--dshcv-guide:color-mix(in srgb,var(--dsw-alias-label-primary) 14%,transparent);--dshcv-ink-2:var(--dsw-alias-label-secondary);--dshcv-line:color-mix(in srgb,var(--dsw-alias-label-primary) 12%,transparent);--dshcv-line-strong:color-mix(in srgb,var(--dsw-alias-label-primary) 24%,transparent);--dshcv-tint:color-mix(in srgb,var(--dsw-alias-label-primary) 8%,transparent);--dshcv-wash:color-mix(in srgb,var(--dsw-alias-label-primary) 6%,transparent);--dshcv-off-mid:#e9a6ab;--dshcv-off-edge:#d88b92;--dshcv-on-mid:#8ec9a3;--dshcv-on-edge:#cdead8}',
 '.dshcv-btn{position:relative;display:inline-flex;align-items:center;justify-content:center;gap:4px;height:28px;padding:0 10px;border:1px solid var(--dshcv-line);border-radius:8px;background:transparent;color:var(--dshcv-ink);font:inherit;font-size:12px;line-height:1;cursor:pointer;white-space:nowrap;overflow:hidden;transition:background-color .12s ease,color .12s ease,border-color .12s ease,box-shadow .16s ease}',
 '.dshcv-btn:hover{background:var(--dshcv-wash);border-color:var(--dshcv-line-strong)}',
 '.dshcv-btn:active{background:var(--dshcv-tint)}',
@@ -794,6 +1022,28 @@ const CSS_BASE = [
 '.dshcv-search{display:inline-flex;align-items:center;gap:6px}',
 '.dshcv-searchinput{height:24px;width:140px;padding:0 8px;border-radius:7px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;outline:none}',
 '.dshcv-searchinput:focus{border-color:var(--dsw-alias-brand-primary)}',
+'.dshcv-code{font-variant-ligatures:none}',
+'.dshcv-tok-kw{color:#a626a4;font-weight:600}',
+'.dshcv-tok-str{color:#50a14f}',
+'.dshcv-tok-num{color:#b76b01}',
+'.dshcv-tok-com{color:#8b949e;font-style:italic}',
+'.dshcv-tok-fn{color:#3a7bd5}',
+'.dshcv-tok-type{color:#c18401}',
+'.dshcv-tok-tag{color:#e45649}',
+'.dshcv-tok-attr{color:#986801}',
+'.dshcv-tok-punc{color:#7a8290}',
+'@media (prefers-color-scheme:dark){',
+'.dshcv-tok-kw{color:#c678dd}',
+'.dshcv-tok-str{color:#98c379}',
+'.dshcv-tok-num{color:#d19a66}',
+'.dshcv-tok-com{color:#7d8590}',
+'.dshcv-tok-fn{color:#61afef}',
+'.dshcv-tok-type{color:#e5c07b}',
+'.dshcv-tok-tag{color:#e06c75}',
+'.dshcv-tok-attr{color:#d19a66}',
+'.dshcv-tok-punc{color:#8b949e}',
+'}',
+'.dshcv-code{background-image:repeating-linear-gradient(to right,transparent 0,transparent calc(2ch - 1px),var(--dshcv-guide) calc(2ch - 1px),var(--dshcv-guide) 2ch);background-repeat:no-repeat;background-size:100% 100%}',
 '.dshcv-linehit{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 10%,transparent)}',
 '.dshcv-linehitcur{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 22%,transparent)}',
 '.dshcv-hit{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 45%,transparent);color:inherit;border-radius:3px;padding:0 1px}',
@@ -1788,6 +2038,7 @@ localStorage.setItem('dsh.canvas.fontsize', String(value));
 }
 };
 const isMarkdown = doc.view === 'markdown';
+const codeLang = doc.view === 'text' ? codeLangOf(doc.path) : '';
 const [rendered, setRendered] = React.useState(isMarkdown);
 const scrollPos = React.useRef(0);
 const scrollRef = React.useRef(null);
@@ -1848,6 +2099,10 @@ if (!message) return undefined;
 const timer = setTimeout(() => setMessage(''), 3000);
 return () => clearTimeout(timer);
 }, [message]);
+const codeLines = React.useMemo(
+() => buildCodeLines(state.text, codeLang),
+[state.text, codeLang],
+);
 const lineElements = React.useMemo(() => {
 if (state.status !== 'ready') return [];
 return state.text.split('\n');
@@ -1918,7 +2173,13 @@ className:
 'data-line': index + 1,
 },
 h('span', { className: 'dshcv-num' }, String(index + 1)),
-h('span', { className: 'dshcv-text' }, highlight(line, deferredQuery)),
+h('span', { className: 'dshcv-text' + (codeLang ? ' dshcv-code' : '') },
+codeLines && codeLines[index]
+? codeLines[index].map(([text, cls], tokenIndex) =>
+h('span', { key: tokenIndex, className: cls ? 'dshcv-tok dshcv-tok-' + cls : undefined }, text),
+)
+: highlight(line, deferredQuery),
+),
 ),
 ),
 [lineElements, deferredHits, searchIndex, deferredQuery, hoverFrom, hoverTo],
