@@ -21,8 +21,8 @@ check(page.includes('.sort((a, b) => a[1] - b[1] || a[0] - b[0]);'), '按从上�
 check(page.includes('bands.map((item) => item.map((value) => Math.round(value * 10000) / 10000)),'), '带子按页面归一化');
 
 // —— 渲染：文字用带子、区域用框 ——
-check(page.includes('mark.text && Array.isArray(mark.bands)'), '文字标注走带子分支');
-check(page.includes('className: "dshcv-pdftexthit",'), '带子有独立类名');
+check(page.includes('mark.text') && page.includes('? null'), '文字标注不再常驻渲染');
+check(page.includes('dshcv-pdftexthit'), '带子有独立类名');
 check(page.includes('className: "dshcv-pdfregion",'), '区域标注仍画框');
 check(page.includes('hoverBands && hoverBands.length'), '悬停文字也按带子高亮');
 check(page.includes('className: "dshcv-pdftexthit dshcv-pdftexthit-hot",'), '悬停带子更亮');
@@ -38,6 +38,13 @@ check(view.includes('bands: selection.bands,'), '标注保存带子');
 check(view.includes('const onSelect = (pageNumber, rect, bands, text) => {'), '回传带子');
 check(view.includes('hoverBands:'), '悬停传带子');
 check(src.includes("? '第 ' + (mark.page || 1) + ' 页 · 引用文字（' + mark.bands.length + ' 行）'"), '标注栏说明是引用文字');
+
+
+// —— 只在悬停时显示 ——
+check(page.includes('pageMarks.map((mark, index) =>') && page.includes('mark.text'), '标记层区分文字与区域');
+check(page.includes('hoverBands && hoverBands.length'), '悬停时才画带子');
+check(page.includes("className: 'dshcv-pdftexthit'" ) || page.includes('dshcv-pdftexthit'), '带子样式仍存在');
+check(!page.includes('mark.bands.map('), '常驻分支已移除');
 
 if (failures) {
   console.log('失败 ' + failures + ' 项');

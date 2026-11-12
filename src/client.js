@@ -4744,20 +4744,11 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
             },
           }),
         ),
+        // Text marks stay invisible until the rail row is hovered: a permanent tint
+        // reads as "this text is selected". Dragged regions keep their outline.
         pageMarks.map((mark, index) =>
-          mark.text && Array.isArray(mark.bands)
-            ? mark.bands.map((band, bandIndex) =>
-                h("div", {
-                  key: "band" + index + "-" + bandIndex,
-                  className: "dshcv-pdftexthit",
-                  style: {
-                    left: band[0] * 100 + "%",
-                    top: band[1] * 100 + "%",
-                    width: band[2] * 100 + "%",
-                    height: band[3] * 100 + "%",
-                  },
-                }),
-              )
+          mark.text
+            ? null
             : h("div", {
                 key: "mark" + index,
                 className: "dshcv-pdfregion",
