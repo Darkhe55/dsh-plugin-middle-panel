@@ -4451,27 +4451,35 @@ window.setTimeout(() => place(), 140);
 React.useEffect(() => {
 const node = scrollRef.current;
 if (!node) return undefined;
+let token = 0;
 const onWheel = (event) => {
 if (!event.ctrlKey && !event.metaKey) return;
 event.preventDefault();
 const rect = node.getBoundingClientRect();
-zoomAnchor.current = {
+const anchor = {
 ratio: (event.clientY - rect.top + node.scrollTop) / Math.max(1, node.scrollHeight),
 offset: event.clientY - rect.top,
+until: Date.now() + 320,
 };
+token += 1;
+const mine = token;
 const factor = event.deltaY < 0 ? 1.1 : 1 / 1.1;
 setZoom((z) => Math.min(4, Math.max(0.4, Math.round(z * factor * 100) / 100)));
+const tick = () => {
+if (mine !== token) return;
+const target = scrollRef.current;
+if (!target) return;
+target.scrollTop = Math.max(0, anchor.ratio * target.scrollHeight - anchor.offset);
+if (Date.now() < anchor.until) window.requestAnimationFrame(tick);
+};
+window.requestAnimationFrame(tick);
 };
 node.addEventListener("wheel", onWheel, { passive: false });
-return () => node.removeEventListener("wheel", onWheel);
+return () => {
+token += 1;
+node.removeEventListener("wheel", onWheel);
+};
 }, []);
-React.useEffect(() => {
-const node = scrollRef.current;
-const anchor = zoomAnchor.current;
-if (!node || !anchor) return;
-zoomAnchor.current = null;
-node.scrollTop = Math.max(0, anchor.ratio * node.scrollHeight - anchor.offset);
-}, [zoom]);
 React.useEffect(() => {
 if (!hoverMark || state.status !== "ready") return;
 scrollToPage(Number(hoverMark.page) || 1, hoverMark.rect);

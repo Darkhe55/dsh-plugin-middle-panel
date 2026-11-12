@@ -19,8 +19,11 @@ check(view.includes('event.preventDefault();'), '阻止浏览器整体缩放');
 check(view.includes('const factor = event.deltaY < 0 ? 1.1 : 1 / 1.1;'), '按滚动方向放大/缩小');
 check(view.includes('setZoom((z) => Math.min(4, Math.max(0.4, Math.round(z * factor * 100) / 100)));'), '夹在 0.4–4 并取两位小数');
 check(view.includes('ratio: (event.clientY - rect.top + node.scrollTop) / Math.max(1, node.scrollHeight),'), '记录光标处的相对位置');
-check(view.includes('node.scrollTop = Math.max(0, anchor.ratio * node.scrollHeight - anchor.offset);'), '缩放后回到同一处');
-check(view.includes('}, [zoom]);'), '缩放变化时校正滚动');
+check(view.includes('until: Date.now() + 320,'), '锚点保持一段时间');
+check(view.includes('target.scrollTop = Math.max(0, anchor.ratio * target.scrollHeight - anchor.offset);'), '缩放后回到同一处');
+check(view.includes('window.requestAnimationFrame(tick);'), '逐帧校正，避免抖动');
+check(view.includes('if (mine !== token) return;'), '新的滚动事件会取消旧的校正循环');
+check(!view.includes('}, [zoom]);'), '不再用单次 effect 校正（会被异步重排打乱）');
 
 // 与工具栏按钮共用同一个 zoom 状态
 check(view.includes('setZoom((z) => Math.max(0.4, Math.round((z - 0.1) * 100) / 100))'), '缩小按钮仍在');
