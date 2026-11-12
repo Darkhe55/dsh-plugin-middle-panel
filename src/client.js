@@ -967,7 +967,12 @@ return Math.abs(Number(left.start) - Number(right.start)) <= 0.2 && Math.abs(Num
 
     const CSS_PANEL = [
       '.dshcv-root{display:flex;flex-direction:column;height:100%;min-height:0;overflow:hidden;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary)}',
-      '.dshcv-head{display:flex;align-items:center;gap:6px;padding:0 8px 0 12px;min-height:40px;border-bottom:1px solid var(--dsw-alias-border-l1)}',
+      '.dshcv-head{display:flex;align-items:center;gap:6px;padding:0 8px 0 12px;min-height:40px;position:relative;border-bottom:1px solid var(--dsw-alias-border-l1)}',
+      '.dshcv-headmenu{position:absolute;top:calc(100% - 4px);right:8px;z-index:40;min-width:190px;padding:5px;border-radius:10px;border:1px solid color-mix(in srgb,var(--dsw-alias-border-l1) 90%,transparent);background:var(--dsw-alias-bg-layer-2);box-shadow:0 10px 30px rgba(15,17,21,.14);display:flex;flex-direction:column;gap:1px}',
+      '.dshcv-menuitem{display:flex;align-items:center;gap:8px;width:100%;padding:7px 9px;border:0;border-radius:7px;background:none;color:var(--dsw-alias-label-primary);font-size:12px;text-align:left;cursor:pointer}',
+      '.dshcv-menuitem:hover,.dshcv-menuitem:focus-visible{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 12%,transparent);outline:none}',
+      '.dshcv-menukey{margin-left:auto;font-size:10px;color:var(--dsw-alias-label-tertiary);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}',
+      '.dshcv-menurule{height:1px;margin:4px 6px;background:var(--dsw-alias-border-l1)}',
       '.dshcv-title{font-size:13px;font-weight:600;letter-spacing:-0.01em;white-space:nowrap}',
       '.dshcv-path{font-size:12px;color:var(--dsw-alias-label-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}',
       '.dshcv-spacer{flex:1 1 auto;min-width:8px}',
@@ -7564,6 +7569,7 @@ function CanvasPanel(props) {      useVersion();
     // Breakpoints need the panel's own width: two text columns under ~600px are
     // unreadable, and a stacked split only makes sense while it is tall enough.
     const [paneBox, setPaneBox] = React.useState({ width: 0, height: 0 });
+    const [menuOpen, setMenuOpen] = React.useState(false);
     React.useEffect(() => {
       const node = paneRef.current;
       if (!node || typeof ResizeObserver === 'undefined') return undefined;
@@ -7581,6 +7587,19 @@ function CanvasPanel(props) {      useVersion();
       observer.observe(node);
       return () => observer.disconnect();
     }, []);
+
+    // Close the header menu on an outside press; Esc is handled by the panel's
+    // own key handler below.
+    React.useEffect(() => {
+      if (!menuOpen) return undefined;
+      const onDown = (event) => {
+        const target = event.target;
+        if (target && typeof target.closest === 'function' && target.closest('.dshcv-headmenu, .dshcv-more')) return;
+        setMenuOpen(false);
+      };
+      window.addEventListener('pointerdown', onDown, true);
+      return () => window.removeEventListener('pointerdown', onDown, true);
+    }, [menuOpen]);
 
     // Unknown size (first paint, tests) must not switch the view off.
     const splitWanted = splitState().on && Boolean(secondDoc());
@@ -7786,7 +7805,12 @@ function CanvasPanel(props) {      useVersion();
           }
           return;
         }
-        if (event.key === 'Escape' && splitState().on) {
+        if (event.key === 'Escape' && menuOpen) {
+        event.preventDefault();
+        setMenuOpen(false);
+        return;
+      }
+      if (event.key === 'Escape' && splitState().on) {
           event.preventDefault();
           mutate({ split: Object.assign({}, splitState(), { on: false, secondId: null }), splitFocus: 'a' });
           return;
@@ -7870,19 +7894,141 @@ function CanvasPanel(props) {      useVersion();
           h('span', { className: 'dshcv-title' }, '画布'),
           h('span', { className: 'dshcv-path' }, active ? active.path : '未打开交付物'),
           h('span', { className: 'dshcv-spacer' }),
+          // Narrow panels hide the secondary buttons; this opens them as a menu
+          // instead of expanding the header in place.
           h(
             'button',
             {
               type: 'button',
               className: 'dshcv-btn dshcv-more',
-              title: '显示全部按钮',
-              onClick: (event) => {
-                const head = event.currentTarget.parentElement;
-                if (head) head.classList.toggle('dshcv-expanded');
-              },
+              title: '更多操作',
+              'aria-haspopup': 'menu',
+              'aria-expanded': menuOpen ? 'true' : 'false',
+              'data-active': menuOpen ? '1' : '0',
+              onClick: () => setMenuOpen((value) => !value),
             },
             '⋯',
           ),
+          menuOpen
+            ? h(
+                'div',
+                { className: 'dshcv-headmenu', role: 'menu' },
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    role: 'menuitem',
+                    className: 'dshcv-menuitem',
+                    onClick: () => {
+                      setMenuOpen(false);
+                      setPickerOpen(true);
+                    },
+                  },
+                  '打开工作区文件',
+                  h('span', { className: 'dshcv-menukey' }, ''),
+                ),
+                store.marks.length
+                  ? h(
+                      'button',
+                      {
+                        type: 'button',
+                        role: 'menuitem',
+                        className: 'dshcv-menuitem',
+                        onClick: () => {
+                          setMenuOpen(false);
+                          send();
+                        },
+                      },
+                      '发送标注 (' + pendingMarks().length + ')',
+                    )
+                  : null,
+                store.marks.length
+                  ? h(
+                      'button',
+                      {
+                        type: 'button',
+                        role: 'menuitem',
+                        className: 'dshcv-menuitem',
+                        onClick: () => {
+                          setMenuOpen(false);
+                          exportMarks();
+                        },
+                      },
+                      '导出标注 JSON',
+                    )
+                  : null,
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    role: 'menuitem',
+                    className: 'dshcv-menuitem',
+                    onClick: () => {
+                      setMenuOpen(false);
+                      if (importInputRef.current) importInputRef.current.click();
+                    },
+                  },
+                  '导入标注 JSON',
+                ),
+                store.marks.length
+                  ? h(
+                      'button',
+                      {
+                        type: 'button',
+                        role: 'menuitem',
+                        className: 'dshcv-menuitem',
+                        onClick: () => {
+                          setMenuOpen(false);
+                          setFollowHover(!followHover.on);
+                        },
+                      },
+                      (followHover.on ? '关闭' : '开启') + '悬停跟随',
+                    )
+                  : null,
+                store.marks.length
+                  ? h(
+                      'button',
+                      {
+                        type: 'button',
+                        role: 'menuitem',
+                        className: 'dshcv-menuitem',
+                        onClick: () => {
+                          setMenuOpen(false);
+                          clearMarks();
+                        },
+                      },
+                      '清空标注',
+                    )
+                  : null,
+                h('div', { className: 'dshcv-menurule' }),
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    role: 'menuitem',
+                    className: 'dshcv-menuitem',
+                    onClick: () => {
+                      setMenuOpen(false);
+                      setHelpOpen(true);
+                    },
+                  },
+                  '帮助与键位',
+                ),
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    role: 'menuitem',
+                    className: 'dshcv-menuitem',
+                    onClick: () => {
+                      setMenuOpen(false);
+                      closePanel.current();
+                    },
+                  },
+                  '回到对话',
+                ),
+              )
+            : null,
           h('button', { type: 'button', className: 'dshcv-btn', onClick: () => setPickerOpen(!pickerOpen) }, '打开'),
           store.marks.length
             ? h(
