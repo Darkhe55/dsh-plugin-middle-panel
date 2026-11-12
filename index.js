@@ -7,6 +7,8 @@
  */
 export const inject = ['tools', 'systemPrompt', 'webServer', 'fs', 'workingDirectory', 'sessions']
 
+import { registerVendorRoute } from './vendor-route.js'
+
 const writeIsStale = (before, expectedMtime, expectedSize, force) => {
   if (!before) return false
   // Node-style stats expose isFile() as a method; a plain snapshot may expose a flag.
@@ -82,6 +84,8 @@ const corsFor = (request, hostHeader) => {
 }
 
 export function apply(ctx) {
+  // pdf.js is served from the plugin tree so the panel can render pages itself.
+  registerVendorRoute(ctx, corsFor)
   const tool = {
     name: 'canvas',
     description:

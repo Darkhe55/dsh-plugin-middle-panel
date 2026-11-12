@@ -1307,6 +1307,9 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
       '.dshcv-trackhead{position:absolute;top:-2px;bottom:-2px;width:2px;margin-left:-1px;background:var(--dsw-alias-brand-primary)}',
       '.dshcv-markband{position:absolute;top:-1px;bottom:-1px;background:rgba(79,140,255,.22);box-shadow:0 0 10px rgba(79,140,255,.55),inset 0 0 6px rgba(79,140,255,.35);pointer-events:none;border-radius:3px}',
       '.dshcv-markhead{position:absolute;top:-3px;bottom:-3px;width:2px;margin-left:-1px;background:rgba(79,140,255,.95);box-shadow:0 0 8px rgba(79,140,255,.85);pointer-events:none}',
+    '.dshcv-pdfcanvasbox{position:relative;align-self:center;margin:0 auto;line-height:0}',
+    '.dshcv-pdfcanvas{display:block;background:#fff;box-shadow:0 2px 14px rgba(0,0,0,.16)}',
+    '.dshcv-scroll{overflow:auto}',
     '.dshcv-pdfpage{position:absolute;overflow:hidden}',
     '.dshcv-pdflayer{position:absolute;inset:0;cursor:crosshair;touch-action:none}',
     '.dshcv-pdflayer:not(.dshcv-pdflayer-on){cursor:default}',
@@ -4445,7 +4448,297 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
       );
     }
 
+    // ---------------- pdf viewer (own renderer) ----------------
+    // The built-in reader lives in a plugin process: no geometry, no events. pdf.js
+    // is vendored and served from /dsh-canvas/vendor/pdfjs, so the page is a canvas
+    // we lay out ourselves and a region is a fraction of the real page.
+    let pdfjsPromise = null;
+    const loadPdfJs = () => {
+      if (!pdfjsPromise) {
+        pdfjsPromise = import('/dsh-canvas/vendor/pdfjs/pdf.min.mjs').then((mod) => {
+          mod.GlobalWorkerOptions.workerSrc = '/dsh-canvas/vendor/pdfjs/pdf.worker.min.mjs';
+          return mod;
+        });
+      }
+      return pdfjsPromise;
+    };
+
+    function PdfCanvasDoc(props) {
+      const { doc, sessionId, onFail } = props;
+      const [state, setState] = React.useState({ status: 'loading', error: '', pages: 0 });
+      const [page, setPage] = React.useState(1);
+      const [zoom, setZoom] = React.useState(1);
+      const [markMode, setMarkMode] = React.useState(false);
+      const [drag, setDrag] = React.useState(null);
+      const [width, setWidth] = React.useState(0);
+      const docRef = React.useRef(null);
+      const pageRef = React.useRef(null);
+      const canvasRef = React.useRef(null);
+      const boxRef = React.useRef(null);
+      const pressRef = React.useRef(null);
+      const renderToken = React.useRef(0);
+      const hovered = useHoverMark(doc.path);
+      const hoverRegion =
+        hovered && hovered.kind === 'region' && hovered.norm && Array.isArray(hovered.rect) && hovered.page === page
+          ? hovered.rect
+          : null;
+
+      // Load once per path: the bytes come through the workspace channel, then pdf.js
+      // parses them in the page.
+      React.useEffect(() => {
+        if (!sessionId) return undefined;
+        const controller = new AbortController();
+        let cancelled = false;
+        let loaded = null;
+        setState({ status: 'loading', error: '', pages: 0 });
+        Promise.all([loadPdfJs(), readBytesFile(sessionId, doc.path, controller.signal)])
+          .then(async ([pdfjs, bytes]) => {
+            if (cancelled || !bytes) return;
+            loaded = await pdfjs.getDocument({
+              data: bytes,
+              cMapUrl: '/dsh-canvas/vendor/pdfjs/cmaps/',
+              cMapPacked: true,
+              standardFontDataUrl: '/dsh-canvas/vendor/pdfjs/standard_fonts/',
+            }).promise;
+            if (cancelled) return;
+            docRef.current = loaded;
+            setState({ status: 'ready', error: '', pages: loaded.numPages });
+          })
+          .catch((error) => {
+            if (cancelled) return;
+            if (onFail) onFail(errText(error));
+            else setState({ status: 'failed', error: errText(error), pages: 0 });
+          });
+        return () => {
+          cancelled = true;
+          controller.abort();
+          if (loaded) loaded.destroy().catch(() => {});
+          docRef.current = null;
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [doc.path, sessionId]);
+
+      // Track the available width only to choose a render scale; a stale value costs
+      // sharpness, never position.
+      React.useEffect(() => {
+        const node = boxRef.current;
+        if (!node) return undefined;
+        const measure = () => setWidth(node.clientWidth || 0);
+        measure();
+        let observer = null;
+        if (typeof ResizeObserver === 'function') {
+          observer = new ResizeObserver(measure);
+          observer.observe(node);
+        } else {
+          window.addEventListener('resize', measure);
+        }
+        return () => {
+          if (observer) observer.disconnect();
+          else window.removeEventListener('resize', measure);
+        };
+      }, [state.status]);
+
+      // Draw the current page into the canvas.
+      React.useEffect(() => {
+        if (state.status !== 'ready' || !docRef.current) return undefined;
+        const token = renderToken.current + 1;
+        renderToken.current = token;
+        let cancelled = false;
+        (async () => {
+          const pdf = docRef.current;
+          const target = Math.min(Math.max(1, page), pdf.numPages);
+          const pdfPage = await pdf.getPage(target);
+          if (cancelled || renderToken.current !== token) return;
+          pageRef.current = pdfPage;
+          const base = pdfPage.getViewport({ scale: 1 });
+          const available = width || base.width;
+          const scale = Math.min(6, Math.max(0.15, (available / base.width) * zoom));
+          const viewport = pdfPage.getViewport({ scale });
+          const canvas = canvasRef.current;
+          if (!canvas) return;
+          const ratio = Math.min(3, window.devicePixelRatio || 1);
+          canvas.width = Math.round(viewport.width * ratio);
+          canvas.height = Math.round(viewport.height * ratio);
+          canvas.style.width = viewport.width + 'px';
+          canvas.style.height = viewport.height + 'px';
+          const context = canvas.getContext('2d');
+          if (!context) return;
+          context.setTransform(ratio, 0, 0, ratio, 0, 0);
+          context.clearRect(0, 0, viewport.width, viewport.height);
+          await pdfPage.render({ canvasContext: context, viewport }).promise;
+        })().catch((error) => {
+          if (!cancelled) setState((current) => Object.assign({}, current, { error: errText(error) }));
+        });
+        return () => {
+          cancelled = true;
+        };
+      }, [state.status, page, zoom, width]);
+
+      const ratioOf = (event) => {
+        const canvas = canvasRef.current;
+        if (!canvas) return null;
+        const rect = canvas.getBoundingClientRect();
+        if (!rect.width || !rect.height) return null;
+        // The canvas is the page: its box is the coordinate system, so a region is a
+        // fraction of the page no matter how the pane resizes.
+        return {
+          x: Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)),
+          y: Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height)),
+        };
+      };
+
+      const onDown = (event) => {
+        if (event.button !== 0) return;
+        const at = ratioOf(event);
+        if (!at) return;
+        event.preventDefault();
+        pressRef.current = at;
+        setDrag({ from: at, to: at });
+        try {
+          event.currentTarget.setPointerCapture(event.pointerId);
+        } catch (error) {
+          /* best effort */
+        }
+      };
+
+      const onMove = (event) => {
+        if (!pressRef.current) return;
+        const at = ratioOf(event);
+        if (!at) return;
+        setDrag({ from: pressRef.current, to: at });
+      };
+
+      const onUp = (event) => {
+        const from = pressRef.current;
+        pressRef.current = null;
+        const box = drag;
+        setDrag(null);
+        if (!from || !box) return;
+        const at = ratioOf(event) || box.to;
+        const x = Math.min(from.x, at.x);
+        const y = Math.min(from.y, at.y);
+        const w = Math.abs(at.x - from.x);
+        const h = Math.abs(at.y - from.y);
+        if (w * h < 0.0004) return;
+        addMark({
+          kind: 'region',
+          path: doc.path,
+          page,
+          norm: true,
+          rect: [
+            Math.round(x * 10000) / 10000,
+            Math.round(y * 10000) / 10000,
+            Math.round(w * 10000) / 10000,
+            Math.round(h * 10000) / 10000,
+          ],
+          quote: '第 ' + page + ' 页区域',
+        });
+      };
+
+      if (state.status === 'failed') {
+        return h('div', { className: 'dshcv-empty' }, h('div', null, '无法渲染该 PDF'), h('div', null, state.error));
+      }
+
+      const pages = state.pages || 1;
+      const go = (next) => setPage(Math.min(pages, Math.max(1, next)));
+
+      return h(
+        'div',
+        { className: 'dshcv-docwrap', style: { minHeight: 0 } },
+        h(
+          'div',
+          { className: 'dshcv-tools' },
+          h('span', { className: 'dshcv-msg' }, '第 ' + page + ' / ' + pages + ' 页'),
+          h('button', { type: 'button', className: 'dshcv-btn', title: '上一页', onClick: () => go(page - 1) }, '上一页'),
+          h('button', { type: 'button', className: 'dshcv-btn', title: '下一页', onClick: () => go(page + 1) }, '下一页'),
+          h('button', { type: 'button', className: 'dshcv-btn', title: '缩小', onClick: () => setZoom((z) => Math.max(0.3, Math.round((z - 0.1) * 100) / 100)) }, '缩小'),
+          h('button', { type: 'button', className: 'dshcv-btn', title: '放大', onClick: () => setZoom((z) => Math.min(4, Math.round((z + 0.1) * 100) / 100)) }, '放大'),
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'dshcv-btn',
+              'data-kind': 'primary',
+              onClick: () => addMark({ kind: 'spot', path: doc.path, label: '第 ' + page + ' 页', quote: '', page }),
+            },
+            '标记此页',
+          ),
+          h('button', { type: 'button', className: 'dshcv-btn', onClick: () => addMark({ kind: 'spot', path: doc.path, label: '整份 PDF', quote: '' }) }, '标记整份文档'),
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'dshcv-btn',
+              'data-kind': markMode ? 'primary' : 'quiet',
+              'aria-pressed': markMode,
+              title: markMode ? '退出框选' : '在页面上拖出一块区域并标注',
+              onClick: () => {
+                setMarkMode((on) => !on);
+                setDrag(null);
+                pressRef.current = null;
+              },
+            },
+            markMode ? '退出框选' : '框选标注',
+          ),
+        ),
+        h(
+          'div',
+          { className: 'dshcv-scroll', ref: boxRef },
+          h(
+            'div',
+            { className: 'dshcv-pdfcanvasbox' },
+            h('canvas', { ref: canvasRef, className: 'dshcv-pdfcanvas' }),
+            hoverRegion
+              ? h('div', {
+                  className: 'dshcv-pdfregion',
+                  style: {
+                    left: hoverRegion[0] * 100 + '%',
+                    top: hoverRegion[1] * 100 + '%',
+                    width: hoverRegion[2] * 100 + '%',
+                    height: hoverRegion[3] * 100 + '%',
+                  },
+                })
+              : null,
+            drag
+              ? h('div', {
+                  className: 'dshcv-pdfmarquee',
+                  style: {
+                    left: Math.min(drag.from.x, drag.to.x) * 100 + '%',
+                    top: Math.min(drag.from.y, drag.to.y) * 100 + '%',
+                    width: Math.abs(drag.to.x - drag.from.x) * 100 + '%',
+                    height: Math.abs(drag.to.y - drag.from.y) * 100 + '%',
+                  },
+                })
+              : null,
+            h('div', {
+              className: markMode ? 'dshcv-pdflayer dshcv-pdflayer-on' : 'dshcv-pdflayer',
+              style: { pointerEvents: markMode ? 'auto' : 'none' },
+              onPointerDown: onDown,
+              onPointerMove: onMove,
+              onPointerUp: onUp,
+              onPointerCancel: onUp,
+            }),
+          ),
+        ),
+        markMode
+          ? h(
+              'div',
+              { className: 'dshcv-msg', style: { paddingTop: 4 } },
+              '拖出一块区域即可标注；坐标按页面计算，缩放或展开列表后仍会对齐',
+            )
+          : null,
+      );
+    }
+
+    // Falls back to the embedded reader if pdf.js cannot load, so a broken vendor
+    // tree never means "no PDF at all".
     function PdfDoc(props) {
+      const [fallback, setFallback] = React.useState('');
+      if (fallback) return h(EmbeddedPdfDoc, props);
+      return h(PdfCanvasDoc, Object.assign({}, props, { onFail: (error) => setFallback(error || 'pdf.js 不可用') }));
+    }
+
+    function EmbeddedPdfDoc(props) {
       const { doc, sessionId } = props;
       const [state, setState] = React.useState({ status: 'idle', url: '', size: 0, error: '', pages: 0, aspect: 0 });
       const [page, setPage] = React.useState(1);
