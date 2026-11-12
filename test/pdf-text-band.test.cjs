@@ -15,7 +15,7 @@ const docEnd = src.indexOf('function PdfDoc(props) {');
 const view = src.slice(pageEnd, docEnd);
 
 // —— 逐行记录 ——
-check(page.includes('const fragments = Array.from(active.getRangeAt(0).getClientRects())'), '取每一行的矩形');
+check(page.includes('Array.from(range.getClientRects())'), '取每一行的矩形');
 check(page.includes('const bands = fragments'), '生成带子数组');
 check(page.includes('.sort((a, b) => a[1] - b[1] || a[0] - b[0]);'), '按从上到下排序');
 check(page.includes('bands.map((item) => item.map((value) => Math.round(value * 10000) / 10000)),'), '带子按页面归一化');

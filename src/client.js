@@ -4541,6 +4541,33 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
     // zoom, while the bitmap is produced asynchronously. That split is what keeps
     // zooming stable: the scroll column never waits for a render to change height, and
     // the old bitmap simply stretches until the sharper one is swapped in.
+    // Range.toString() walks the DOM, and pdf.js emits runs in content-stream order,
+    // which need not match what the eye sees: selecting "tes" could yield "est".
+    // Collect the selected glyphs per span, then order them by position.
+    const selectedTextInVisualOrder = (wrap, range) => {
+      if (!wrap || !range) return "";
+      const parts = [];
+      const spans = wrap.querySelectorAll(".dshcv-pdftext span");
+      for (let index = 0; index < spans.length; index += 1) {
+        const span = spans[index];
+        const node = span.firstChild;
+        if (!node || node.nodeType !== 3) continue;
+        let start = -1;
+        let end = -1;
+        for (let offset = 0; offset < node.length; offset += 1) {
+          if (range.comparePoint(node, offset) !== 0) continue;
+          if (start < 0) start = offset;
+          end = offset + 1;
+        }
+        if (start < 0) continue;
+        const box = span.getBoundingClientRect();
+        parts.push({ text: node.nodeValue.slice(start, end), top: box.top, left: box.left });
+      }
+      if (!parts.length) return String(range.toString() || "");
+      parts.sort((a, b) => (Math.abs(a.top - b.top) > 4 ? a.top - b.top : a.left - b.left));
+      return parts.map((part) => part.text).join("");
+    };
+
     function PdfPage(props) {
       const {
         pdf,
@@ -4715,10 +4742,11 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         const wrap = wrapRef.current;
         const active = window.getSelection ? window.getSelection() : null;
         if (!wrap || !active || active.isCollapsed) return;
-        const text = String(active.toString() || '').replace(/\s+$/g, '');
+        const range = active.getRangeAt(0);
+        const text = selectedTextInVisualOrder(wrap, range).replace(/\s+$/g, "");
         if (!text.trim()) return;
         const box = wrap.getBoundingClientRect();
-        const fragments = Array.from(active.getRangeAt(0).getClientRects()).filter(
+        const fragments = Array.from(range.getClientRects()).filter(
           (item) => item.width > 1 && item.height > 1,
         );
         if (!fragments.length) return;

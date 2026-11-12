@@ -34,8 +34,8 @@ check(has('user-select:text'), '允许选中');
 
 // —— 选中 → 标注 ——
 check(body.includes('const readSelection = () => {'), '能读取选区');
-check(body.includes('active.getRangeAt(0).getClientRects()'), '支持多行选区');
-check(body.includes('active.toString()'), '取选中原文');
+check(body.includes('active.getRangeAt(0)'), '支持多行选区');
+check(body.includes('const range = active.getRangeAt(0);'), '取一次选区区间');
 check(body.includes('onMouseUp: readSelection'), '松手时记录选区');
 check(src.includes('const markSelection = () => {'), '可把选区变成标注');
 check(src.includes('text: true,'), '标注标记为文字来源');
