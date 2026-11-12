@@ -4969,8 +4969,6 @@ onClick: markSelection,
 )
 : null,
 ),
-h(
-'div',
 searchNote ? h('div', { className: 'dshcv-pdfnote' }, searchNote) : null,
 unlock
 ? h(
@@ -4992,6 +4990,8 @@ submitPassword();
 h('button', { type: 'button', className: 'dshcv-btn', 'data-kind': 'primary', onClick: submitPassword }, unlock.waiting ? '验证中…' : '打开'),
 )
 : null,
+h(
+'div',
 { className: 'dshcv-pdfmain' },
 h(
 'div',

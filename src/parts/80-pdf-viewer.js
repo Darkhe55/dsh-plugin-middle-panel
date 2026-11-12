@@ -505,29 +505,29 @@
               )
             : null,
         ),
+                  searchNote ? h('div', { className: 'dshcv-pdfnote' }, searchNote) : null,
+            unlock
+              ? h(
+                  'div',
+                  { className: 'dshcv-pdfunlock' },
+                  h('div', { className: 'dshcv-pdfunlocktitle' }, '该 PDF 已加密，请输入打开密码'),
+                  h('input', {
+                    type: 'password',
+                    className: 'dshcv-searchinput',
+                    placeholder: unlock.wrong ? '密码错误，请重试' : '密码',
+                    value: unlockInput,
+                    onChange: (event) => setUnlockInput(event.target.value),
+                    onKeyDown: (event) => {
+                      if (event.key !== 'Enter') return;
+                      event.preventDefault();
+                      submitPassword();
+                    },
+                  }),
+                  h('button', { type: 'button', className: 'dshcv-btn', 'data-kind': 'primary', onClick: submitPassword }, unlock.waiting ? '验证中…' : '打开'),
+                )
+              : null,
         h(
           'div',
-          searchNote ? h('div', { className: 'dshcv-pdfnote' }, searchNote) : null,
-          unlock
-            ? h(
-                'div',
-                { className: 'dshcv-pdfunlock' },
-                h('div', { className: 'dshcv-pdfunlocktitle' }, '该 PDF 已加密，请输入打开密码'),
-                h('input', {
-                  type: 'password',
-                  className: 'dshcv-searchinput',
-                  placeholder: unlock.wrong ? '密码错误，请重试' : '密码',
-                  value: unlockInput,
-                  onChange: (event) => setUnlockInput(event.target.value),
-                  onKeyDown: (event) => {
-                    if (event.key !== 'Enter') return;
-                    event.preventDefault();
-                    submitPassword();
-                  },
-                }),
-                h('button', { type: 'button', className: 'dshcv-btn', 'data-kind': 'primary', onClick: submitPassword }, unlock.waiting ? '验证中…' : '打开'),
-              )
-            : null,
           { className: 'dshcv-pdfmain' },
           h(
             'div',
