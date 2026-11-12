@@ -7886,7 +7886,11 @@ function SplitDivider(props) {
                 'data-kind': 'primary',
                 title: '跳转到 ' + formatTime(typed),
                 'aria-label': '跳转到 ' + formatTime(typed),
-                onClick: () => {
+                // pointerdown, not click: pressing the mouse first blurs the input,
+                // which clears the draft and unmounts this very button before the
+                // click is dispatched. preventDefault keeps focus where it is.
+                onPointerDown: (event) => {
+                  event.preventDefault();
                   seekTo(typed);
                   setTimeDraft('');
                 },

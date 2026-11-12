@@ -7126,7 +7126,8 @@ className: 'dshcv-btn',
 'data-kind': 'primary',
 title: '跳转到 ' + formatTime(typed),
 'aria-label': '跳转到 ' + formatTime(typed),
-onClick: () => {
+onPointerDown: (event) => {
+event.preventDefault();
 seekTo(typed);
 setTimeDraft('');
 },

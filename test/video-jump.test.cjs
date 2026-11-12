@@ -34,7 +34,7 @@ check(has('const typed = parseTime(timeDraft);'), '按钮用解析结果');
 check(has('if (Math.abs(typed - info.current) <= frame / 2) return null;'), '与当前位置相同则不显示');
 check(has('if (duration && typed > duration + 0.05) return null;'), '超出片长不显示');
 check(has("'跳转',"), '按钮只写「跳转」，不重复时间');
-check(has('seekTo(typed);'), '点击按钮跳转');
+check(has('seekTo(typed);'), '按钮触发跳转');
 
 // ---- 菜单不越界 ----
 check(has('const width = 220;'), '按菜单宽度夹取');
@@ -71,6 +71,17 @@ check(has('if (menuAt) return;'), '菜单打开时不预览，右键抖动不改
 const menuIdx = src.indexOf('const onTrackMenu = (event) => {');
 const menuBody = src.slice(menuIdx, src.indexOf('const ferry', menuIdx) > 0 ? src.indexOf('const ferry', menuIdx) : menuIdx + 600);
 check(menuBody.indexOf('seekTo(') < 0, '右键菜单处理里没有 seek');
+
+// —— 按钮必须用 pointerdown ——
+const btnIdx = src.indexOf("'aria-label': '跳转到 ' + formatTime(typed)");
+const btnBody = src.slice(btnIdx, btnIdx + 700);
+check(btnBody.includes('onPointerDown'), '按钮用 pointerdown 触发', 'onClick 会被 blur 卸载抢先');
+check(!btnBody.includes('onClick:'), '按钮不再依赖 click');
+check(btnBody.includes('event.preventDefault();'), '阻止默认行为，避免输入框失焦');
+check(
+  btnBody.indexOf('event.preventDefault();') < btnBody.indexOf('seekTo(typed);'),
+  '先阻止默认行为再跳转',
+);
 
 if (failures) {
   console.log('失败 ' + failures + ' 项');
