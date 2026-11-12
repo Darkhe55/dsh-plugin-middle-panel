@@ -1327,13 +1327,13 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
     '.dshcv-pdfthumb-on canvas{box-shadow:0 0 0 2px rgba(79,140,255,.95),0 2px 8px rgba(0,0,0,.2)}',
     '.dshcv-pdfthumbnum{display:block;font-size:10px;color:var(--dshcv-ink-2);margin-top:2px}',
     '.dshcv-pdfpages{flex:1 1 auto;min-height:0;overflow:auto;display:flex;justify-content:center;padding:12px 0 24px}',
-    '.dshcv-pdfcolumn{display:flex;flex-direction:column;align-items:center;gap:14px;width:100%}',
+    '.dshcv-pdfcolumn{display:flex;flex-direction:column;align-items:center;gap:14px;width:100%;flex:0 0 auto}',
     '.dshcv-pdfhit{position:absolute;background:rgba(255,196,0,.34);border-radius:2px;pointer-events:none}',
     '.dshcv-pdfhit[data-active="1"]{background:rgba(255,138,0,.55);box-shadow:0 0 0 1px rgba(255,138,0,.85)}',
     '.dshcv-pdfregion-hot{background:rgba(79,140,255,.22)!important;box-shadow:0 0 12px rgba(79,140,255,.65)!important;border-style:solid!important}',
     // The page box owns the coordinate system: every overlay inside a page is
     // positioned against it, so it must be the positioned ancestor.
-    '.dshcv-pdfpagebox{position:relative;overflow:hidden;background:#fff;line-height:0;border-radius:2px;box-shadow:0 2px 14px rgba(0,0,0,.16)}',
+    '.dshcv-pdfpagebox{position:relative;overflow:hidden;background:#fff;line-height:0;border-radius:2px;box-shadow:0 2px 14px rgba(0,0,0,.16);flex:0 0 auto}',
     '.dshcv-pdfpagebox canvas{display:block}',
     '.dshcv-pdfcanvasbox{position:relative;align-self:center;margin:0 auto;line-height:0}',
     '.dshcv-pdfcanvas{display:block;background:#fff;box-shadow:0 2px 14px rgba(0,0,0,.16)}',
@@ -4515,13 +4515,19 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
     };
 
     // Text of a page, cached: search and the text layer both want it.
-    const pageTextCache = new Map();
+    // Keyed by the document object, not by a fingerprint: a missing fingerprint made
+    // every document share one bucket, so a second PDF searched the first one.
+    const pageTextCache = new WeakMap();
     const textContentOf = async (pdf, pageNumber) => {
-      const key = (pdf.fingerprints && pdf.fingerprints[0] ? pdf.fingerprints[0] : 'doc') + ':' + pageNumber;
-      if (pageTextCache.has(key)) return pageTextCache.get(key);
+      let bucket = pageTextCache.get(pdf);
+      if (!bucket) {
+        bucket = new Map();
+        pageTextCache.set(pdf, bucket);
+      }
+      if (bucket.has(pageNumber)) return bucket.get(pageNumber);
       const page = await pdf.getPage(pageNumber);
       const content = await page.getTextContent();
-      pageTextCache.set(key, content);
+      bucket.set(pageNumber, content);
       return content;
     };
 
