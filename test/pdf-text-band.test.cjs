@@ -30,7 +30,12 @@ check(page.includes('className: "dshcv-pdftexthit dshcv-pdftexthit-hot",'), '悬
 // —— 样式：无边框 ——
 const css = src.slice(src.indexOf("'.dshcv-pdftexthit{"), src.indexOf("'.dshcv-pdftexthit{") + 400);
 check(!/border:/.test(css.split('}')[0]), '带子不画外框', css.split('}')[0]);
-check(css.includes('background:rgba(79,140,255,.30)'), '带子为半透明蓝');
+check(css.includes('background:rgba(79,140,255,.10)'), '带子为极淡蓝底');
+const hotIdx = src.indexOf("'.dshcv-pdftexthit-hot{");
+const hotRule = src.slice(hotIdx, hotIdx + 200).split('}')[0];
+check(hotRule.includes('rgba(79,140,255,.12)'), '悬停底色同样很淡', hotRule);
+check(hotRule.includes('inset 0 -2px 0'), '用底部细线表示标注', hotRule);
+check(!hotRule.includes('0 0 8px'), '去掉外发光，避免盖住文字');
 check(src.includes("'.dshcv-pdfregion{"), '区域框样式保留');
 
 // —— 数据链路 ——
