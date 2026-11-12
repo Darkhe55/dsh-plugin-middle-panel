@@ -1313,6 +1313,17 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
     '.dshcv-pdftext span{position:absolute;white-space:pre;color:transparent;transform-origin:0 0;cursor:text}',
     '.dshcv-pdftext span::selection{background:rgba(79,140,255,.34);color:transparent}',
     '.dshcv-pdftext span::-moz-selection{background:rgba(79,140,255,.34);color:transparent}',
+    '.dshcv-pdfmain{display:flex;gap:10px;min-height:0;flex:1 1 auto}',
+    '.dshcv-pdfthumbs{flex:0 0 116px;min-height:0;overflow:auto;padding:4px;border-right:1px solid var(--dshcv-line)}',
+    '.dshcv-pdfthumb{display:block;width:100%;margin:0 0 8px;padding:3px;border:0;background:transparent;cursor:pointer;border-radius:6px}',
+    '.dshcv-pdfthumb canvas{display:block;width:100%;height:auto;background:#fff;border-radius:3px;box-shadow:0 1px 4px rgba(0,0,0,.18)}',
+    '.dshcv-pdfthumb-on canvas{box-shadow:0 0 0 2px rgba(79,140,255,.95),0 2px 8px rgba(0,0,0,.2)}',
+    '.dshcv-pdfthumbnum{display:block;font-size:10px;color:var(--dshcv-ink-2);margin-top:2px}',
+    '.dshcv-pdfpages{flex:1 1 auto;min-height:0;overflow:auto;display:flex;justify-content:center;padding:12px 0 24px}',
+    '.dshcv-pdfcolumn{display:flex;flex-direction:column;align-items:center;gap:14px;width:100%}',
+    '.dshcv-pdfhit{position:absolute;background:rgba(255,196,0,.34);border-radius:2px;pointer-events:none}',
+    '.dshcv-pdfhit[data-active="1"]{background:rgba(255,138,0,.55);box-shadow:0 0 0 1px rgba(255,138,0,.85)}',
+    '.dshcv-pdfregion-hot{background:rgba(79,140,255,.22)!important;box-shadow:0 0 12px rgba(79,140,255,.65)!important;border-style:solid!important}',
     '.dshcv-pdfcanvasbox{position:relative;align-self:center;margin:0 auto;line-height:0}',
     '.dshcv-pdfcanvas{display:block;background:#fff;box-shadow:0 2px 14px rgba(0,0,0,.16)}',
     '.dshcv-scroll{overflow:auto}',
@@ -4455,15 +4466,15 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
     }
 
     // ---------------- pdf viewer (own renderer) ----------------
-    // The built-in reader lives in a plugin process: no geometry, no events. pdf.js
-    // is vendored and served from /dsh-canvas/vendor/pdfjs, so the page is a canvas
-    // we lay out ourselves and a region is a fraction of the real page.
+    // The built-in reader lives in a plugin process: no geometry, no events. pdf.js is
+    // vendored and served from /dsh-canvas/vendor/pdfjs, so the page is a canvas we lay
+    // out ourselves and a region is a fraction of the real page.
+    let pdfjsPromise = null;
     // Preferred: the prefix route, which is also what pdf.js joins cmap and font names
     // onto. Fallback: the exact route with ?f=, for a host that does not match wildcards.
     const VENDOR_PREFIX = '/dsh-canvas/vendor/pdfjs/';
     const VENDOR_EXACT = '/dsh-canvas/vendor?f=';
     let vendorShape = 'prefix';
-    let pdfjsPromise = null;
 
     const vendorUrl = (name, shape) =>
       shape === 'exact' ? VENDOR_EXACT + encodeURIComponent(name) : VENDOR_PREFIX + name;
@@ -4480,33 +4491,348 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
       return pdfjsPromise;
     };
 
+    // Text of a page, cached: search and the text layer both want it.
+    const pageTextCache = new Map();
+    const textContentOf = async (pdf, pageNumber) => {
+      const key = (pdf.fingerprints && pdf.fingerprints[0] ? pdf.fingerprints[0] : 'doc') + ':' + pageNumber;
+      if (pageTextCache.has(key)) return pageTextCache.get(key);
+      const page = await pdf.getPage(pageNumber);
+      const content = await page.getTextContent();
+      pageTextCache.set(key, content);
+      return content;
+    };
+
+    // One page: canvas, text layer, mark overlays. Rendered only when near the viewport.
+    function PdfPage(props) {
+      const {
+        pdf,
+        pageNumber,
+        scale,
+        markMode,
+        onRegion,
+        onSelect,
+        onVisible,
+        registerEl,
+        pageHits,
+        activeHit,
+        pageMarks,
+        hoverRect,
+        pdfjs,
+      } = props;
+      const [size, setSize] = React.useState({ width: 0, height: 0 });
+      const [items, setItems] = React.useState([]);
+      const [visible, setVisible] = React.useState(pageNumber === 1);
+      const [drag, setDrag] = React.useState(null);
+      const canvasRef = React.useRef(null);
+      const wrapRef = React.useRef(null);
+      const pressRef = React.useRef(null);
+      const tokenRef = React.useRef(0);
+
+      React.useEffect(() => {
+        if (registerEl) registerEl(pageNumber, wrapRef.current);
+        return () => {
+          if (registerEl) registerEl(pageNumber, null);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [pageNumber]);
+
+      // Render only what is close to the viewport.
+      React.useEffect(() => {
+        const node = wrapRef.current;
+        if (!node || typeof IntersectionObserver !== 'function') {
+          setVisible(true);
+          return undefined;
+        }
+        const observer = new IntersectionObserver(
+          (entries) => {
+            const entry = entries[0];
+            if (!entry) return;
+            if (entry.isIntersecting) setVisible(true);
+            if (entry.isIntersecting && onVisible) onVisible(pageNumber, entry.intersectionRatio);
+          },
+          { rootMargin: '600px 0px' },
+        );
+        observer.observe(node);
+        return () => observer.disconnect();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [pageNumber]);
+
+      React.useEffect(() => {
+        if (!visible || !pdf) return undefined;
+        const token = tokenRef.current + 1;
+        tokenRef.current = token;
+        let cancelled = false;
+        (async () => {
+          const page = await pdf.getPage(pageNumber);
+          if (cancelled || tokenRef.current !== token) return;
+          const viewport = page.getViewport({ scale });
+          const canvas = canvasRef.current;
+          if (!canvas) return;
+          const ratio = Math.min(3, window.devicePixelRatio || 1);
+          canvas.width = Math.round(viewport.width * ratio);
+          canvas.height = Math.round(viewport.height * ratio);
+          canvas.style.width = viewport.width + 'px';
+          canvas.style.height = viewport.height + 'px';
+          const context = canvas.getContext('2d');
+          if (!context) return;
+          context.setTransform(ratio, 0, 0, ratio, 0, 0);
+          context.clearRect(0, 0, viewport.width, viewport.height);
+          await page.render({ canvasContext: context, viewport }).promise;
+          if (cancelled || tokenRef.current !== token) return;
+          setSize({ width: viewport.width, height: viewport.height });
+          const content = await textContentOf(pdf, pageNumber);
+          if (cancelled || tokenRef.current !== token) return;
+          const Util = pdfjs && pdfjs.Util;
+          if (!Util) {
+            setItems([]);
+            return;
+          }
+          const spans = [];
+          for (const item of content.items || []) {
+            if (!item || typeof item.str !== 'string' || !item.str.trim()) continue;
+            const transform = Util.transform(viewport.transform, item.transform);
+            const fontHeight = Math.hypot(transform[2], transform[3]);
+            if (!fontHeight) continue;
+            spans.push({
+              str: item.str,
+              left: transform[4],
+              top: transform[5] - fontHeight,
+              fontHeight,
+              width: Math.max(0, Number(item.width) || 0) * viewport.scale,
+            });
+          }
+          setItems(spans);
+        })().catch(() => setItems([]));
+        return () => {
+          cancelled = true;
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [visible, pageNumber, scale, pdf]);
+
+      const toFraction = (event) => {
+        const wrap = wrapRef.current;
+        if (!wrap) return null;
+        const rect = wrap.getBoundingClientRect();
+        if (!rect.width || !rect.height) return null;
+        return {
+          x: Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)),
+          y: Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height)),
+        };
+      };
+
+      const onDown = (event) => {
+        if (event.button !== 0) return;
+        const at = toFraction(event);
+        if (!at) return;
+        event.preventDefault();
+        pressRef.current = at;
+        setDrag({ from: at, to: at });
+        try {
+          event.currentTarget.setPointerCapture(event.pointerId);
+        } catch (error) {
+          /* best effort */
+        }
+      };
+      const onMove = (event) => {
+        if (!pressRef.current) return;
+        const at = toFraction(event);
+        if (!at) return;
+        setDrag({ from: pressRef.current, to: at });
+      };
+      const onUp = (event) => {
+        const from = pressRef.current;
+        pressRef.current = null;
+        const box = drag;
+        setDrag(null);
+        if (!from || !box) return;
+        const at = toFraction(event) || box.to;
+        const x = Math.min(from.x, at.x);
+        const y = Math.min(from.y, at.y);
+        const w = Math.abs(at.x - from.x);
+        const h = Math.abs(at.y - from.y);
+        if (w * h < 0.0004) return;
+        if (onRegion) onRegion(pageNumber, [x, y, w, h]);
+      };
+
+      const readSelection = () => {
+        const wrap = wrapRef.current;
+        const active = window.getSelection ? window.getSelection() : null;
+        if (!wrap || !active || active.isCollapsed) return;
+        const text = String(active.toString() || '').replace(/\s+$/g, '');
+        if (!text.trim()) return;
+        const rect = wrap.getBoundingClientRect();
+        const rects = Array.from(active.getRangeAt(0).getClientRects()).filter(
+          (item) => item.width > 1 && item.height > 1,
+        );
+        if (!rects.length) return;
+        const left = Math.min(...rects.map((item) => item.left)) - rect.left;
+        const top = Math.min(...rects.map((item) => item.top)) - rect.top;
+        const right = Math.max(...rects.map((item) => item.right)) - rect.left;
+        const bottom = Math.max(...rects.map((item) => item.bottom)) - rect.top;
+        if (right <= left || bottom <= top) return;
+        if (onSelect) {
+          onSelect(pageNumber, [left / rect.width, top / rect.height, (right - left) / rect.width, (bottom - top) / rect.height], text);
+        }
+      };
+
+      return h(
+        'div',
+        {
+          ref: wrapRef,
+          className: 'dshcv-pdfpagebox',
+          style: size.width ? { width: size.width + 'px', height: size.height + 'px' } : null,
+          'data-page': pageNumber,
+        },
+        h('canvas', { ref: canvasRef, className: 'dshcv-pdfcanvas' }),
+        h(
+          'div',
+          { className: 'dshcv-pdftext', onMouseUp: readSelection },
+          items.map((item, index) =>
+            h(
+              'span',
+              {
+                key: index,
+                style: {
+                  left: item.left + 'px',
+                  top: item.top + 'px',
+                  fontSize: item.fontHeight + 'px',
+                  width: item.width ? item.width + 'px' : undefined,
+                  display: 'block',
+                  overflow: 'hidden',
+                },
+              },
+              item.str,
+            ),
+          ),
+        ),
+        pageHits.map((hit, index) =>
+          h('div', {
+            key: 'hit' + index,
+            className: 'dshcv-pdfhit',
+            'data-active': activeHit && activeHit.page === pageNumber && activeHit.index === hit.index ? '1' : '0',
+            style: {
+              left: hit.rect[0] * 100 + '%',
+              top: hit.rect[1] * 100 + '%',
+              width: hit.rect[2] * 100 + '%',
+              height: hit.rect[3] * 100 + '%',
+            },
+          }),
+        ),
+        pageMarks.map((mark, index) =>
+          h('div', {
+            key: 'mark' + index,
+            className: 'dshcv-pdfregion',
+            style: {
+              left: mark.rect[0] * 100 + '%',
+              top: mark.rect[1] * 100 + '%',
+              width: mark.rect[2] * 100 + '%',
+              height: mark.rect[3] * 100 + '%',
+            },
+          }),
+        ),
+        hoverRect
+          ? h('div', {
+              className: 'dshcv-pdfregion dshcv-pdfregion-hot',
+              style: {
+                left: hoverRect[0] * 100 + '%',
+                top: hoverRect[1] * 100 + '%',
+                width: hoverRect[2] * 100 + '%',
+                height: hoverRect[3] * 100 + '%',
+              },
+            })
+          : null,
+        drag
+          ? h('div', {
+              className: 'dshcv-pdfmarquee',
+              style: {
+                left: Math.min(drag.from.x, drag.to.x) * 100 + '%',
+                top: Math.min(drag.from.y, drag.to.y) * 100 + '%',
+                width: Math.abs(drag.to.x - drag.from.x) * 100 + '%',
+                height: Math.abs(drag.to.y - drag.from.y) * 100 + '%',
+              },
+            })
+          : null,
+        h('div', {
+          className: markMode ? 'dshcv-pdflayer dshcv-pdflayer-on' : 'dshcv-pdflayer',
+          style: { pointerEvents: markMode ? 'auto' : 'none' },
+          onPointerDown: onDown,
+          onPointerMove: onMove,
+          onPointerUp: onUp,
+          onPointerCancel: onUp,
+        }),
+      );
+    }
+
+    // Sidebar thumbnail: drawn lazily, one small canvas per page.
+    function PdfThumb(props) {
+      const { pdf, pageNumber, current, onPick, width } = props;
+      const canvasRef = React.useRef(null);
+      const [drawn, setDrawn] = React.useState(false);
+      React.useEffect(() => {
+        if (drawn || !pdf) return undefined;
+        let cancelled = false;
+        (async () => {
+          const page = await pdf.getPage(pageNumber);
+          const base = page.getViewport({ scale: 1 });
+          const scale = width / base.width;
+          const viewport = page.getViewport({ scale });
+          const canvas = canvasRef.current;
+          if (cancelled || !canvas) return;
+          const ratio = Math.min(2, window.devicePixelRatio || 1);
+          canvas.width = Math.round(viewport.width * ratio);
+          canvas.height = Math.round(viewport.height * ratio);
+          canvas.style.width = viewport.width + 'px';
+          canvas.style.height = viewport.height + 'px';
+          const context = canvas.getContext('2d');
+          if (!context) return;
+          context.setTransform(ratio, 0, 0, ratio, 0, 0);
+          await page.render({ canvasContext: context, viewport }).promise;
+          if (!cancelled) setDrawn(true);
+        })().catch(() => {});
+        return () => {
+          cancelled = true;
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [pageNumber, pdf, width]);
+      return h(
+        'button',
+        {
+          type: 'button',
+          className: 'dshcv-pdfthumb' + (current ? ' dshcv-pdfthumb-on' : ''),
+          title: '第 ' + pageNumber + ' 页',
+          onClick: () => onPick(pageNumber),
+        },
+        h('canvas', { ref: canvasRef }),
+        h('span', { className: 'dshcv-pdfthumbnum' }, String(pageNumber)),
+      );
+    }
+
     function PdfCanvasDoc(props) {
       const { doc, sessionId, onFail } = props;
       const [state, setState] = React.useState({ status: 'loading', error: '', pages: 0 });
-      const [page, setPage] = React.useState(1);
       const [zoom, setZoom] = React.useState(1);
       const [markMode, setMarkMode] = React.useState(false);
-      const [drag, setDrag] = React.useState(null);
-      // The text layer is real text positioned over the canvas, so selection, copy
-      // and search work while the page itself stays a bitmap.
-      const [textItems, setTextItems] = React.useState([]);
+      const [current, setCurrent] = React.useState(1);
+      const [query, setQuery] = React.useState('');
+      const [hits, setHits] = React.useState([]);
+      const [hitIndex, setHitIndex] = React.useState(0);
       const [selection, setSelection] = React.useState(null);
-      const [width, setWidth] = React.useState(0);
+      const [width, setWidth] = React.useState(760);
+      const [searching, setSearching] = React.useState(false);
       const docRef = React.useRef(null);
-      const pageRef = React.useRef(null);
-      const canvasRef = React.useRef(null);
-      const boxRef = React.useRef(null);
-      const pressRef = React.useRef(null);
       const pdfjsRef = React.useRef(null);
-      const renderToken = React.useRef(0);
+      const scrollRef = React.useRef(null);
+      const boxRef = React.useRef(null);
+      const pageEls = React.useRef(new Map());
       const hovered = useHoverMark(doc.path);
-      const hoverRegion =
-        hovered && hovered.kind === 'region' && hovered.norm && Array.isArray(hovered.rect) && hovered.page === page
-          ? hovered.rect
-          : null;
+      const marks = store.marks || [];
+      const pageMarksFor = (pageNumber) =>
+        marks.filter(
+          (mark) => mark.kind === 'region' && mark.norm && sameFile(mark.path, doc.path) && Number(mark.page) === pageNumber,
+        );
+      const hoverMark =
+        hovered && hovered.kind === 'region' && hovered.norm && sameFile(hovered.path, doc.path) ? hovered : null;
 
-      // Load once per path: the bytes come through the workspace channel, then pdf.js
-      // parses them in the page.
       React.useEffect(() => {
         if (!sessionId) return undefined;
         const controller = new AbortController();
@@ -4515,15 +4841,13 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         setState({ status: 'loading', error: '', pages: 0 });
         Promise.all([loadPdfJs(), readBytesFile(sessionId, doc.path, controller.signal)])
           .then(async ([pdfjs, bytes]) => {
-            pdfjsRef.current = pdfjs;
             if (cancelled || !bytes) return;
+            pdfjsRef.current = pdfjs;
             task = pdfjs.getDocument({
-              data: bytes,
-              // Cmaps and fonts are fetched by the worker, which needs a prefix; with
-              // the exact fallback they are simply skipped (text still draws).
               cMapUrl: vendorShape === 'prefix' ? VENDOR_PREFIX + 'cmaps/' : undefined,
               cMapPacked: vendorShape === 'prefix',
               standardFontDataUrl: vendorShape === 'prefix' ? VENDOR_PREFIX + 'standard_fonts/' : undefined,
+              data: bytes,
             });
             const loaded = await task.promise;
             if (cancelled) return;
@@ -4541,11 +4865,11 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
           // destroy() lives on the loading task in some builds and on the document in
           // others; call whichever exists and never let cleanup throw.
           const done = (value) => {
-            if (value && typeof value.catch === "function") value.catch(() => {});
+            if (value && typeof value.catch === 'function') value.catch(() => {});
           };
           try {
-            if (task && typeof task.destroy === "function") done(task.destroy());
-            else if (docRef.current && typeof docRef.current.destroy === "function") done(docRef.current.destroy());
+            if (task && typeof task.destroy === 'function') done(task.destroy());
+            else if (docRef.current && typeof docRef.current.destroy === 'function') done(docRef.current.destroy());
           } catch (error) {
             /* cleanup is best effort */
           }
@@ -4554,12 +4878,11 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [doc.path, sessionId]);
 
-      // Track the available width only to choose a render scale; a stale value costs
-      // sharpness, never position.
+      // Column width drives the render scale; a stale number costs sharpness only.
       React.useEffect(() => {
         const node = boxRef.current;
         if (!node) return undefined;
-        const measure = () => setWidth(node.clientWidth || 0);
+        const measure = () => setWidth(Math.max(280, (node.clientWidth || 760) - 48));
         measure();
         let observer = null;
         if (typeof ResizeObserver === 'function') {
@@ -4574,176 +4897,120 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         };
       }, [state.status]);
 
-      // Draw the current page into the canvas.
-      React.useEffect(() => {
-        if (state.status !== 'ready' || !docRef.current) return undefined;
-        const token = renderToken.current + 1;
-        renderToken.current = token;
-        let cancelled = false;
-        (async () => {
-          const pdf = docRef.current;
-          const target = Math.min(Math.max(1, page), pdf.numPages);
-          const pdfPage = await pdf.getPage(target);
-          if (cancelled || renderToken.current !== token) return;
-          pageRef.current = pdfPage;
-          const base = pdfPage.getViewport({ scale: 1 });
-          const available = width || base.width;
-          const scale = Math.min(6, Math.max(0.15, (available / base.width) * zoom));
-          const viewport = pdfPage.getViewport({ scale });
-          const canvas = canvasRef.current;
-          if (!canvas) return;
-          const ratio = Math.min(3, window.devicePixelRatio || 1);
-          canvas.width = Math.round(viewport.width * ratio);
-          canvas.height = Math.round(viewport.height * ratio);
-          canvas.style.width = viewport.width + 'px';
-          canvas.style.height = viewport.height + 'px';
-          const context = canvas.getContext('2d');
-          if (!context) return;
-          context.setTransform(ratio, 0, 0, ratio, 0, 0);
-          context.clearRect(0, 0, viewport.width, viewport.height);
-          await pdfPage.render({ canvasContext: context, viewport }).promise;
+      const registerEl = (pageNumber, node) => {
+        if (node) pageEls.current.set(pageNumber, node);
+        else pageEls.current.delete(pageNumber);
+      };
 
-          // Text items carry their own transform: place each run where pdf.js says it is,
-          // scaled to the same viewport the canvas used.
-          const content = await pdfPage.getTextContent();
-          if (cancelled || renderToken.current !== token) return;
-          const spans = [];
-          for (const item of content.items || []) {
-            if (!item || typeof item.str !== "string" || !item.str.trim()) continue;
+      const scrollToPage = (pageNumber) => {
+        const node = pageEls.current.get(pageNumber);
+        if (node && node.scrollIntoView) {
+          node.scrollIntoView({ block: 'start', behavior: 'smooth' });
+          return;
+        }
+        const scroller = scrollRef.current;
+        if (scroller) scroller.scrollTop = (pageNumber - 1) * 400;
+      };
+
+      const onVisible = (pageNumber, ratio) => {
+        if (ratio > 0.35) setCurrent((now) => (now === pageNumber ? now : pageNumber));
+      };
+
+      const search = async () => {
+        const pdf = docRef.current;
+        const term = query.trim();
+        if (!pdf || !term) {
+          setHits([]);
+          setHitIndex(0);
+          return;
+        }
+        setSearching(true);
+        const needle = term.toLowerCase();
+        const found = [];
+        const total = pdf.numPages;
+        try {
+          for (let pageNumber = 1; pageNumber <= total; pageNumber += 1) {
+            const content = await textContentOf(pdf, pageNumber);
+            const page = await pdf.getPage(pageNumber);
+            const viewport = page.getViewport({ scale: 1 });
             const Util = pdfjsRef.current && pdfjsRef.current.Util;
             if (!Util) break;
-            const transform = pdfjsRef.current.Util.transform(viewport.transform, item.transform);
-            const fontHeight = Math.hypot(transform[2], transform[3]);
-            if (!fontHeight) continue;
-            const width = Math.max(0, Number(item.width) || 0) * viewport.scale;
-            spans.push({
-              str: item.str,
-              left: transform[4],
-              top: transform[5] - fontHeight,
-              fontHeight,
-              width,
-            });
+            for (const item of content.items || []) {
+              if (!item || typeof item.str !== 'string') continue;
+              if (!item.str.toLowerCase().includes(needle)) continue;
+              const transform = Util.transform(viewport.transform, item.transform);
+              const height = Math.hypot(transform[2], transform[3]);
+              if (!height) continue;
+              const boxWidth = Math.max(1, Number(item.width) || 0);
+              found.push({
+                page: pageNumber,
+                index: found.length,
+                text: item.str,
+                rect: [
+                  transform[4] / viewport.width,
+                  (transform[5] - height) / viewport.height,
+                  boxWidth / viewport.width,
+                  height / viewport.height,
+                ],
+              });
+            }
           }
-          setTextItems(spans);
-        })().catch((error) => {
-          if (!cancelled) setState((current) => Object.assign({}, current, { error: errText(error) }));
-        });
-        return () => {
-          cancelled = true;
-        };
-      }, [state.status, page, zoom, width]);
-
-      // A selection is turned into a mark only when the reader asks for it, so plain
-      // copy keeps working.
-      const readSelection = () => {
-        const canvas = canvasRef.current;
-        if (!canvas) return null;
-        const active = window.getSelection ? window.getSelection() : null;
-        if (!active || active.isCollapsed) return null;
-        const text = String(active.toString() || "").replace(/\s+$/g, "");
-        if (!text.trim()) return null;
-        const range = active.getRangeAt(0);
-        const box = canvas.getBoundingClientRect();
-        const rects = Array.from(range.getClientRects()).filter((item) => item.width > 1 && item.height > 1);
-        if (!rects.length) return null;
-        const left = Math.min(...rects.map((item) => item.left)) - box.left;
-        const top = Math.min(...rects.map((item) => item.top)) - box.top;
-        const right = Math.max(...rects.map((item) => item.right)) - box.left;
-        const bottom = Math.max(...rects.map((item) => item.bottom)) - box.top;
-        if (right <= left || bottom <= top) return null;
-        return {
-          text: text.slice(0, 400),
-          rect: [left / box.width, top / box.height, (right - left) / box.width, (bottom - top) / box.height],
-        };
-      };
-
-      const onTextUp = () => {
-        const picked = readSelection();
-        setSelection(picked);
-      };
-
-      const markSelection = () => {
-        const picked = selection || readSelection();
-        if (!picked) return;
-        addMark({
-          kind: "region",
-          path: doc.path,
-          page,
-          norm: true,
-          text: true,
-          rect: picked.rect.map((value) => Math.round(value * 10000) / 10000),
-          quote: picked.text,
-        });
-        setSelection(null);
-      };
-
-      const ratioOf = (event) => {
-        const canvas = canvasRef.current;
-        if (!canvas) return null;
-        const rect = canvas.getBoundingClientRect();
-        if (!rect.width || !rect.height) return null;
-        // The canvas is the page: its box is the coordinate system, so a region is a
-        // fraction of the page no matter how the pane resizes.
-        return {
-          x: Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)),
-          y: Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height)),
-        };
-      };
-
-      const onDown = (event) => {
-        if (event.button !== 0) return;
-        const at = ratioOf(event);
-        if (!at) return;
-        event.preventDefault();
-        pressRef.current = at;
-        setDrag({ from: at, to: at });
-        try {
-          event.currentTarget.setPointerCapture(event.pointerId);
-        } catch (error) {
-          /* best effort */
+          setHits(found);
+          setHitIndex(0);
+          if (found.length) scrollToPage(found[0].page);
+        } finally {
+          setSearching(false);
         }
       };
 
-      const onMove = (event) => {
-        if (!pressRef.current) return;
-        const at = ratioOf(event);
-        if (!at) return;
-        setDrag({ from: pressRef.current, to: at });
+      const gotoHit = (next) => {
+        if (!hits.length) return;
+        const index = (next + hits.length) % hits.length;
+        setHitIndex(index);
+        scrollToPage(hits[index].page);
       };
 
-      const onUp = (event) => {
-        const from = pressRef.current;
-        pressRef.current = null;
-        const box = drag;
-        setDrag(null);
-        if (!from || !box) return;
-        const at = ratioOf(event) || box.to;
-        const x = Math.min(from.x, at.x);
-        const y = Math.min(from.y, at.y);
-        const w = Math.abs(at.x - from.x);
-        const h = Math.abs(at.y - from.y);
-        if (w * h < 0.0004) return;
+      const onRegion = (pageNumber, rect) => {
         addMark({
           kind: 'region',
           path: doc.path,
-          page,
+          page: pageNumber,
           norm: true,
-          rect: [
-            Math.round(x * 10000) / 10000,
-            Math.round(y * 10000) / 10000,
-            Math.round(w * 10000) / 10000,
-            Math.round(h * 10000) / 10000,
-          ],
-          quote: '第 ' + page + ' 页区域',
+          rect: rect.map((value) => Math.round(value * 10000) / 10000),
+          quote: '第 ' + pageNumber + ' 页区域',
         });
+      };
+
+      const onSelect = (pageNumber, rect, text) => {
+        setSelection({ page: pageNumber, rect, text });
+      };
+
+      const markSelection = () => {
+        if (!selection) return;
+        addMark({
+          kind: 'region',
+          path: doc.path,
+          page: selection.page,
+          norm: true,
+          text: true,
+          rect: selection.rect.map((value) => Math.round(value * 10000) / 10000),
+          quote: selection.text,
+        });
+        setSelection(null);
       };
 
       if (state.status === 'failed') {
         return h('div', { className: 'dshcv-empty' }, h('div', null, '无法渲染该 PDF'), h('div', null, state.error));
       }
 
-      const pages = state.pages || 1;
-      const go = (next) => setPage(Math.min(pages, Math.max(1, next)));
+      const pages = state.pages || 0;
+      const pdf = docRef.current;
+      const pagesOfHits = new Map();
+      for (const hit of hits) {
+        if (!pagesOfHits.has(hit.page)) pagesOfHits.set(hit.page, []);
+        pagesOfHits.get(hit.page).push(hit);
+      }
+      const activeHit = hits[hitIndex] || null;
 
       return h(
         'div',
@@ -4751,22 +5018,43 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         h(
           'div',
           { className: 'dshcv-tools' },
-          h('span', { className: 'dshcv-msg' }, '第 ' + page + ' / ' + pages + ' 页'),
-          h('button', { type: 'button', className: 'dshcv-btn', title: '上一页', onClick: () => go(page - 1) }, '上一页'),
-          h('button', { type: 'button', className: 'dshcv-btn', title: '下一页', onClick: () => go(page + 1) }, '下一页'),
-          h('button', { type: 'button', className: 'dshcv-btn', title: '缩小', onClick: () => setZoom((z) => Math.max(0.3, Math.round((z - 0.1) * 100) / 100)) }, '缩小'),
-          h('button', { type: 'button', className: 'dshcv-btn', title: '放大', onClick: () => setZoom((z) => Math.min(4, Math.round((z + 0.1) * 100) / 100)) }, '放大'),
+          h('span', { className: 'dshcv-msg' }, '第 ' + current + ' / ' + (pages || '…') + ' 页'),
+          h('button', { type: 'button', className: 'dshcv-btn', title: '缩小', onClick: () => setZoom((z) => Math.max(0.4, Math.round((z - 0.1) * 100) / 100)) }, '−'),
+          h('button', { type: 'button', className: 'dshcv-btn', title: '放大', onClick: () => setZoom((z) => Math.min(4, Math.round((z + 0.1) * 100) / 100)) }, '+'),
+          h('input', {
+            type: 'search',
+            className: 'dshcv-searchinput',
+            placeholder: '搜索全文…',
+            value: query,
+            onChange: (event) => setQuery(event.target.value),
+            onKeyDown: (event) => {
+              if (event.key !== 'Enter') return;
+              event.preventDefault();
+              search();
+            },
+            style: { width: '150px' },
+          }),
+          h('button', { type: 'button', className: 'dshcv-btn', disabled: searching, onClick: search }, searching ? '搜索中…' : '搜索'),
+          hits.length
+            ? h(
+                'span',
+                { className: 'dshcv-msg' },
+                hits.length + ' 处 · 第 ' + (hitIndex + 1) + ' 处',
+                h('button', { type: 'button', className: 'dshcv-btn', onClick: () => gotoHit(hitIndex - 1) }, '上一个'),
+                h('button', { type: 'button', className: 'dshcv-btn', onClick: () => gotoHit(hitIndex + 1) }, '下一个'),
+              )
+            : null,
           h(
             'button',
             {
               type: 'button',
               className: 'dshcv-btn',
               'data-kind': 'primary',
-              onClick: () => addMark({ kind: 'spot', path: doc.path, label: '第 ' + page + ' 页', quote: '', page }),
+              onClick: () =>
+                addMark({ kind: 'spot', path: doc.path, label: '第 ' + current + ' 页', quote: '', page: current }),
             },
             '标记此页',
           ),
-          h('button', { type: 'button', className: 'dshcv-btn', onClick: () => addMark({ kind: 'spot', path: doc.path, label: '整份 PDF', quote: '' }) }, '标记整份文档'),
           h(
             'button',
             {
@@ -4775,95 +5063,79 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
               'data-kind': markMode ? 'primary' : 'quiet',
               'aria-pressed': markMode,
               title: markMode ? '退出框选' : '在页面上拖出一块区域并标注',
-              onClick: () => {
-                setMarkMode((on) => !on);
-                setDrag(null);
-                pressRef.current = null;
-              },
+              onClick: () => setMarkMode((on) => !on),
             },
             markMode ? '退出框选' : '框选标注',
           ),
-                selection
-                  ? h(
-                      'button',
-                      {
-                        type: 'button',
-                        className: 'dshcv-btn',
-                        'data-kind': 'primary',
-                        title: '把选中的文字标注下来（引用原文）',
-                        onClick: markSelection,
-                      },
-                      '标注选中文字',
-                    )
-                  : null,
+          selection
+            ? h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'dshcv-btn',
+                  'data-kind': 'primary',
+                  title: '把选中的文字标注下来（引用原文）',
+                  onClick: markSelection,
+                },
+                '标注选中文字',
+              )
+            : null,
         ),
         h(
           'div',
-          { className: 'dshcv-scroll', ref: boxRef },
+          { className: 'dshcv-pdfmain' },
           h(
             'div',
-            { className: 'dshcv-pdfcanvasbox' },
-            h('canvas', { ref: canvasRef, className: 'dshcv-pdfcanvas' }),
-            // Real <span>s over the bitmap: selection, copy and (later) search come from here.
+            { className: 'dshcv-pdfthumbs' },
+            pages
+              ? Array.from({ length: pages }, (item, index) =>
+                  h(PdfThumb, {
+                    key: index + 1,
+                    pdf,
+                    pageNumber: index + 1,
+                    current: current === index + 1,
+                    width: 104,
+                    onPick: scrollToPage,
+                  }),
+                )
+              : null,
+          ),
+          h(
+            'div',
+            { className: 'dshcv-pdfpages', ref: scrollRef },
             h(
               'div',
-              { className: 'dshcv-pdftext', onMouseUp: onTextUp },
-              textItems.map((item, itemIndex) =>
-                h(
-                  'span',
-                  {
-                    key: itemIndex,
-                    style: {
-                      left: item.left + 'px',
-                      top: item.top + 'px',
-                      fontSize: item.fontHeight + 'px',
-          width: item.width ? item.width + 'px' : undefined,
-                    },
-          display: 'block',
-          overflow: 'hidden',
-                  },
-                  item.str,
-                ),
-              ),
+              { className: 'dshcv-pdfcolumn', ref: boxRef },
+              pages
+                ? Array.from({ length: pages }, (item, index) => {
+                    const pageNumber = index + 1;
+                    const hit = activeHit && activeHit.page === pageNumber ? activeHit : null;
+                    return h(PdfPage, {
+                      key: pageNumber,
+                      pdf,
+                      pdfjs: pdfjsRef.current,
+                      pageNumber,
+                      scale: zoom,
+                      markMode,
+                      onRegion,
+                      onSelect,
+                      onVisible,
+                      registerEl,
+                      pageHits: pagesOfHits.get(pageNumber) || [],
+                      activeHit: hit,
+                      pageMarks: pageMarksFor(pageNumber),
+                      hoverRect:
+                        hoverMark && Number(hoverMark.page) === pageNumber && Array.isArray(hoverMark.rect)
+                          ? hoverMark.rect
+                          : null,
+                    });
+                  })
+                : h('div', { className: 'dshcv-empty' }, h('div', null, '读取中…')),
             ),
-            hoverRegion
-              ? h('div', {
-                  className: 'dshcv-pdfregion',
-                  style: {
-                    left: hoverRegion[0] * 100 + '%',
-                    top: hoverRegion[1] * 100 + '%',
-                    width: hoverRegion[2] * 100 + '%',
-                    height: hoverRegion[3] * 100 + '%',
-                  },
-                })
-              : null,
-            drag
-              ? h('div', {
-                  className: 'dshcv-pdfmarquee',
-                  style: {
-                    left: Math.min(drag.from.x, drag.to.x) * 100 + '%',
-                    top: Math.min(drag.from.y, drag.to.y) * 100 + '%',
-                    width: Math.abs(drag.to.x - drag.from.x) * 100 + '%',
-                    height: Math.abs(drag.to.y - drag.from.y) * 100 + '%',
-                  },
-                })
-              : null,
-            h('div', {
-              className: markMode ? 'dshcv-pdflayer dshcv-pdflayer-on' : 'dshcv-pdflayer',
-              style: { pointerEvents: markMode ? 'auto' : 'none' },
-              onPointerDown: onDown,
-              onPointerMove: onMove,
-              onPointerUp: onUp,
-              onPointerCancel: onUp,
-            }),
           ),
         ),
         markMode
-          ? h(
-              'div',
-              { className: 'dshcv-msg', style: { paddingTop: 4 } },
-              '拖出一块区域即可标注；坐标按页面计算，缩放或展开列表后仍会对齐',
-            )
+          ? h('div', { className: 'dshcv-msg', style: { paddingTop: 4 } }, '拖出一块区域即可标注；坐标按页面计算')
           : null,
       );
     }

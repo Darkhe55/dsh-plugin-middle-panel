@@ -41,15 +41,18 @@ check(has('let pdfjsPromise = null;'), '只加载一次');
 const start = src.indexOf('function PdfCanvasDoc(props) {');
 const end = src.indexOf('function PdfDoc(props) {');
 const body = src.slice(start, end);
-check(body.includes('h(\'canvas\', { ref: canvasRef'), '页面渲染到 canvas');
-check(body.includes('const ratio = Math.min(3, window.devicePixelRatio || 1);'), '按 DPR 提清晰度');
-check(body.includes('pdfPage.render({ canvasContext: context, viewport })'), '调用 pdf.js 渲染');
+const pageStart = src.indexOf('function PdfPage(props) {');
+const pageEnd = src.indexOf('function PdfThumb(props) {');
+const page = src.slice(pageStart, pageEnd);
+check(page.includes("h('canvas', { ref: canvasRef, className: 'dshcv-pdfcanvas' })"), '页面渲染到 canvas');
+check(page.includes('const ratio = Math.min(3, window.devicePixelRatio || 1);'), '按 DPR 提清晰度');
+check(page.includes('await page.render({ canvasContext: context, viewport }).promise;'), '调用 pdf.js 渲染');
 check(body.includes('cMapUrl:'), '带上 cmaps');
 check(body.includes('standardFontDataUrl:'), '带上标准字体');
 
 // —— 坐标：以画布为准，与页面一致 ——
-check(body.includes('const rect = canvas.getBoundingClientRect();'), '比例取自画布');
-check(body.includes("left: hoverRegion[0] * 100 + '%',"), '高亮按页面百分比');
+check(page.includes('const rect = wrap.getBoundingClientRect();'), '比例取自页面盒子');
+check(page.includes("left: mark.rect[0] * 100 + '%',"), '标注按页面百分比');
 check(body.includes("kind: 'region',"), '生成区域标注');
 check(body.includes('norm: true,'), '坐标按页面归一化');
 check(body.includes('page,'), '记录页码');

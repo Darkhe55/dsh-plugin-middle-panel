@@ -9,16 +9,16 @@ const check = (ok, label, detail) => {
 };
 const has = (text) => src.includes(text);
 
-const start = src.indexOf('function PdfCanvasDoc(props) {');
-const end = src.indexOf('function PdfDoc(props) {');
+const start = src.indexOf('function PdfPage(props) {');
+const end = src.indexOf('function PdfThumb(props) {');
 const body = src.slice(start, end);
 
 // —— 提取 ——
-check(body.includes('await pdfPage.getTextContent()'), '读取页面文字');
-check(body.includes('pdfjsRef.current.Util.transform(viewport.transform, item.transform)'), '按页面变换定位每段文字');
+check(body.includes('await textContentOf(pdf, pageNumber)'), '读取页面文字（带缓存）');
+check(body.includes('Util.transform(viewport.transform, item.transform)'), '按页面变换定位每段文字');
 check(body.includes('Math.hypot(transform[2], transform[3])'), '字号由变换推出');
-check(body.includes('setTextItems(spans)'), '结果进入状态');
-check(body.includes("if (!item || typeof item.str !== \"string\" || !item.str.trim()) continue;"), '跳过空片段');
+check(body.includes('setItems(spans)'), '结果进入页面状态');
+check(body.includes("if (!item || typeof item.str !== 'string' || !item.str.trim()) continue;"), '跳过空片段');
 
 // —— 渲染层 ——
 check(body.includes("className: 'dshcv-pdftext'"), '有文字层容器');
@@ -34,13 +34,13 @@ check(has('user-select:text'), '允许选中');
 
 // —— 选中 → 标注 ——
 check(body.includes('const readSelection = () => {'), '能读取选区');
-check(body.includes('range.getClientRects()'), '支持多行选区');
-check(body.includes('active.toString()'), '取选中原文');
-check(body.includes('const onTextUp = () => {'), '松手时记录选区');
-check(body.includes('const markSelection = () => {'), '可把选区变成标注');
-check(body.includes('text: true,'), '标注标记为文字来源');
-check(body.includes('quote: picked.text,'), '引用原文');
-check(body.includes("'标注选中文字'"), '工具栏有对应按钮');
+check(body.includes('active.getRangeAt(0).getClientRects()'), '支持多行选区');
+check(body.includes("String(active.toString() || '')"), '取选中原文');
+check(body.includes('onMouseUp: readSelection'), '松手时记录选区');
+check(src.includes('const markSelection = () => {'), '可把选区变成标注');
+check(src.includes('text: true,'), '标注标记为文字来源');
+check(src.includes('quote: selection.text,'), '引用原文');
+check(src.includes("'标注选中文字'"), '工具栏有对应按钮');
 
 if (failures) {
   console.log('失败 ' + failures + ' 项');
