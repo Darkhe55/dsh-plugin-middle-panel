@@ -986,6 +986,8 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
                 ? '图层 `' + mark.selector + '`'
                 : mark.kind === 'video'
 ? timeLabel(mark) + (Array.isArray(mark.rect) ? ' · 画面区域' : '')
+  : mark.text && Array.isArray(mark.bands)
+    ? '第 ' + (mark.page || 1) + ' 页 · 引用文字（' + mark.bands.length + ' 行）'
   : mark.norm && Array.isArray(mark.rect)
     ? '第 ' + (mark.page || 1) + ' 页 · ' + regionWhere(mark.rect)
     : '区域 (' + (mark.rect || []).join(', ') + ')';
@@ -1331,6 +1333,10 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
     '.dshcv-pdflayer{position:absolute;inset:0;cursor:crosshair;touch-action:none}',
     '.dshcv-pdflayer:not(.dshcv-pdflayer-on){cursor:default}',
     '.dshcv-pdfmarquee{position:absolute;border:1.5px solid rgba(79,140,255,.95);background:rgba(79,140,255,.16);box-shadow:0 0 10px rgba(79,140,255,.45);pointer-events:none;border-radius:2px}',
+    // A text mark is a set of line bands that sit exactly on the glyphs: no outline,
+    // so it reads as highlighted text rather than a selected box.
+    '.dshcv-pdftexthit{position:absolute;background:rgba(79,140,255,.30);border-radius:2px;pointer-events:none}',
+    '.dshcv-pdftexthit-hot{background:rgba(79,140,255,.46);box-shadow:0 0 8px rgba(79,140,255,.55)}',
     '.dshcv-pdfregion{position:absolute;border:1.5px dashed rgba(79,140,255,.9);background:rgba(79,140,255,.10);box-shadow:0 0 12px rgba(79,140,255,.5);pointer-events:none;border-radius:2px}',
       '.dshcv-hoverhead{position:absolute;top:-2px;bottom:-2px;width:0;margin-left:-0.5px;border-left:1px dashed rgba(79,140,255,.85);pointer-events:none}',
       '.dshcv-trackband{position:absolute;top:0;bottom:0;background:rgba(79,140,255,.35);border-left:1px solid rgba(79,140,255,.8);border-right:1px solid rgba(79,140,255,.8)}',
@@ -4654,24 +4660,39 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         if (onRegion) onRegion(pageNumber, [x, y, w, h]);
       };
 
+      // Every line fragment gets its own band, so a mark hugs the text instead of
+      // drawing one box around the whole selection.
       const readSelection = () => {
         const wrap = wrapRef.current;
         const active = window.getSelection ? window.getSelection() : null;
         if (!wrap || !active || active.isCollapsed) return;
-        const text = String(active.toString() || '').replace(/\s+$/g, '');
+        const text = String(active.toString() || "").replace(/\s+$/g, "");
         if (!text.trim()) return;
-        const rect = wrap.getBoundingClientRect();
-        const rects = Array.from(active.getRangeAt(0).getClientRects()).filter(
+        const box = wrap.getBoundingClientRect();
+        const fragments = Array.from(active.getRangeAt(0).getClientRects()).filter(
           (item) => item.width > 1 && item.height > 1,
         );
-        if (!rects.length) return;
-        const left = Math.min(...rects.map((item) => item.left)) - rect.left;
-        const top = Math.min(...rects.map((item) => item.top)) - rect.top;
-        const right = Math.max(...rects.map((item) => item.right)) - rect.left;
-        const bottom = Math.max(...rects.map((item) => item.bottom)) - rect.top;
+        if (!fragments.length) return;
+        const bands = fragments
+          .map((item) => [
+            (item.left - box.left) / box.width,
+            (item.top - box.top) / box.height,
+            item.width / box.width,
+            item.height / box.height,
+          ])
+          .sort((a, b) => a[1] - b[1] || a[0] - b[0]);
+        const left = Math.min(...bands.map((item) => item[0]));
+        const top = Math.min(...bands.map((item) => item[1]));
+        const right = Math.max(...bands.map((item) => item[0] + item[2]));
+        const bottom = Math.max(...bands.map((item) => item[1] + item[3]));
         if (right <= left || bottom <= top) return;
         if (onSelect) {
-          onSelect(pageNumber, [left / rect.width, top / rect.height, (right - left) / rect.width, (bottom - top) / rect.height], text);
+          onSelect(
+            pageNumber,
+            [left, top, right - left, bottom - top],
+            bands.map((item) => item.map((value) => Math.round(value * 10000) / 10000)),
+            text,
+          );
         }
       };
 
@@ -4719,28 +4740,54 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
           }),
         ),
         pageMarks.map((mark, index) =>
-          h('div', {
-            key: 'mark' + index,
-            className: 'dshcv-pdfregion',
-            style: {
-              left: mark.rect[0] * 100 + '%',
-              top: mark.rect[1] * 100 + '%',
-              width: mark.rect[2] * 100 + '%',
-              height: mark.rect[3] * 100 + '%',
-            },
-          }),
+          mark.text && Array.isArray(mark.bands)
+            ? mark.bands.map((band, bandIndex) =>
+                h("div", {
+                  key: "band" + index + "-" + bandIndex,
+                  className: "dshcv-pdftexthit",
+                  style: {
+                    left: band[0] * 100 + "%",
+                    top: band[1] * 100 + "%",
+                    width: band[2] * 100 + "%",
+                    height: band[3] * 100 + "%",
+                  },
+                }),
+              )
+            : h("div", {
+                key: "mark" + index,
+                className: "dshcv-pdfregion",
+                style: {
+                  left: mark.rect[0] * 100 + "%",
+                  top: mark.rect[1] * 100 + "%",
+                  width: mark.rect[2] * 100 + "%",
+                  height: mark.rect[3] * 100 + "%",
+                },
+              }),
         ),
-        hoverRect
-          ? h('div', {
-              className: 'dshcv-pdfregion dshcv-pdfregion-hot',
-              style: {
-                left: hoverRect[0] * 100 + '%',
-                top: hoverRect[1] * 100 + '%',
-                width: hoverRect[2] * 100 + '%',
-                height: hoverRect[3] * 100 + '%',
-              },
-            })
-          : null,
+        hoverBands && hoverBands.length
+          ? hoverBands.map((band, bandIndex) =>
+              h("div", {
+                key: "hover" + bandIndex,
+                className: "dshcv-pdftexthit dshcv-pdftexthit-hot",
+                style: {
+                  left: band[0] * 100 + "%",
+                  top: band[1] * 100 + "%",
+                  width: band[2] * 100 + "%",
+                  height: band[3] * 100 + "%",
+                },
+              }),
+            )
+          : hoverRect
+            ? h("div", {
+                className: "dshcv-pdfregion dshcv-pdfregion-hot",
+                style: {
+                  left: hoverRect[0] * 100 + "%",
+                  top: hoverRect[1] * 100 + "%",
+                  width: hoverRect[2] * 100 + "%",
+                  height: hoverRect[3] * 100 + "%",
+                },
+              })
+            : null,
         drag
           ? h('div', {
               className: 'dshcv-pdfmarquee',
@@ -4981,8 +5028,8 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         });
       };
 
-      const onSelect = (pageNumber, rect, text) => {
-        setSelection({ page: pageNumber, rect, text });
+      const onSelect = (pageNumber, rect, bands, text) => {
+        setSelection({ page: pageNumber, rect, bands, text });
       };
 
       const markSelection = () => {
@@ -4991,6 +5038,7 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
           kind: 'region',
           path: doc.path,
           page: selection.page,
+        bands: selection.bands,
           norm: true,
           text: true,
           rect: selection.rect.map((value) => Math.round(value * 10000) / 10000),
@@ -5124,6 +5172,10 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
                       pageHits: pagesOfHits.get(pageNumber) || [],
                       activeHit: hit,
                       pageMarks: pageMarksFor(pageNumber),
+                      hoverBands:
+                        hoverMark && Number(hoverMark.page) === pageNumber && Array.isArray(hoverMark.bands)
+                          ? hoverMark.bands
+                          : null,
                       hoverRect:
                         hoverMark && Number(hoverMark.page) === pageNumber && Array.isArray(hoverMark.rect)
                           ? hoverMark.rect

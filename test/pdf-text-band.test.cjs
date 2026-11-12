@@ -1,0 +1,45 @@
+// 文字标注按行高亮，不画外框；区域标注仍画框。
+const fs = require('fs');
+const src = fs.readFileSync('src/client.js', 'utf8');
+
+let failures = 0;
+const check = (ok, label, detail) => {
+  console.log((ok ? 'PASS ' : 'FAIL ') + label + (ok || !detail ? '' : ' → ' + detail));
+  if (!ok) failures += 1;
+};
+
+const pageStart = src.indexOf('function PdfPage(props) {');
+const pageEnd = src.indexOf('function PdfThumb(props) {');
+const page = src.slice(pageStart, pageEnd);
+const docEnd = src.indexOf('function PdfDoc(props) {');
+const view = src.slice(pageEnd, docEnd);
+
+// —— 逐行记录 ——
+check(page.includes('const fragments = Array.from(active.getRangeAt(0).getClientRects())'), '取每一行的矩形');
+check(page.includes('const bands = fragments'), '生成带子数组');
+check(page.includes('.sort((a, b) => a[1] - b[1] || a[0] - b[0]);'), '按从上到下排序');
+check(page.includes('bands.map((item) => item.map((value) => Math.round(value * 10000) / 10000)),'), '带子按页面归一化');
+
+// —— 渲染：文字用带子、区域用框 ——
+check(page.includes('mark.text && Array.isArray(mark.bands)'), '文字标注走带子分支');
+check(page.includes('className: "dshcv-pdftexthit",'), '带子有独立类名');
+check(page.includes('className: "dshcv-pdfregion",'), '区域标注仍画框');
+check(page.includes('hoverBands && hoverBands.length'), '悬停文字也按带子高亮');
+check(page.includes('className: "dshcv-pdftexthit dshcv-pdftexthit-hot",'), '悬停带子更亮');
+
+// —— 样式：无边框 ——
+const css = src.slice(src.indexOf("'.dshcv-pdftexthit{"), src.indexOf("'.dshcv-pdftexthit{") + 400);
+check(!/border:/.test(css.split('}')[0]), '带子不画外框', css.split('}')[0]);
+check(css.includes('background:rgba(79,140,255,.30)'), '带子为半透明蓝');
+check(src.includes("'.dshcv-pdfregion{"), '区域框样式保留');
+
+// —— 数据链路 ——
+check(view.includes('bands: selection.bands,'), '标注保存带子');
+check(view.includes('const onSelect = (pageNumber, rect, bands, text) => {'), '回传带子');
+check(view.includes('hoverBands:'), '悬停传带子');
+check(src.includes("? '第 ' + (mark.page || 1) + ' 页 · 引用文字（' + mark.bands.length + ' 行）'"), '标注栏说明是引用文字');
+
+if (failures) {
+  console.log('失败 ' + failures + ' 项');
+  process.exit(1);
+}
