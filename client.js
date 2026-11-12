@@ -3998,6 +3998,7 @@ registerEl,
 pageHits,
 activeHit,
 pageMarks,
+hoverBands,
 hoverRect,
 pdfjs,
 } = props;

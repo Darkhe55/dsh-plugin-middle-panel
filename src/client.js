@@ -4522,6 +4522,7 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         pageHits,
         activeHit,
         pageMarks,
+        hoverBands,
         hoverRect,
         pdfjs,
       } = props;
