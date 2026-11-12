@@ -4500,19 +4500,20 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         if (!sessionId) return undefined;
         const controller = new AbortController();
         let cancelled = false;
-        let loaded = null;
+        let task = null;
         setState({ status: 'loading', error: '', pages: 0 });
         Promise.all([loadPdfJs(), readBytesFile(sessionId, doc.path, controller.signal)])
           .then(async ([pdfjs, bytes]) => {
             if (cancelled || !bytes) return;
-            loaded = await pdfjs.getDocument({
+            task = pdfjs.getDocument({
               data: bytes,
               // Cmaps and fonts are fetched by the worker, which needs a prefix; with
               // the exact fallback they are simply skipped (text still draws).
               cMapUrl: vendorShape === 'prefix' ? VENDOR_PREFIX + 'cmaps/' : undefined,
               cMapPacked: vendorShape === 'prefix',
               standardFontDataUrl: vendorShape === 'prefix' ? VENDOR_PREFIX + 'standard_fonts/' : undefined,
-            }).promise;
+            });
+            const loaded = await task.promise;
             if (cancelled) return;
             docRef.current = loaded;
             setState({ status: 'ready', error: '', pages: loaded.numPages });
@@ -4525,7 +4526,17 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         return () => {
           cancelled = true;
           controller.abort();
-          if (loaded) loaded.destroy().catch(() => {});
+          // destroy() lives on the loading task in some builds and on the document in
+          // others; call whichever exists and never let cleanup throw.
+          const done = (value) => {
+            if (value && typeof value.catch === "function") value.catch(() => {});
+          };
+          try {
+            if (task && typeof task.destroy === "function") done(task.destroy());
+            else if (docRef.current && typeof docRef.current.destroy === "function") done(docRef.current.destroy());
+          } catch (error) {
+            /* cleanup is best effort */
+          }
           docRef.current = null;
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps

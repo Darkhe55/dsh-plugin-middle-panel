@@ -59,6 +59,12 @@ check(has('function PdfDoc(props) {') && has('function EmbeddedPdfDoc(props) {')
 check(has('h(EmbeddedPdfDoc, props)'), 'pdf.js 失败时回退');
 check(has("'已回退到系统阅读器：' + fallback"), '回退时说明原因');
 
+// —— 清理稳健性（曾因 loaded.destroy is not a function 使整个画布被隔离） ——
+check(!has('loaded.destroy()'), '不再盲调 destroy');
+check(has('const loaded = await task.promise;'), '保留 loading task 句柄');
+check(has("if (task && typeof task.destroy === 'function')") || has('if (task && typeof task.destroy === "function")'), 'destroy 前检查能力');
+check(has('/* cleanup is best effort */'), '清理异常不外泄');
+
 if (failures) {
   console.log('失败 ' + failures + ' 项');
   process.exit(1);

@@ -3980,17 +3980,18 @@ React.useEffect(() => {
 if (!sessionId) return undefined;
 const controller = new AbortController();
 let cancelled = false;
-let loaded = null;
+let task = null;
 setState({ status: 'loading', error: '', pages: 0 });
 Promise.all([loadPdfJs(), readBytesFile(sessionId, doc.path, controller.signal)])
 .then(async ([pdfjs, bytes]) => {
 if (cancelled || !bytes) return;
-loaded = await pdfjs.getDocument({
+task = pdfjs.getDocument({
 data: bytes,
 cMapUrl: vendorShape === 'prefix' ? VENDOR_PREFIX + 'cmaps/' : undefined,
 cMapPacked: vendorShape === 'prefix',
 standardFontDataUrl: vendorShape === 'prefix' ? VENDOR_PREFIX + 'standard_fonts/' : undefined,
-}).promise;
+});
+const loaded = await task.promise;
 if (cancelled) return;
 docRef.current = loaded;
 setState({ status: 'ready', error: '', pages: loaded.numPages });
@@ -4003,7 +4004,14 @@ else setState({ status: 'failed', error: errText(error), pages: 0 });
 return () => {
 cancelled = true;
 controller.abort();
-if (loaded) loaded.destroy().catch(() => {});
+const done = (value) => {
+if (value && typeof value.catch === "function") value.catch(() => {});
+};
+try {
+if (task && typeof task.destroy === "function") done(task.destroy());
+else if (docRef.current && typeof docRef.current.destroy === "function") done(docRef.current.destroy());
+} catch (error) {
+}
 docRef.current = null;
 };
 }, [doc.path, sessionId]);
