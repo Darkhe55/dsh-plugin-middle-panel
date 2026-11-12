@@ -4496,6 +4496,7 @@ const scrollRef = React.useRef(null);
 const boxRef = React.useRef(null);
 const pageEls = React.useRef(new Map());
 const zoomAnchor = React.useRef(null);
+const searchToken = React.useRef(0);
 const hovered = useHoverMark(doc.path);
 const marks = store.marks || [];
 const pageMarksFor = (pageNumber) =>
@@ -4674,11 +4675,15 @@ setHits([]);
 setHitIndex(0);
 return;
 }
+const token = searchToken.current + 1;
+searchToken.current = token;
 setSearching(true);
 const needle = term.toLowerCase();
 const found = [];
 try {
 for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+if (searchToken.current !== token) return;
+if (pageNumber % 20 === 0) await new Promise((done) => setTimeout(done, 0));
 const content = await textContentOf(pdf, pageNumber);
 const page = await pdf.getPage(pageNumber);
 const viewport = page.getViewport({ scale: 1 });
@@ -4748,11 +4753,12 @@ rect: rects[0],
 at = haystack.indexOf(needle, to);
 }
 }
+if (searchToken.current !== token) return;
 setHits(found);
 setHitIndex(0);
 if (found.length) scrollToPage(found[0].page, found[0].rect || (found[0].rects && found[0].rects[0]));
 } finally {
-setSearching(false);
+if (searchToken.current === token) setSearching(false);
 }
 };
 const gotoHit = (next) => {
