@@ -84,8 +84,10 @@ check(win.span === Infinity, '时长为 0 安全', JSON.stringify(win));
 
 // ---------------- 交互契约 ----------------
 const has = (text) => src.includes(text);
-check(has('onWheel: onTrackWheel'), '时间轴监听滚轮');
+check(has("addEventListener('wheel', handler, { passive: false })"), '滚轮用非被动原生监听');
 check(has('if (!event.altKey || !duration) return;'), '只在按住 Alt 且有时长时缩放');
+check(has('wheelRef.current = (event) => {'), '处理器持有最新闭包');
+check(!src.includes('onWheel: onTrackWheel'), '不再用 React 的被动 onWheel');
 check(has('event.deltaY < 0 ? 1 / 1.4 : 1.4'), '滚轮方向决定放大/收回');
 check(has('const minSpan = Math.max(frame * 2, Math.min(1, fullSpan));'), '最小窗口 1 秒（帧级）');
 check(has("'data-frame': zoomed && span <= 1.5 ? '1' : '0'"), '帧级窗口标记');

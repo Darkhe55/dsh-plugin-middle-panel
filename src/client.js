@@ -7466,14 +7466,24 @@ function SplitDivider(props) {
         previewAt(hoverBase.current);
       };
 
-      // Alt+wheel zooms the timeline around the pointer; the same gesture
-      // (reversed) collapses it back to the whole clip.
-      const onTrackWheel = (event) => {
+      // React binds wheel as a passive listener, so preventDefault there is ignored
+      // and the page would scroll while the timeline zooms. Bind it ourselves.
+      const wheelRef = React.useRef(null);
+      wheelRef.current = (event) => {
         if (!event.altKey || !duration) return;
         event.preventDefault();
-        const anchor = timeFromClientX(event.clientX);
-        zoomAt(anchor, event.deltaY < 0 ? 1 / 1.4 : 1.4);
+        const anchorTime = timeFromClientX(event.clientX);
+        zoomAt(anchorTime, event.deltaY < 0 ? 1 / 1.4 : 1.4);
       };
+      React.useEffect(() => {
+        const node = trackRef.current;
+        if (!node) return undefined;
+        const handler = (event) => {
+          if (wheelRef.current) wheelRef.current(event);
+        };
+        node.addEventListener('wheel', handler, { passive: false });
+        return () => node.removeEventListener('wheel', handler);
+      }, [state.status]);
 
       const onTrackMenu = (event) => {
         if (!duration) return;
@@ -7742,7 +7752,6 @@ function SplitDivider(props) {
             onPointerMove: onTrackMove,
             onPointerUp: onTrackUp,
             onPointerLeave: onTrackLeave,
-            onWheel: onTrackWheel,
             onContextMenu: onTrackMenu,
           },
           h('div', { className: 'dshcv-trackfill', style: { width: headPercent + '%' } }),
