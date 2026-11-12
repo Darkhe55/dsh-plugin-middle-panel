@@ -2998,7 +2998,14 @@ className: 'dshcv-searchinput',
 value: query,
 placeholder: '搜索标注（跨文件）',
 style: { flex: '1 1 auto', minWidth: '80px' },
-onChange: (event) => setQuery(event.target.value),
+onChange: (event) => {
+const value = event.target.value;
+setQuery(value);
+if (!value.trim()) {
+setHits([]);
+setHitIndex(0);
+}
+},
 }),
 ),
 ...groups.map((group) =>
@@ -4068,7 +4075,7 @@ return;
 }
 const spans = [];
 for (const item of content.items || []) {
-if (!item || typeof item.str !== 'string' || !item.str.trim()) continue;
+if (!item || typeof item.str !== "string" || !item.str.trim()) continue;
 const transform = Util.transform(viewport.transform, item.transform);
 const fontHeight = Math.hypot(transform[2], transform[3]);
 if (!fontHeight) continue;
@@ -4422,23 +4429,31 @@ const viewport = page.getViewport({ scale: 1 });
 const Util = pdfjsRef.current && pdfjsRef.current.Util;
 if (!Util) break;
 for (const item of content.items || []) {
-if (!item || typeof item.str !== 'string') continue;
-if (!item.str.toLowerCase().includes(needle)) continue;
+if (!item || typeof item.str !== "string") continue;
+const haystack = item.str.toLowerCase();
+let at = haystack.indexOf(needle);
+if (at < 0) continue;
 const transform = Util.transform(viewport.transform, item.transform);
 const height = Math.hypot(transform[2], transform[3]);
 if (!height) continue;
-const boxWidth = Math.max(1, Number(item.width) || 0);
+const itemWidth = Math.max(1, (Number(item.width) || 0) * viewport.scale);
+const characters = Math.max(1, item.str.length);
+while (at >= 0) {
+const startRatio = at / characters;
+const endRatio = (at + term.length) / characters;
 found.push({
 page: pageNumber,
 index: found.length,
-text: item.str,
+text: item.str.slice(at, at + term.length),
 rect: [
-transform[4] / viewport.width,
+(transform[4] + itemWidth * startRatio) / viewport.width,
 (transform[5] - height) / viewport.height,
-boxWidth / viewport.width,
+Math.max(itemWidth * (endRatio - startRatio), 2) / viewport.width,
 height / viewport.height,
 ],
 });
+at = haystack.indexOf(needle, at + term.length);
+}
 }
 }
 setHits(found);
@@ -4506,7 +4521,14 @@ type: 'search',
 className: 'dshcv-searchinput',
 placeholder: '搜索全文…',
 value: query,
-onChange: (event) => setQuery(event.target.value),
+onChange: (event) => {
+const value = event.target.value;
+setQuery(value);
+if (!value.trim()) {
+setHits([]);
+setHitIndex(0);
+}
+},
 onKeyDown: (event) => {
 if (event.key !== 'Enter') return;
 event.preventDefault();
