@@ -1315,7 +1315,12 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
     '.dshcv-pdftext span{position:absolute;white-space:pre;color:transparent;transform-origin:0 0;cursor:text}',
     '.dshcv-pdftext span::selection{background:rgba(79,140,255,.34);color:transparent}',
     '.dshcv-pdftext span::-moz-selection{background:rgba(79,140,255,.34);color:transparent}',
-    '.dshcv-pdfmain{display:flex;gap:10px;min-height:0;flex:1 1 auto}',
+    // The viewer owns its own scrolling: the toolbar must never scroll away, or the
+    // mark buttons become unreachable once a long document is scrolled.
+    '.dshcv-pdfdocwrap{overflow:hidden;display:flex;flex-direction:column;padding:6px 8px 0}',
+    '.dshcv-pdfdocwrap .dshcv-tools{flex:0 0 auto;position:sticky;top:0;z-index:5;background:var(--dsw-alias-bg-layer-2,#fff);padding-top:4px}',
+    '.dshcv-pdfdocwrap .dshcv-msg{position:static}',
+    '.dshcv-pdfmain{display:flex;gap:10px;min-height:0;flex:1 1 auto;overflow:hidden}',
     '.dshcv-pdfthumbs{flex:0 0 116px;min-height:0;overflow:auto;padding:4px;border-right:1px solid var(--dshcv-line)}',
     '.dshcv-pdfthumb{display:block;width:100%;margin:0 0 8px;padding:3px;border:0;background:transparent;cursor:pointer;border-radius:6px}',
     '.dshcv-pdfthumb canvas{display:block;width:100%;height:auto;background:#fff;border-radius:3px;box-shadow:0 1px 4px rgba(0,0,0,.18)}',
@@ -5075,7 +5080,7 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
 
       return h(
         'div',
-        { className: 'dshcv-docwrap', style: { minHeight: 0 } },
+        { className: 'dshcv-docwrap dshcv-pdfdocwrap', style: { minHeight: 0 } },
         h(
           'div',
           { className: 'dshcv-tools' },
