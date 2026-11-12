@@ -3,3 +3,6 @@ node_modules/
 .canvas-probe.log
 .DS_Store
 Thumbs.db
+
+# 我用的临时补丁脚���（不应进仓库）
+.[a-z0-9-]*.cjs
