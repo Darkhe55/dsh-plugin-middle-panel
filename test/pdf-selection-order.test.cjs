@@ -19,7 +19,7 @@ check(helper.includes('Math.abs(a.top - b.top) > 4 ? a.top - b.top : a.left - b.
 check(helper.includes('parts.map((part) => part.text).join("")'), '按视觉顺序拼接');
 check(helper.includes('if (!parts.length) return String(range.toString() || "");'), '空结果回退到原生文本');
 
-const readStart = src.indexOf('const readSelection = () => {');
+const readStart = src.indexOf('const readSelection = (keepIfLost) => {');
 const readEnd = src.indexOf('const onDown = (event) => {', readStart);
 const read = src.slice(readStart, readEnd > 0 ? readEnd : readStart + 2000);
 check(read.includes('const range = active.getRangeAt(0);'), '只取一次 range');

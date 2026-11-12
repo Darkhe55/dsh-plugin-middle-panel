@@ -34,7 +34,7 @@ check(page.includes('rect.left <= last.right + 0.6'), '同一行且相接才合�
 check(page.includes('const bands = merged.map((item) => ['), '合并后转成百分比');
 
 // 缩放后重算
-check(page.includes('}, [width]);'), '尺寸变化时重算');
+check(page.includes('}, [width, items]);'), '尺寸或文本层变化后重算');
 
 // 与标注共用同一套渲染（颜色家族一致）
 check(src.includes("'..dshcv-pdftexthit{") || src.includes("'.dshcv-pdftexthit{position:absolute;background:rgba(79,140,255,.10)"), '标注色带仍在');

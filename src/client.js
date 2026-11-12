@@ -4839,12 +4839,13 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, []);
       
-      // Zoom re-lays the text layer, so the stored rects would drift: recompute.
+      // A zoom re-lays the text layer. Measuring before the new spans commit would
+      // record the old geometry, so the rects are recomputed once items land too.
       React.useEffect(() => {
         if (!live.length) return;
-        readSelection();
+        readSelection(true);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-      }, [width]);
+      }, [width, items]);
       
       const toFraction = (event) => {
         const wrap = wrapRef.current;
@@ -4894,16 +4895,16 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
       // Native selection stays the engine; only its appearance is ours. Browser
       // ::selection is hidden in the text layer and these rects are painted instead,
       // so the selection, the hover band and the stored mark share one renderer.
-      const readSelection = () => {
+      const readSelection = (keepIfLost) => {
         const wrap = wrapRef.current;
         const active = window.getSelection ? window.getSelection() : null;
         if (!wrap || !active || !active.rangeCount || active.isCollapsed) {
-          setLive([]);
+          if (!keepIfLost) setLive([]);
           return;
         }
         const range = active.getRangeAt(0);
         if (!range || !wrap.contains(range.commonAncestorContainer)) {
-          setLive([]);
+          if (!keepIfLost) setLive([]);
           return;
         }
         const box = wrap.getBoundingClientRect();
@@ -4912,7 +4913,7 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
           (item) => item.width > 1 && item.height > 1,
         );
         if (!rects.length) {
-          setLive([]);
+          if (!keepIfLost) setLive([]);
           return;
         }
         // Merge fragments that sit on one line: adjacent boxes painted separately

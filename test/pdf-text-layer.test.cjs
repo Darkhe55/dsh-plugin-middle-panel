@@ -33,7 +33,7 @@ check(src.includes("'.dshcv-pdfsel{position:absolute;background:rgba(79,140,255,
 check(has('user-select:text'), '允许选中');
 
 // —— 选中 → 标注 ——
-check(body.includes('const readSelection = () => {'), '能读取选区');
+check(body.includes('const readSelection = (keepIfLost) => {'), '能读取选区');
 check(body.includes('active.getRangeAt(0)'), '支持多行选区');
 check(body.includes('const range = active.getRangeAt(0);'), '取一次选区区间');
 check(body.includes('document.addEventListener("selectionchange", handler);'), '选区随选择变化记录');

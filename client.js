@@ -4262,8 +4262,8 @@ return () => document.removeEventListener("selectionchange", handler);
 }, []);
 React.useEffect(() => {
 if (!live.length) return;
-readSelection();
-}, [width]);
+readSelection(true);
+}, [width, items]);
 const toFraction = (event) => {
 const wrap = wrapRef.current;
 if (!wrap) return null;
@@ -4306,16 +4306,16 @@ const h = Math.abs(at.y - from.y);
 if (w * h < 0.0004) return;
 if (onRegion) onRegion(pageNumber, [x, y, w, h]);
 };
-const readSelection = () => {
+const readSelection = (keepIfLost) => {
 const wrap = wrapRef.current;
 const active = window.getSelection ? window.getSelection() : null;
 if (!wrap || !active || !active.rangeCount || active.isCollapsed) {
-setLive([]);
+if (!keepIfLost) setLive([]);
 return;
 }
 const range = active.getRangeAt(0);
 if (!range || !wrap.contains(range.commonAncestorContainer)) {
-setLive([]);
+if (!keepIfLost) setLive([]);
 return;
 }
 const box = wrap.getBoundingClientRect();
@@ -4324,7 +4324,7 @@ const rects = Array.from(range.getClientRects()).filter(
 (item) => item.width > 1 && item.height > 1,
 );
 if (!rects.length) {
-setLive([]);
+if (!keepIfLost) setLive([]);
 return;
 }
 const merged = [];
