@@ -1134,6 +1134,7 @@ const CSS_PANEL = [
 '.dshcv-pdfdocwrap{overflow:hidden;display:flex;flex-direction:column;padding:6px 8px 0}',
 '.dshcv-pdfdocwrap .dshcv-tools{flex:0 0 auto;position:sticky;top:0;z-index:5;background:var(--dsw-alias-bg-layer-2,#fff);padding-top:4px}',
 '.dshcv-pdfdocwrap .dshcv-msg{position:static}',
+'.dshcv-pdfnote{flex:0 0 auto;padding:4px 10px 6px;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary)}',
 '.dshcv-pdfmain{display:flex;gap:10px;min-height:0;flex:1 1 auto;overflow:hidden}',
 '.dshcv-pdfthumbs{flex:0 0 116px;min-height:0;overflow:auto;padding:4px;border-right:1px solid var(--dshcv-line)}',
 '.dshcv-pdfthumb{display:block;width:100%;margin:0 0 8px;padding:3px;border:0;background:transparent;cursor:pointer;border-radius:6px}',
@@ -4529,6 +4530,7 @@ const [hitIndex, setHitIndex] = React.useState(0);
 const [selection, setSelection] = React.useState(null);
 const [width, setWidth] = React.useState(760);
 const [searching, setSearching] = React.useState(false);
+const [searchNote, setSearchNote] = React.useState("");
 const [pageSizes, setPageSizes] = React.useState({});
 const [baseSize, setBaseSize] = React.useState(null);
 const docRef = React.useRef(null);
@@ -4727,9 +4729,11 @@ return;
 }
 const token = searchToken.current + 1;
 searchToken.current = token;
+setSearchNote("");
 setSearching(true);
 const needle = term.toLowerCase();
 const found = [];
+let textChars = 0;
 try {
 for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
 if (searchToken.current !== token) return;
@@ -4760,6 +4764,7 @@ joined += item.str;
 previousRight = left + width;
 previousTop = top;
 }
+textChars += joined.length;
 if (!joined) continue;
 const measureCtx2 = document.createElement("canvas").getContext("2d");
 for (const piece of pieces) {
@@ -4805,6 +4810,15 @@ at = haystack.indexOf(needle, to);
 }
 }
 if (searchToken.current !== token) return;
+if (!found.length) {
+setSearchNote(
+textChars === 0
+? "这个 PDF 没有可搜索的文本层（可能是扫描件），需要 OCR 才能检索"
+: "没有找到「" + term + "」",
+);
+} else {
+setSearchNote("");
+}
 setHits(found);
 setHitIndex(0);
 if (found.length) scrollToPage(found[0].page, found[0].rect || (found[0].rects && found[0].rects[0]));
@@ -4935,6 +4949,7 @@ onClick: markSelection,
 ),
 h(
 'div',
+searchNote ? h('div', { className: 'dshcv-pdfnote' }, searchNote) : null,
 { className: 'dshcv-pdfmain' },
 h(
 'div',

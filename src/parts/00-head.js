@@ -1325,6 +1325,7 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
     '.dshcv-pdfdocwrap{overflow:hidden;display:flex;flex-direction:column;padding:6px 8px 0}',
     '.dshcv-pdfdocwrap .dshcv-tools{flex:0 0 auto;position:sticky;top:0;z-index:5;background:var(--dsw-alias-bg-layer-2,#fff);padding-top:4px}',
     '.dshcv-pdfdocwrap .dshcv-msg{position:static}',
+    '.dshcv-pdfnote{flex:0 0 auto;padding:4px 10px 6px;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary)}',
     '.dshcv-pdfmain{display:flex;gap:10px;min-height:0;flex:1 1 auto;overflow:hidden}',
     '.dshcv-pdfthumbs{flex:0 0 116px;min-height:0;overflow:auto;padding:4px;border-right:1px solid var(--dshcv-line)}',
     '.dshcv-pdfthumb{display:block;width:100%;margin:0 0 8px;padding:3px;border:0;background:transparent;cursor:pointer;border-radius:6px}',

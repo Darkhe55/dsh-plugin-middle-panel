@@ -10,6 +10,9 @@
       const [selection, setSelection] = React.useState(null);
       const [width, setWidth] = React.useState(760);
       const [searching, setSearching] = React.useState(false);
+      // Zero hits has two very different causes: the term is absent, or the document
+      // has no text layer at all (a scan). The note tells the reader which one it is.
+      const [searchNote, setSearchNote] = React.useState("");
       // Page geometry, so a page box can be sized without waiting for its bitmap.
       const [pageSizes, setPageSizes] = React.useState({});
       const [baseSize, setBaseSize] = React.useState(null);
@@ -242,9 +245,11 @@
       // for setHits, and a long document kept the input frozen meanwhile.
       const token = searchToken.current + 1;
       searchToken.current = token;
+        setSearchNote("");
         setSearching(true);
         const needle = term.toLowerCase();
         const found = [];
+      let textChars = 0;
         try {
           for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
             if (searchToken.current !== token) return;
@@ -278,7 +283,8 @@
               previousRight = left + width;
               previousTop = top;
             }
-            if (!joined) continue;
+      textChars += joined.length;
+      if (!joined) continue;
             // Character counts are not widths: the same cumulative advance table the text
             // layer uses maps a character offset onto a position, or the box ends short.
             const measureCtx2 = document.createElement("canvas").getContext("2d");
@@ -326,6 +332,15 @@
           }
           if (searchToken.current !== token) return;
           
+          if (!found.length) {
+            setSearchNote(
+              textChars === 0
+                ? "这个 PDF 没有可搜索的文本层（可能是扫描件），需要 OCR 才能检索"
+                : "没有找到「" + term + "」",
+            );
+          } else {
+            setSearchNote("");
+          }
           setHits(found);
           setHitIndex(0);
     if (found.length) scrollToPage(found[0].page, found[0].rect || (found[0].rects && found[0].rects[0]));
@@ -464,6 +479,7 @@
         ),
         h(
           'div',
+          searchNote ? h('div', { className: 'dshcv-pdfnote' }, searchNote) : null,
           { className: 'dshcv-pdfmain' },
           h(
             'div',
