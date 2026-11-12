@@ -995,6 +995,18 @@ return Math.abs(Number(left.start) - Number(right.start)) <= 0.2 && Math.abs(Num
       '.dshcv-timeinput:focus{outline:none;border-color:color-mix(in srgb,var(--dsw-alias-brand-primary) 45%,transparent);box-shadow:0 0 0 2px color-mix(in srgb,var(--dsw-alias-brand-primary) 16%,transparent)}',
       '.dshcv-track{overflow:visible}',
       '.dshcv-videohint{font-size:11px;color:var(--dsw-alias-label-tertiary)}',
+      '.dshcv-track[data-zoomed="1"]{height:34px}',
+      '.dshcv-track[data-frame="1"]{height:42px}',
+      '.dshcv-tick{position:absolute;top:0;bottom:0;width:1px;background:color-mix(in srgb,var(--dsw-alias-border-l1) 80%,transparent);pointer-events:none}',
+      '.dshcv-tickmajor{background:color-mix(in srgb,var(--dsw-alias-label-tertiary) 45%,transparent)}',
+      '.dshcv-inmark,.dshcv-outmark{position:absolute;top:-3px;bottom:-3px;width:2px;pointer-events:none;background:rgba(79,140,255,.95)}',
+      '.dshcv-inmark::after,.dshcv-outmark::after{content:"";position:absolute;top:0;width:6px;height:6px;background:rgba(79,140,255,.95)}',
+      '.dshcv-inmark::after{left:0}',
+      '.dshcv-outmark::after{right:0}',
+      '.dshcv-inoutband{position:absolute;top:0;bottom:0;background:rgba(79,140,255,.20);pointer-events:none}',
+      '.dshcv-videomenu{position:fixed;z-index:60;min-width:200px;padding:5px;border-radius:10px;border:1px solid color-mix(in srgb,var(--dsw-alias-border-l1) 90%,transparent);background:var(--dsw-alias-bg-layer-2);box-shadow:0 12px 34px rgba(15,17,21,.18);display:flex;flex-direction:column;gap:1px}',
+      '.dshcv-videomenu .dshcv-menuitem[disabled]{opacity:.45;cursor:default}',
+      '.dshcv-videomenu .dshcv-menuitem[disabled]:hover{background:none}',
       '.dshcv-timecode{font:inherit;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:inherit;background:none;border:0;padding:0;cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px}',
       '.dshcv-timecode:hover{color:var(--dsw-alias-brand-primary)}',
       '.dshcv-slots[data-dir="column"]{flex-direction:column}',
@@ -7055,6 +7067,119 @@ function SplitDivider(props) {
   });
 }
 
+    // ---------------- video container probe ----------------
+    // HTML5 video does not expose a frame rate, but an MP4/MOV carries one: the
+    // video track's mdhd gives timescale + duration and stts gives the sample count,
+    // so fps = samples / (duration / timescale). WebM has no cheap equivalent here,
+    // so the caller falls back to sampling requestVideoFrameCallback.
+    const MP4_COMMON_RATES = [23.976, 24, 25, 29.97, 30, 48, 50, 59.94, 60, 120];
+
+    const snapFrameRate = (value) => {
+      if (!Number.isFinite(value) || value < 5 || value > 240) return null;
+      // Nearest wins: 30.0 must not be pulled to 29.97 just because that comes first.
+      let best = null;
+      let bestGap = Infinity;
+      for (const rate of MP4_COMMON_RATES) {
+        const gap = Math.abs(value - rate);
+        if (gap < bestGap && gap <= rate * 0.005) {
+          best = rate;
+          bestGap = gap;
+        }
+      }
+      if (best !== null) return best;
+      return Math.round(value * 1000) / 1000;
+    };
+
+    const readBoxes = (view, start, end) => {
+      const boxes = [];
+      let offset = start;
+      while (offset + 8 <= end) {
+        let size = view.getUint32(offset);
+        const type = String.fromCharCode(
+          view.getUint8(offset + 4),
+          view.getUint8(offset + 5),
+          view.getUint8(offset + 6),
+          view.getUint8(offset + 7),
+        );
+        let header = 8;
+        if (size === 1) {
+          if (offset + 16 > end) break;
+          // 64-bit size: read hi/lo and stay inside the byte range.
+          const hi = view.getUint32(offset + 8);
+          const lo = view.getUint32(offset + 12);
+          size = hi * 4294967296 + lo;
+          header = 16;
+        } else if (size === 0) {
+          size = end - offset;
+        }
+        if (size < header || offset + size > end) break;
+        boxes.push({ type, start: offset + header, end: offset + size });
+        offset += size;
+      }
+      return boxes;
+    };
+
+    const findBox = (view, boxes, type) => boxes.find((box) => box.type === type) || null;
+    const probeMp4FrameRate = (bytes) => {
+      try {
+        if (!bytes || bytes.byteLength < 16) return null;
+        const view = new DataView(bytes.buffer ? bytes.buffer : bytes, bytes.byteOffset || 0, bytes.byteLength);
+        const top = readBoxes(view, 0, view.byteLength);
+        const moov = findBox(view, top, 'moov');
+        if (!moov) return null;
+        const moovBoxes = readBoxes(view, moov.start, moov.end);
+        for (const trak of moovBoxes.filter((box) => box.type === 'trak')) {
+          const trakBoxes = readBoxes(view, trak.start, trak.end);
+          const mdia = findBox(view, trakBoxes, 'mdia');
+          if (!mdia) continue;
+          const mdiaBoxes = readBoxes(view, mdia.start, mdia.end);
+          const hdlr = findBox(view, mdiaBoxes, 'hdlr');
+          const mdhd = findBox(view, mdiaBoxes, 'mdhd');
+          if (!hdlr || !mdhd) continue;
+          // hdlr: version/flags(4) pre_defined(4) handler_type(4)
+          const handler = String.fromCharCode(
+            view.getUint8(hdlr.start + 8),
+            view.getUint8(hdlr.start + 9),
+            view.getUint8(hdlr.start + 10),
+            view.getUint8(hdlr.start + 11),
+          );
+          if (handler !== 'vide') continue;
+          const version = view.getUint8(mdhd.start);
+          let timescale;
+          let duration;
+          if (version === 1) {
+            timescale = view.getUint32(mdhd.start + 20);
+            const hi = view.getUint32(mdhd.start + 24);
+            const lo = view.getUint32(mdhd.start + 28);
+            duration = hi * 4294967296 + lo;
+          } else {
+            timescale = view.getUint32(mdhd.start + 12);
+            duration = view.getUint32(mdhd.start + 16);
+          }
+          if (!timescale || !duration) continue;
+          const minf = findBox(view, mdiaBoxes, 'minf');
+          if (!minf) continue;
+          const stbl = findBox(view, readBoxes(view, minf.start, minf.end), 'stbl');
+          if (!stbl) continue;
+          const stts = findBox(view, readBoxes(view, stbl.start, stbl.end), 'stts');
+          if (!stts) continue;
+          const entries = view.getUint32(stts.start + 4);
+          let samples = 0;
+          for (let index = 0; index < entries; index += 1) {
+            const at = stts.start + 8 + index * 8;
+            if (at + 8 > view.byteLength) break;
+            samples += view.getUint32(at);
+          }
+          if (!samples) continue;
+          const fps = snapFrameRate(samples / (duration / timescale));
+          if (fps) return fps;
+        }
+      } catch (error) {
+        return null;
+      }
+      return null;
+    };
+
     // ---------------- video viewer (clip marks and frame regions) ----------------
     const VIDEO_NATIVE = ['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov'];
     const videoExtOf = (path) => (/.([a-z0-9]+)$/i.exec(String(path || '')) || [, ''])[1].toLowerCase();
@@ -7066,31 +7191,67 @@ function SplitDivider(props) {
       return 'video/mp4';
     };
 
+    // A frame is the smallest unit the UI can point at, so every comparison is
+    // quantised through it first (float seconds would say "same place" wrong).
+    const quantizeTime = (time, fps) => {
+      const rate = Number(fps) > 0 ? Number(fps) : 30;
+      return Math.round((Number(time) || 0) * rate) / rate;
+    };
+
+    // What the mark button does depends only on the in/out pair.
+    const clipAction = (inPoint, outPoint, fps) => {
+      const rate = Number(fps) > 0 ? Number(fps) : 30;
+      const hasIn = inPoint !== null && inPoint !== undefined;
+      const hasOut = outPoint !== null && outPoint !== undefined;
+      if (hasIn && hasOut && Math.round((outPoint - inPoint) * rate) >= 1) {
+        return { kind: 'range', label: '标记区间', start: inPoint, end: outPoint };
+      }
+      if (hasIn) return { kind: 'point', label: '标记入点', start: inPoint, end: inPoint };
+      if (hasOut) return { kind: 'point', label: '标记出点', start: outPoint, end: outPoint };
+      return { kind: 'now', label: '标记此刻' };
+    };
+
+    // Zoom keeps the time under the cursor pinned while the window shrinks.
+    const zoomWindow = (start, span, duration, anchor, factor, minSpan) => {
+      const total = Number(duration) || 0;
+      if (!total) return { start: 0, span: Infinity };
+      const currentSpan = Math.min(total, Number.isFinite(span) ? Math.max(minSpan, span) : total);
+      const currentStart = Math.max(0, Math.min(total - currentSpan, Number(start) || 0));
+      const nextSpan = Math.min(total, Math.max(minSpan, currentSpan * factor));
+      if (nextSpan >= total - 1e-6) return { start: 0, span: Infinity };
+      const ratio = currentSpan > 0 ? (anchor - currentStart) / currentSpan : 0.5;
+      const nextStart = Math.max(0, Math.min(total - nextSpan, anchor - ratio * nextSpan));
+      return { start: nextStart, span: nextSpan };
+    };
+
     function VideoDoc(props) {
       const { doc, sessionId } = props;
       const native = VIDEO_NATIVE.includes(videoExtOf(doc.path));
-      // Two panes playing at once fight for the same speakers; only the focused
-      // half keeps the sound going.
       const focused = props.focused !== false;
       const [state, setState] = React.useState({ status: native ? 'loading' : 'unsupported', url: '', error: '' });
-      const [info, setInfo] = React.useState({ duration: 0, current: 0, playing: false, rate: 1 });
-      // A selection on the timeline being dragged right now.
+      const [info, setInfo] = React.useState({ duration: 0, current: 0, playing: false, rate: 1, fps: 30 });
+      // Timeline window: span is how many seconds the track shows (Infinity = all).
+      const [view, setView] = React.useState({ start: 0, span: Infinity });
       const [drag, setDrag] = React.useState(null);
-      // Scrubbing: hovering the track previews the frame without committing it.
-      const [hover, setHover] = React.useState(null);
-      const hoverBase = React.useRef(0);
-      const previewFrame = React.useRef(0);
-      const [timeDraft, setTimeDraft] = React.useState('');
       const [boxing, setBoxing] = React.useState(false);
       const [marquee, setMarquee] = React.useState(null);
-      // Hovering a region mark in the rail shows that box on the frame, the way
-      // the image viewer does, so "画面区域" is verifiable rather than a claim.
-      const hovered = useHoverMark(doc.path);
-      const hoverRegion = hovered && hovered.kind === 'video' && Array.isArray(hovered.rect) && hovered.rect.length === 4 ? hovered : null;
+      const [hover, setHover] = React.useState(null);
+      const [inPoint, setInPoint] = React.useState(null);
+      const [outPoint, setOutPoint] = React.useState(null);
+      const [menuAt, setMenuAt] = React.useState(null);
+      const [timeDraft, setTimeDraft] = React.useState('');
       const videoRef = React.useRef(null);
       const stageRef = React.useRef(null);
       const rootRef = React.useRef(null);
-      const seekRef = React.useRef(0);
+      const trackRef = React.useRef(null);
+      const hoverBase = React.useRef(0);
+      const previewFrame = React.useRef(0);
+      const pressRef = React.useRef(null);
+
+      // Hovering a region mark in the rail shows that box on the frame.
+      const hovered = useHoverMark(doc.path);
+      const hoverRegion =
+        hovered && hovered.kind === 'video' && Array.isArray(hovered.rect) && hovered.rect.length === 4 ? hovered : null;
 
       React.useEffect(() => {
         if (!native) return undefined;
@@ -7100,6 +7261,9 @@ function SplitDivider(props) {
         readBytesFile(sessionId, doc.path, undefined)
           .then((bytes) => {
             if (cancelled || !bytes) return;
+            // The container knows the frame rate even though the element does not.
+            const detected = probeMp4FrameRate(bytes);
+            if (detected) setInfo((current) => Object.assign({}, current, { fps: detected }));
             objectUrl = URL.createObjectURL(new Blob([bytes], { type: videoMimeOf(doc.path) }));
             setState({ status: 'ready', url: objectUrl, error: '' });
           })
@@ -7114,13 +7278,6 @@ function SplitDivider(props) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [doc.path, native]);
 
-      React.useEffect(() => {
-        if (focused) return;
-        const node = videoRef.current;
-        if (node && !node.paused) node.pause();
-      }, [focused]);
-
-      // The rail can jump to a moment; playhead follows the newest request.
       const seek = store.seek;
       React.useEffect(() => {
         if (!seek || !sameFile(seek.path, doc.path)) return;
@@ -7132,22 +7289,39 @@ function SplitDivider(props) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [seek && seek.stamp, doc.path]);
 
+      React.useEffect(() => {
+        if (focused) return;
+        const node = videoRef.current;
+        if (node && !node.paused) node.pause();
+      }, [focused]);
+
       const video = () => videoRef.current;
-      const play = () => {
-        const node = video();
-        if (!node) return;
-        if (node.paused) node.play().catch(() => {});
-        else node.pause();
+      const fps = info.fps || 30;
+      const frame = 1 / fps;
+      const quantize = (time) => quantizeTime(time, fps);
+
+      // ---- timeline window ----
+      const duration = info.duration || 0;
+      const fullSpan = duration || 1;
+      const minSpan = Math.max(frame * 2, Math.min(1, fullSpan));
+      const span = Math.min(fullSpan, Number.isFinite(view.span) ? Math.max(minSpan, view.span) : fullSpan);
+      const zoomed = span < fullSpan - 1e-6;
+      const viewStart = Math.max(0, Math.min(fullSpan - span, view.start));
+      const viewEnd = viewStart + span;
+
+      const timeToPercent = (time) => ((Math.max(viewStart, Math.min(viewEnd, time)) - viewStart) / span) * 100;
+      const timeFromClientX = (clientX) => {
+        const track = trackRef.current;
+        if (!track) return 0;
+        const rect = track.getBoundingClientRect();
+        const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / Math.max(1, rect.width)));
+        return viewStart + ratio * span;
       };
-      const step = (frames) => {
-        const node = video();
-        if (!node) return;
-        node.pause();
-        const delta = (frames * 1) / 30;
-        node.currentTime = Math.min(node.duration || 0, Math.max(0, node.currentTime + delta));
-        setInfo((current) => Object.assign({}, current, { current: node.currentTime }));
+
+      const zoomAt = (anchorTime, factor) => {
+        setView(zoomWindow(view.start, span, duration, anchorTime, factor, minSpan));
       };
-      // Preview seeks run on every pointer move, so they queue on one frame.
+
       const previewAt = (time) => {
         const node = video();
         if (!node) return;
@@ -7160,12 +7334,35 @@ function SplitDivider(props) {
           setInfo((current) => Object.assign({}, current, { current: node.currentTime }));
         });
       };
+      const cancelPreview = () => {
+        if (previewFrame.current) {
+          cancelAnimationFrame(previewFrame.current);
+          previewFrame.current = 0;
+        }
+      };
 
       const seekTo = (time) => {
         const node = video();
         if (!node) return;
+        cancelPreview();
         node.currentTime = Math.min(node.duration || 0, Math.max(0, time));
         setInfo((current) => Object.assign({}, current, { current: node.currentTime }));
+        // A committed move is the new resting place: leaving the track must not
+        // spring back to where the pointer happened to enter.
+        hoverBase.current = node.currentTime;
+      };
+
+      const play = () => {
+        const node = video();
+        if (!node) return;
+        if (node.paused) node.play().catch(() => {});
+        else node.pause();
+      };
+      const step = (frames) => {
+        const node = video();
+        if (!node) return;
+        node.pause();
+        seekTo(Math.min(node.duration || 0, Math.max(0, node.currentTime + frames * frame)));
       };
       const cycleRate = () => {
         const node = video();
@@ -7185,30 +7382,55 @@ function SplitDivider(props) {
         flash('已标注 ' + formatTime(from) + '–' + formatTime(to));
       };
 
-      const timeFromEvent = (event) => {
-        const node = video();
-        const track = event.currentTarget;
-        if (!node || !track) return 0;
-        const rect = track.getBoundingClientRect();
-        const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / Math.max(1, rect.width)));
-        return ratio * (info.duration || 0);
+      // ---- in / out points ----
+      const hasIn = inPoint !== null;
+      const hasOut = outPoint !== null;
+      const hasRange = clipAction(inPoint, outPoint, fps).kind === 'range';
+
+      const putIn = (time) => {
+        const next = quantize(time);
+        setInPoint(next);
+        // An in-point at or after the out-point would select backwards: drop the out.
+        if (hasOut && next >= outPoint) setOutPoint(null);
+      };
+      const putOut = (time) => {
+        const next = quantize(time);
+        setOutPoint(next);
+        if (hasIn && next <= inPoint) setInPoint(null);
       };
 
-      const onTrackDown = (event) => {
-        if (!info.duration) return;
-        event.preventDefault();
-        const time = timeFromEvent(event);
-        seekTo(time);
-        setDrag({ from: time, to: time });
-        event.currentTarget.setPointerCapture(event.pointerId);
+      const action = clipAction(inPoint, outPoint, fps);
+      const markButton = () => {
+        if (action.kind === 'now') {
+          addClip(info.current, info.current);
+          return;
+        }
+        addClip(action.start, action.end);
       };
+      const markLabel = action.label;
+
+      // ---- pointer handling ----
+      const onTrackDown = (event) => {
+        if (!duration) {
+          flash('视频时长还没读取出来，稍等一下再点');
+          return;
+        }
+        event.preventDefault();
+        setMenuAt(null);
+        cancelPreview();
+        const time = timeFromClientX(event.clientX);
+        seekTo(time);
+        pressRef.current = { clientX: event.clientX, time };
+        setDrag({ from: time, to: time, moved: false });
+        if (event.currentTarget.setPointerCapture) event.currentTarget.setPointerCapture(event.pointerId);
+      };
+
       const onTrackMove = (event) => {
-        const time = timeFromEvent(event);
+        const time = timeFromClientX(event.clientX);
         if (drag) {
-          setDrag({ from: drag.from, to: time });
-          // While selecting a range the frame follows the pointer, so the end of
-          // the clip is visible instead of guessed from a highlight band.
-          if (!info.playing) previewAt(time);
+          const moved = drag.moved || Math.abs(event.clientX - (pressRef.current ? pressRef.current.clientX : event.clientX)) > 4;
+          setDrag({ from: drag.from, to: time, moved });
+          if (moved && !info.playing) previewAt(time);
           return;
         }
         if (info.playing) return;
@@ -7216,25 +7438,47 @@ function SplitDivider(props) {
         setHover(time);
         previewAt(time);
       };
+
+      const onTrackUp = (event) => {
+        if (!drag) return;
+        const time = timeFromClientX(event.clientX);
+        const start = Math.min(drag.from, time);
+        const end = Math.max(drag.from, time);
+        const moved = drag.moved || Math.abs(event.clientX - (pressRef.current ? pressRef.current.clientX : event.clientX)) > 4;
+        setDrag(null);
+        pressRef.current = null;
+        if (!moved) {
+          // A click only moves the playhead; it must not create a clip.
+          seekTo(time);
+          setHover(null);
+          return;
+        }
+        addClip(start, end);
+        // Land on where the pointer was released so the selection end is visible.
+        seekTo(time);
+        setHover(null);
+      };
+
       const onTrackLeave = () => {
         if (drag) return;
         if (hover === null) return;
         setHover(null);
-        // Leaving the track returns the preview to where the playhead really was.
         previewAt(hoverBase.current);
       };
-      const onTrackUp = (event) => {
-        if (!drag) return;
-        const time = timeFromEvent(event);
-        const start = Math.min(drag.from, time);
-        const end = Math.max(drag.from, time);
-        setDrag(null);
-        // A click without a drag sets a single moment instead of a range.
-        if (end - start < 0.2) {
-          seekTo(start);
-          return;
-        }
-        addClip(start, end);
+
+      // Alt+wheel zooms the timeline around the pointer; the same gesture
+      // (reversed) collapses it back to the whole clip.
+      const onTrackWheel = (event) => {
+        if (!event.altKey || !duration) return;
+        event.preventDefault();
+        const anchor = timeFromClientX(event.clientX);
+        zoomAt(anchor, event.deltaY < 0 ? 1 / 1.4 : 1.4);
+      };
+
+      const onTrackMenu = (event) => {
+        if (!duration) return;
+        event.preventDefault();
+        setMenuAt({ x: event.clientX, y: event.clientY });
       };
 
       const onStageDown = (event) => {
@@ -7248,7 +7492,7 @@ function SplitDivider(props) {
           y: (event.clientY - rect.top) / Math.max(1, rect.height),
         };
         setMarquee({ x0: point.x, y0: point.y, x1: point.x, y1: point.y });
-        event.currentTarget.setPointerCapture(event.pointerId);
+        if (event.currentTarget.setPointerCapture) event.currentTarget.setPointerCapture(event.pointerId);
       };
       const onStageMove = (event) => {
         if (!marquee) return;
@@ -7267,9 +7511,24 @@ function SplitDivider(props) {
         const h = Math.abs(marquee.y1 - marquee.y0);
         setMarquee(null);
         if (w < 0.02 || h < 0.02) return;
-        addClip(info.current, info.current, [Math.round(x * 1000) / 1000, Math.round(y * 1000) / 1000, Math.round(w * 1000) / 1000, Math.round(h * 1000) / 1000]);
+        addClip(
+          info.current,
+          info.current,
+          [Math.round(x * 1000) / 1000, Math.round(y * 1000) / 1000, Math.round(w * 1000) / 1000, Math.round(h * 1000) / 1000],
+        );
         setBoxing(false);
       };
+
+      React.useEffect(() => {
+        if (!menuAt) return undefined;
+        const onDown = (event) => {
+          const target = event.target;
+          if (target && typeof target.closest === 'function' && target.closest('.dshcv-videomenu')) return;
+          setMenuAt(null);
+        };
+        window.addEventListener('pointerdown', onDown, true);
+        return () => window.removeEventListener('pointerdown', onDown, true);
+      }, [menuAt]);
 
       React.useEffect(() => {
         const onKey = (event) => {
@@ -7281,15 +7540,25 @@ function SplitDivider(props) {
           }
           if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
             event.preventDefault();
-            const direction = event.key === 'ArrowRight' ? 1 : -1;
-            if (event.shiftKey) seekTo(info.current + direction);
-            else step(direction);
+            step(event.key === 'ArrowRight' ? 1 : -1);
+            return;
           }
+          if (event.key === 'i' || event.key === 'I') {
+            event.preventDefault();
+            putIn(info.current);
+            return;
+          }
+          if (event.key === 'o' || event.key === 'O') {
+            event.preventDefault();
+            putOut(info.current);
+            return;
+          }
+          if (event.key === 'Escape' && menuAt) setMenuAt(null);
         };
         window.addEventListener('keydown', onKey, true);
         return () => window.removeEventListener('keydown', onKey, true);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-      }, [info.current, info.duration]);
+      }, [info.current, info.duration, info.playing, menuAt, inPoint, outPoint, span, viewStart]);
 
       if (state.status === 'unsupported') {
         return h(
@@ -7306,9 +7575,21 @@ function SplitDivider(props) {
         return h('div', { className: 'dshcv-empty' }, h('div', null, '加载中…'));
       }
 
-      const ratio = info.duration ? Math.min(1, info.current / info.duration) : 0;
-      const bandFrom = drag ? Math.min(drag.from, drag.to) / (info.duration || 1) : 0;
-      const bandTo = drag ? Math.max(drag.from, drag.to) / (info.duration || 1) : 0;
+      const ratio = duration ? Math.min(1, info.current / duration) : 0;
+      const headPercent = timeToPercent(info.current);
+      const bandFrom = drag && drag.moved ? timeToPercent(Math.min(drag.from, drag.to)) : 0;
+      const bandTo = drag && drag.moved ? timeToPercent(Math.max(drag.from, drag.to)) : 0;
+
+      // Tick marks: whole seconds while zoomed, single frames at the deepest zoom.
+      const ticks = [];
+      if (zoomed) {
+        const frameTicks = span <= 1.5;
+        const stepSize = frameTicks ? frame : Math.max(0.5, Math.round(span / 10 / 0.5) * 0.5);
+        const first = Math.ceil(viewStart / stepSize) * stepSize;
+        for (let time = first; time <= viewEnd + 1e-6; time += stepSize) {
+          ticks.push({ time, major: !frameTicks ? Math.abs(time - Math.round(time)) < 1e-6 : Math.abs(time - Math.round(time)) < 1e-6 });
+        }
+      }
 
       return h(
         'div',
@@ -7330,6 +7611,23 @@ function SplitDivider(props) {
             onLoadedMetadata: (event) => {
               const node = event.currentTarget;
               setInfo((current) => Object.assign({}, current, { duration: Number(node.duration) || 0 }));
+              // Fallback when the container has no parseable frame rate.
+              if (typeof node.requestVideoFrameCallback !== 'function') return;
+              let first = null;
+              let count = 0;
+              const sample = (now, meta) => {
+                if (!first) first = { media: Number(meta.mediaTime) || 0, frames: Number(meta.presentedFrames) || 0 };
+                count += 1;
+                const elapsed = (Number(meta.mediaTime) || 0) - first.media;
+                const presented = (Number(meta.presentedFrames) || 0) - first.frames;
+                if (elapsed >= 0.8 && presented > 4) {
+                  const measured = snapFrameRate(presented / elapsed);
+                  if (measured) setInfo((current) => Object.assign({}, current, { fps: measured }));
+                  return;
+                }
+                if (count < 240) node.requestVideoFrameCallback(sample);
+              };
+              node.requestVideoFrameCallback(sample);
             },
             onTimeUpdate: (event) => {
               const node = event.currentTarget;
@@ -7395,8 +7693,8 @@ function SplitDivider(props) {
                 flash('时间格式不对：试试 12.4、01:23.4 或 01:02:03.5');
                 return;
               }
-              if (info.duration && target > info.duration + 0.05) {
-                flash('超出片长：最长 ' + formatTime(info.duration));
+              if (duration && target > duration + 0.05) {
+                flash('超出片长：最长 ' + formatTime(duration));
                 return;
               }
               seekTo(target);
@@ -7404,7 +7702,7 @@ function SplitDivider(props) {
               event.currentTarget.blur();
             },
           }),
-          h('span', { className: 'dshcv-videotime' }, formatTime(info.current) + ' / ' + formatTime(info.duration)),
+          h('span', { className: 'dshcv-videotime' }, '/ ' + formatTime(duration)),
           h('span', { style: { flex: '1 1 auto' } }),
           h(
             'button',
@@ -7421,51 +7719,128 @@ function SplitDivider(props) {
             },
             '框选画面',
           ),
-          h('button', { type: 'button', className: 'dshcv-btn', 'data-kind': 'default', title: '给当前时刻打点', onClick: () => addClip(info.current, info.current) }, '标记此刻'),
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'dshcv-btn',
+              'data-kind': hasRange ? 'primary' : 'default',
+              title: hasRange ? '用入点与出点生成区间标注' : hasIn ? '在入点处打点' : hasOut ? '在出点处打点' : '在当前位置打点',
+              onClick: markButton,
+            },
+            markLabel,
+          ),
         ),
         h(
           'div',
           {
+            ref: trackRef,
             className: 'dshcv-track',
+            'data-zoomed': zoomed ? '1' : '0',
+            'data-frame': zoomed && span <= 1.5 ? '1' : '0',
             onPointerDown: onTrackDown,
             onPointerMove: onTrackMove,
             onPointerUp: onTrackUp,
             onPointerLeave: onTrackLeave,
-            'data-scrub': drag ? drag.from.toFixed(1) + '→' + (drag.to || 0).toFixed(1) : '',
+            onWheel: onTrackWheel,
+            onContextMenu: onTrackMenu,
           },
-          h('div', { className: 'dshcv-trackfill', style: { width: ratio * 100 + '%' } }),
-          h('div', {
-            className: 'dshcv-trackhead',
-            style: { left: ratio * 100 + '%' },
-          }),
+          h('div', { className: 'dshcv-trackfill', style: { width: headPercent + '%' } }),
+          inPoint !== null ? h('div', { className: 'dshcv-inmark', style: { left: timeToPercent(inPoint) + '%' }, title: '入点 ' + formatTime(inPoint) }) : null,
+          outPoint !== null ? h('div', { className: 'dshcv-outmark', style: { left: timeToPercent(outPoint) + '%' }, title: '出点 ' + formatTime(outPoint) }) : null,
+          hasRange
+            ? h('div', {
+                className: 'dshcv-inoutband',
+                style: { left: timeToPercent(inPoint) + '%', width: timeToPercent(outPoint) - timeToPercent(inPoint) + '%' },
+              })
+            : null,
+          ticks.map((tick) =>
+            h('div', {
+              key: 'tick' + tick.time.toFixed(3),
+              className: 'dshcv-tick' + (tick.major ? ' dshcv-tickmajor' : ''),
+              style: { left: timeToPercent(tick.time) + '%' },
+            }),
+          ),
+          h('div', { className: 'dshcv-trackhead', style: { left: headPercent + '%' } }),
           hover !== null || drag
             ? h(
                 'div',
                 {
                   className: 'dshcv-tracktip',
-                  style: {
-                    left:
-                      ((drag ? drag.to : hover || 0) / Math.max(0.001, info.duration || 1)) * 100 + '%',
-                  },
+                  style: { left: timeToPercent(drag ? drag.to : hover || 0) + '%' },
                 },
-                drag
+                drag && drag.moved
                   ? formatTime(Math.min(drag.from, drag.to)) +
                       '–' +
                       formatTime(Math.max(drag.from, drag.to)) +
                       ' · ' +
                       Math.abs(drag.to - drag.from).toFixed(1) +
                       's'
-                  : formatTime(hover || 0),
+                  : formatTime(drag ? drag.to : hover || 0),
               )
             : null,
           drag && bandTo > bandFrom
             ? h('div', {
                 className: 'dshcv-trackband',
-                style: { left: bandFrom * 100 + '%', width: (bandTo - bandFrom) * 100 + '%' },
+                style: { left: bandFrom + '%', width: bandTo - bandFrom + '%' },
               })
             : null,
         ),
-        h('div', { className: 'dshcv-videohint' }, '拖动进度条选择时间段 → 生成一条标注；点进度条可跳转，单击不拖则只打点。'),
+        h(
+          'div',
+          { className: 'dshcv-videohint' },
+          zoomed
+            ? '窗口 ' + formatTime(viewStart) + '–' + formatTime(viewEnd) + '（' + (span <= 1.5 ? '帧级' : span.toFixed(1) + 's') + '）· Alt+滚轮 继续缩放或收回'
+            : '拖动选段 → 标注区间；单击跳转；右键插入入/出点；Alt+滚轮 放大时间轴',
+        ),
+        menuAt
+          ? h(
+              'div',
+              {
+                className: 'dshcv-videomenu',
+                style: { left: Math.max(8, menuAt.x - 120) + 'px', top: menuAt.y + 6 + 'px' },
+              },
+              h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'dshcv-menuitem',
+                  onClick: () => {
+                    putIn(info.current);
+                    setMenuAt(null);
+                  },
+                },
+                '插入入点（' + formatTime(info.current) + '）',
+              ),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'dshcv-menuitem',
+                  onClick: () => {
+                    putOut(info.current);
+                    setMenuAt(null);
+                  },
+                },
+                '插入出点（' + formatTime(info.current) + '）',
+              ),
+              h('div', { className: 'dshcv-menurule' }),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'dshcv-menuitem',
+                  disabled: !hasIn && !hasOut,
+                  onClick: () => {
+                    setInPoint(null);
+                    setOutPoint(null);
+                    setMenuAt(null);
+                  },
+                },
+                '清除入出点',
+              ),
+            )
+          : null,
       );
     }
 

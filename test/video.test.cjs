@@ -85,10 +85,10 @@ check(/浏览器无法直接播放 \./.test(src), '不可播格式给出明确�
 check(/可播放 mp4 \/ webm \/ mov \/ m4v \/ ogv/.test(src), '提示里列出可播格式');
 check(/const addClip = \(start, end, rect\) => \{/.test(src), '有创建区间标注的函数');
 check(/addClip\(start, end\);/.test(src), '拖动进度条生成区间标注');
-check(/if \(end - start < 0\.2\) \{/.test(src), '单击不拖只打点');
+check(/if \(!moved\) \{/.test(src), '单击（未超过 4px）只跳转，不生成标注');
 check(/kind: 'video', path: doc\.path, start: from, end: to/.test(src), '标注写入 kind/start/end');
-check(/addClip\(info\.current, info\.current, \[/.test(src), '框选写入画面区域与时间点');
-check(/node\.currentTime = \(frames \* 1\) \/ 30;|\(frames \* 1\) \/ 30/.test(src), '逐帧步进按 1/30 秒');
+check(/addClip\(\s*info\.current,\s*info\.current,/.test(src), '框选写入画面区域与时间点');
+check(/node\.currentTime \+ frames \* frame/.test(src), '逐帧步进按探测到的帧率');
 check(/const rates = \[1, 1\.5, 2, 0\.5\]/.test(src), '倍速循环');
 check(/if \(!seek \|\| !sameFile\(seek\.path, doc\.path\)\) return;/.test(src), '跳转按文件区分');
 check(/max-width:100%;max-height:100%;display:block;cursor:pointer/.test(src), '视频保持比例（letterbox）');
@@ -102,7 +102,7 @@ check(/const focused = props\.focused !== false;/.test(src), '未传 focused 时
 check(/if \(focused\) return;\s*\n\s*const node = videoRef\.current;\s*\n\s*if \(node && !node\.paused\) node\.pause\(\);/.test(src), '失去焦点时自动暂停');
 
 // —— 区域框在画面上可见 ——
-check(/const hoverRegion = hovered && hovered\.kind === 'video' && Array\.isArray\(hovered\.rect\)/.test(src), '悬停区域标注时取其矩形');
+check(/hovered && hovered\.kind === 'video' && Array\.isArray\(hovered\.rect\)/.test(src), '悬停区域标注时取其矩形');
 check(/className: 'dshcv-regionbox'/.test(src), '画面上绘制区域框');
 check(/left: hoverRegion\.rect\[0\] \* 100 \+ '%'/.test(src), '按归一化坐标定位');
 check(/\.dshcv-regionbox\{position:absolute;border:1\.5px solid/.test(src), '区域框有描边样式');
@@ -112,7 +112,7 @@ check(/hoverRegion && !marquee/.test(src), '框选进行中不画旧的区域');
 check(/'播放' : '暂停'|info\.playing \? '暂停' : '播放'/.test(src), '有播放/暂停按钮');
 check(/'−1f'/.test(src) && /'\+1f'/.test(src), '有逐帧步进按钮');
 check(/info\.rate \+ '×'/.test(src), '有倍速按钮');
-check(/formatTime\(info\.current\) \+ ' \/ ' \+ formatTime\(info\.duration\)/.test(src), '显示当前时间 / 总时长');
+check(/'\/ ' \+ formatTime\(duration\)/.test(src), '总时长作为纯展示跟在输入框后');
 check(/'框选画面'/.test(src), '有框选开关');
 check(/'标记此刻'/.test(src), '有单点标注按钮');
 check(/className: 'dshcv-track'/.test(src), '有进度条');
@@ -150,7 +150,7 @@ check(/previewFrame\.current = requestAnimationFrame/.test(src), '预览按帧�
 check(/if \(info\.playing\) return;\s*\n\s*if \(hover === null\) hoverBase\.current = info\.current;/.test(src), '播放中不预览');
 check(/setHover\(time\);\s*\n\s*previewAt\(time\);/.test(src), '悬停时间轴即切换预览画面');
 check(/previewAt\(hoverBase\.current\);/.test(src), '移出轨道恢复原位置');
-check(/if \(!info\.playing\) previewAt\(time\);/.test(src), '拖动选区时同步预览终点');
+check(/if \(moved && !info\.playing\) previewAt\(time\);/.test(src), '拖动选区时同步预览终点');
 check(/className: 'dshcv-tracktip'/.test(src), '拖动/悬停显示时间提示');
 check(/Math\.abs\(drag\.to - drag\.from\)\.toFixed\(1\)/.test(src), '提示里显示选区时长');
 check(/onPointerLeave: onTrackLeave/.test(src), '轨道监听移出');
