@@ -97,12 +97,8 @@
           const measure = document.createElement("canvas").getContext("2d");
           const spans = [];
           const rawItems = content.items || [];
-          let bucket = inkWidthCache.get(pdf);
-          if (!bucket) {
-            bucket = new Map();
-            inkWidthCache.set(pdf, bucket);
-          }
-          for (let index = 0; index < rawItems.length; index += 1) {
+
+for (let index = 0; index < rawItems.length; index += 1) {
             const item = rawItems[index];
             if (!item || typeof item.str !== "string" || !item.str.trim()) continue;
             const transform = Util.transform(viewport.transform, item.transform);
@@ -119,51 +115,9 @@
             });
           }
           
-          // A run is as wide as the PDF says, and those widths are sometimes a few percent
-          // short of the glyphs actually drawn, which accumulates along the line. Each
-          // line is therefore measured against its own ink once, and every run on it is
-          // scaled by that ratio: one correction instead of one per glyph.
-          if (spans.length && buffer.width) {
-            const ratio = Math.min(3, window.devicePixelRatio || 1);
-            const groups = new Map();
-            for (const span of spans) {
-              const key = Math.round(span.baseline) + ":" + Math.round(span.fontHeight);
-              if (!groups.has(key)) groups.set(key, []);
-              groups.get(key).push(span);
-            }
-            let pixels = null;
-            for (const [key, group] of groups) {
-              let factor = bucket.get(key);
-              if (factor === undefined) {
-                const first = group.reduce((a, b) => (b.left < a.left ? b : a));
-                const last = group.reduce((a, b) => (b.left + b.width > a.left + a.width ? b : a));
-                const declaredSpan = last.left + last.width - first.left;
-                let inkRight = 0;
-                if (declaredSpan > 0.5) {
-                  if (!pixels) pixels = bufferCtx.getImageData(0, 0, buffer.width, buffer.height);
-                  const x0 = Math.max(0, Math.floor(first.left * ratio));
-                  const x1 = Math.min(pixels.width, Math.ceil((first.left + declaredSpan * 1.5) * ratio));
-                  const y0 = Math.max(0, Math.floor((first.top - first.fontHeight * 0.4) * ratio));
-                  const y1 = Math.min(pixels.height, Math.ceil((first.top + first.fontHeight * 1.4) * ratio));
-                  if (x1 > x0 && y1 > y0) {
-                    const right = measureInkRight(pixels.data, pixels.width, x0, x1, y0, y1);
-                    if (right >= 0) inkRight = right / ratio;
-                  }
-                }
-                // Never shrink a line: a loose scan (or a neighbour) may read too far,
-                // but a short reading would hide real glyphs. Clamp to a sane range.
-                factor = 1;
-                if (inkRight > 0) {
-                  const measured = (inkRight - first.left) / declaredSpan;
-                  if (measured > 1) factor = Math.min(1.25, measured);
-                }
-                bucket.set(key, factor);
-              }
-              if (factor !== 1) {
-                for (const span of group) span.width *= factor;
-              }
-            }
-          }
+// Run widths come straight from the PDF. An ink-based widening was tried and
+// removed: the declared advances already match the drawn glyphs, and a loose
+// scan of a busy page could inflate a whole line by up to 25%.
           
           // One span per glyph, exactly like a CJK document: every character carries its own
           // position, so a width error stays local instead of accumulating along the line.
@@ -286,7 +240,7 @@
           if (!keepIfLost) {
             setLive([]);
             // The toolbar button is parent state, so it has to be told as well.
-            if (onClear) onClear();
+            if (onClear) onClear(pageNumber);
           }
           return;
         }
@@ -295,7 +249,7 @@
           if (!keepIfLost) {
             setLive([]);
             // The toolbar button is parent state, so it has to be told as well.
-            if (onClear) onClear();
+            if (onClear) onClear(pageNumber);
           }
           return;
         }
@@ -308,7 +262,7 @@
           if (!keepIfLost) {
             setLive([]);
             // The toolbar button is parent state, so it has to be told as well.
-            if (onClear) onClear();
+            if (onClear) onClear(pageNumber);
           }
           return;
         }

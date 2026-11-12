@@ -22,8 +22,8 @@ check(
   '仍按测量结果做横向缩放',
 );
 check(!page.includes("overflow: 'hidden',"), '不再裁剪（避免切掉最后一个字形）');
-check(src.includes('const inkWidthCache = new WeakMap();'), '实测结果按文档缓存');
-check(page.includes('if (measured > 1) factor = Math.min(1.25, measured);'), '偏小时整行放大');
+check(!src.includes('inkWidthCache'), '不再做墨迹缓存');
+check(!page.includes('factor = Math.min(1.25'), '不再按行放大');
 check(page.includes("width: item.layoutWidth ? item.layoutWidth + 'px' : undefined,"), "span 使用反算宽度");
 
 if (failures) {

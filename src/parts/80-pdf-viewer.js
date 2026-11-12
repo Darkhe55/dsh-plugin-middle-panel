@@ -479,7 +479,7 @@
                       markMode,
                       onRegion,
                       onSelect,
-                      onClear: () => setSelection(null),
+                      onClear: (pageNumber) => setSelection((now) => (now && now.page === pageNumber ? null : now)),
                       onVisible,
                       registerEl,
                       pageHits: pagesOfHits.get(pageNumber) || [],

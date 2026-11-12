@@ -4046,21 +4046,6 @@ cumulative.push(running);
 if (!(running > 0)) return null;
 return { cumulative, total: running, chars };
 };
-const inkWidthCache = new WeakMap();
-const measureInkRight = (data, dataWidth, x0, x1, y0, y1) => {
-let right = -1;
-for (let y = y0; y < y1; y += 1) {
-const row = y * dataWidth;
-for (let x = x1 - 1; x >= x0; x -= 1) {
-const at = (row + x) * 4;
-if (data[at + 3] < 8) continue;
-if (data[at] > 245 && data[at + 1] > 245 && data[at + 2] > 245) continue;
-if (x > right) right = x;
-break;
-}
-}
-return right;
-};
 function PdfPage(props) {
 const {
 pdf,
@@ -4153,11 +4138,6 @@ return;
 const measure = document.createElement("canvas").getContext("2d");
 const spans = [];
 const rawItems = content.items || [];
-let bucket = inkWidthCache.get(pdf);
-if (!bucket) {
-bucket = new Map();
-inkWidthCache.set(pdf, bucket);
-}
 for (let index = 0; index < rawItems.length; index += 1) {
 const item = rawItems[index];
 if (!item || typeof item.str !== "string" || !item.str.trim()) continue;
@@ -4173,45 +4153,6 @@ baseline: transform[5],
 fontHeight,
 width: declared,
 });
-}
-if (spans.length && buffer.width) {
-const ratio = Math.min(3, window.devicePixelRatio || 1);
-const groups = new Map();
-for (const span of spans) {
-const key = Math.round(span.baseline) + ":" + Math.round(span.fontHeight);
-if (!groups.has(key)) groups.set(key, []);
-groups.get(key).push(span);
-}
-let pixels = null;
-for (const [key, group] of groups) {
-let factor = bucket.get(key);
-if (factor === undefined) {
-const first = group.reduce((a, b) => (b.left < a.left ? b : a));
-const last = group.reduce((a, b) => (b.left + b.width > a.left + a.width ? b : a));
-const declaredSpan = last.left + last.width - first.left;
-let inkRight = 0;
-if (declaredSpan > 0.5) {
-if (!pixels) pixels = bufferCtx.getImageData(0, 0, buffer.width, buffer.height);
-const x0 = Math.max(0, Math.floor(first.left * ratio));
-const x1 = Math.min(pixels.width, Math.ceil((first.left + declaredSpan * 1.5) * ratio));
-const y0 = Math.max(0, Math.floor((first.top - first.fontHeight * 0.4) * ratio));
-const y1 = Math.min(pixels.height, Math.ceil((first.top + first.fontHeight * 1.4) * ratio));
-if (x1 > x0 && y1 > y0) {
-const right = measureInkRight(pixels.data, pixels.width, x0, x1, y0, y1);
-if (right >= 0) inkRight = right / ratio;
-}
-}
-factor = 1;
-if (inkRight > 0) {
-const measured = (inkRight - first.left) / declaredSpan;
-if (measured > 1) factor = Math.min(1.25, measured);
-}
-bucket.set(key, factor);
-}
-if (factor !== 1) {
-for (const span of group) span.width *= factor;
-}
-}
 }
 const glyphs = [];
 for (const span of spans) {
@@ -4314,7 +4255,7 @@ const active = window.getSelection ? window.getSelection() : null;
 if (!wrap || !active || !active.rangeCount || active.isCollapsed) {
 if (!keepIfLost) {
 setLive([]);
-if (onClear) onClear();
+if (onClear) onClear(pageNumber);
 }
 return;
 }
@@ -4322,7 +4263,7 @@ const range = active.getRangeAt(0);
 if (!range || !wrap.contains(range.commonAncestorContainer)) {
 if (!keepIfLost) {
 setLive([]);
-if (onClear) onClear();
+if (onClear) onClear(pageNumber);
 }
 return;
 }
@@ -4334,7 +4275,7 @@ const rects = Array.from(range.getClientRects()).filter(
 if (!rects.length) {
 if (!keepIfLost) {
 setLive([]);
-if (onClear) onClear();
+if (onClear) onClear(pageNumber);
 }
 return;
 }
@@ -4974,7 +4915,7 @@ baseSize: pageSizes[pageNumber] || baseSize,
 markMode,
 onRegion,
 onSelect,
-onClear: () => setSelection(null),
+onClear: (pageNumber) => setSelection((now) => (now && now.page === pageNumber ? null : now)),
 onVisible,
 registerEl,
 pageHits: pagesOfHits.get(pageNumber) || [],
