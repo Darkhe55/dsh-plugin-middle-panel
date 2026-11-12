@@ -305,9 +305,16 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
       // its human-readable locator.
       if (left.kind === 'spot') return left.label === right.label;
       if (left.kind === 'region') {
+        if (Boolean(left.norm) !== Boolean(right.norm)) return false;
+        if (left.norm && Number(left.page || 0) !== Number(right.page || 0)) return false;
         const a = left.rect || [];
         const b = right.rect || [];
-        return a.length === b.length && a.every((value, index) => Math.abs(Number(value) - Number(b[index])) <= 2);
+        // Normalised rectangles (0..1) need a proportional tolerance; pixels use 2px.
+        const tolerance = left.norm ? 0.01 : 2;
+        return (
+          a.length === b.length &&
+          a.every((value, index) => Math.abs(Number(value) - Number(b[index])) <= tolerance)
+        );
       }
       return false;
     };
@@ -703,7 +710,13 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
                 ? '图层 `' + mark.selector + '`'
                 : mark.kind === 'video'
 ? timeLabel(mark) + (Array.isArray(mark.rect) ? ' · 画面区域' : '')
-: '区域 (' + (mark.rect || []).join(', ') + ')';
+  : mark.norm && Array.isArray(mark.rect)
+    ? (mark.page ? '第 ' + mark.page + ' 页 · ' : '') +
+      Math.round(mark.rect[2] * 100) +
+      '% × ' +
+      Math.round(mark.rect[3] * 100) +
+      '%'
+    : '区域 (' + (mark.rect || []).join(', ') + ')';
 
     const markToBlock = (mark) => {
       const lines = [mark.n + '. `' + mark.path + '` — ' + markWhere(mark)];
@@ -996,6 +1009,10 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
       '.dshcv-trackhead{position:absolute;top:-2px;bottom:-2px;width:2px;margin-left:-1px;background:var(--dsw-alias-brand-primary)}',
       '.dshcv-markband{position:absolute;top:-1px;bottom:-1px;background:rgba(79,140,255,.22);box-shadow:0 0 10px rgba(79,140,255,.55),inset 0 0 6px rgba(79,140,255,.35);pointer-events:none;border-radius:3px}',
       '.dshcv-markhead{position:absolute;top:-3px;bottom:-3px;width:2px;margin-left:-1px;background:rgba(79,140,255,.95);box-shadow:0 0 8px rgba(79,140,255,.85);pointer-events:none}',
+    '.dshcv-pdflayer{position:absolute;inset:0;cursor:crosshair;touch-action:none}',
+    '.dshcv-pdflayer:not(.dshcv-pdflayer-on){cursor:default}',
+    '.dshcv-pdfmarquee{position:absolute;border:1.5px solid rgba(79,140,255,.95);background:rgba(79,140,255,.16);box-shadow:0 0 10px rgba(79,140,255,.45);pointer-events:none;border-radius:2px}',
+    '.dshcv-pdfregion{position:absolute;border:1.5px dashed rgba(79,140,255,.9);background:rgba(79,140,255,.10);box-shadow:0 0 12px rgba(79,140,255,.5);pointer-events:none;border-radius:2px}',
       '.dshcv-hoverhead{position:absolute;top:-2px;bottom:-2px;width:0;margin-left:-0.5px;border-left:1px dashed rgba(79,140,255,.85);pointer-events:none}',
       '.dshcv-trackband{position:absolute;top:0;bottom:0;background:rgba(79,140,255,.35);border-left:1px solid rgba(79,140,255,.8);border-right:1px solid rgba(79,140,255,.8)}',
       '.dshcv-tracktip{position:absolute;bottom:calc(100% + 6px);transform:translateX(-50%);background:#0f1115;color:#fff;font:11px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;padding:3px 7px;border-radius:6px;white-space:nowrap;pointer-events:none;font-variant-numeric:tabular-nums}',
@@ -4119,6 +4136,82 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
       const { doc, sessionId } = props;
       const [state, setState] = React.useState({ status: 'idle', url: '', size: 0, error: '', pages: 0 });
       const [page, setPage] = React.useState(1);
+      // The embedded PDF runs in a plugin process, so its clicks never reach us.
+      // A capture layer over it, switched on demand, is how a region gets picked.
+      const [markMode, setMarkMode] = React.useState(false);
+      const [drag, setDrag] = React.useState(null);
+      const layerRef = React.useRef(null);
+      const pressRef = React.useRef(null);
+      const hovered = useHoverMark(doc.path);
+      const hoverRegion =
+        hovered &&
+        hovered.kind === 'region' &&
+        hovered.norm &&
+        Array.isArray(hovered.rect) &&
+        hovered.page === page
+          ? hovered.rect
+          : null;
+      const hoverPage =
+        hovered && hovered.kind === 'region' && hovered.norm && hovered.page !== page ? hovered.page : 0;
+      const ratioOf = (event) => {
+        const box = layerRef.current;
+        if (!box) return null;
+        const rect = box.getBoundingClientRect();
+        if (!rect.width || !rect.height) return null;
+        return {
+          x: Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)),
+          y: Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height)),
+        };
+      };
+
+      const onLayerDown = (event) => {
+        if (event.button !== 0) return;
+        const at = ratioOf(event);
+        if (!at) return;
+        event.preventDefault();
+        pressRef.current = at;
+        setDrag({ from: at, to: at });
+        try {
+          event.currentTarget.setPointerCapture(event.pointerId);
+        } catch (error) {
+          /* capture is a nicety */
+        }
+      };
+
+      const onLayerMove = (event) => {
+        if (!pressRef.current) return;
+        const at = ratioOf(event);
+        if (!at) return;
+        setDrag({ from: pressRef.current, to: at });
+      };
+
+      const onLayerUp = (event) => {
+        const from = pressRef.current;
+        pressRef.current = null;
+        const box = drag;
+        setDrag(null);
+        if (!from || !box) return;
+        const at = ratioOf(event) || box.to;
+        const x = Math.min(from.x, at.x);
+        const y = Math.min(from.y, at.y);
+        const w = Math.abs(at.x - from.x);
+        const h = Math.abs(at.y - from.y);
+        // A stray click is not a region.
+        if (w * h < 0.0008) return;
+        addMark({
+          kind: 'region',
+          path: doc.path,
+          page,
+          norm: true,
+          rect: [
+            Math.round(x * 10000) / 10000,
+            Math.round(y * 10000) / 10000,
+            Math.round(w * 10000) / 10000,
+            Math.round(h * 10000) / 10000,
+          ],
+          quote: '第 ' + page + ' 页区域',
+        });
+      };
       React.useEffect(() => {
         if (!sessionId) return undefined;
         const controller = new AbortController();
@@ -4195,15 +4288,76 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
             },
             '标记整份文档',
           ),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'dshcv-btn',
+                  'data-kind': markMode ? 'primary' : 'quiet',
+                  'aria-pressed': markMode,
+                  title: markMode ? '退出框选，恢复滚动' : '在页面上拖出一块区域并标注',
+                  onClick: () => {
+                    setMarkMode((on) => !on);
+                    setDrag(null);
+                    pressRef.current = null;
+                  },
+                },
+                markMode ? '退出框选' : '框选标注',
+              ),
         ),
         h(
-          FitStage,
-          { enabled: props.fit, designWidth: 900 },
-          h('iframe', {
-            title: 'canvas pdf preview',
-            src: state.url,
-            style: { flex: '1 1 auto', width: '100%', height: '100%', border: '0', background: '#fff' },
+          'div',
+          {
+            style: { position: 'relative', flex: '1 1 auto', minHeight: 0, display: 'flex' },
+          },
+          h(
+            FitStage,
+            { enabled: props.fit, designWidth: 900 },
+            h('iframe', {
+              title: 'canvas pdf preview',
+              src: state.url,
+              style: { flex: '1 1 auto', width: '100%', height: '100%', border: '0', background: '#fff' },
+            }),
+          ),
+          hoverRegion
+            ? h('div', {
+              className: 'dshcv-pdfregion',
+              style: {
+                left: hoverRegion[0] * 100 + '%',
+                top: hoverRegion[1] * 100 + '%',
+                width: hoverRegion[2] * 100 + '%',
+                height: hoverRegion[3] * 100 + '%',
+              },
+            })
+            : null,
+          drag
+            ? h('div', {
+              className: 'dshcv-pdfmarquee',
+              style: {
+                left: Math.min(drag.from.x, drag.to.x) * 100 + '%',
+                top: Math.min(drag.from.y, drag.to.y) * 100 + '%',
+                width: Math.abs(drag.to.x - drag.from.x) * 100 + '%',
+                height: Math.abs(drag.to.y - drag.from.y) * 100 + '%',
+              },
+            })
+            : null,
+          h('div', {
+            ref: layerRef,
+            className: markMode ? 'dshcv-pdflayer dshcv-pdflayer-on' : 'dshcv-pdflayer',
+            style: { pointerEvents: markMode ? 'auto' : 'none' },
+            onPointerDown: onLayerDown,
+            onPointerMove: onLayerMove,
+            onPointerUp: onLayerUp,
+            onPointerCancel: onLayerUp,
           }),
+          markMode
+            ? h(
+              'div',
+              { className: 'dshcv-msg', style: { position: 'absolute', left: 10, bottom: 8, padding: '2px 8px', background: 'rgba(0,0,0,.55)', color: '#fff', borderRadius: 6 } },
+              '拖出一块区域即可标注；框选期间滚轮不可用，再点一次按钮退出' +
+                (hoverPage ? '（当前页 ' + page + '，该标注在第 ' + hoverPage + ' 页）' : ''),
+            )
+            : null,
         ),
       );
     }
