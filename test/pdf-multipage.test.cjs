@@ -23,7 +23,7 @@ check(view.includes('Array.from({ length: pages }'), '所有页面一次性排�
 check(view.includes("className: 'dshcv-pdfpages'"), '有滚动容器');
 check(page.includes('new IntersectionObserver('), '页面按可见性懒渲染');
 check(page.includes("rootMargin: '600px 0px'"), '预渲染附近页面');
-check(view.includes('const scrollToPage = (pageNumber) => {'), '可滚动到指定页');
+check(view.includes('const scrollToPage = (pageNumber, rect) => {'), '可滚动到指定页（带矩形）');
 check(page.includes('onVisible(pageNumber, entry.intersectionRatio)'), '可见页上报');
 check(view.includes('if (ratio > 0.35) setCurrent'), '当前页跟随滚动');
 

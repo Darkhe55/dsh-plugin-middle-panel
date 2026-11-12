@@ -4420,14 +4420,33 @@ const registerEl = (pageNumber, node) => {
 if (node) pageEls.current.set(pageNumber, node);
 else pageEls.current.delete(pageNumber);
 };
-const scrollToPage = (pageNumber) => {
+const scrollToPage = (pageNumber, rect) => {
+const scroller = scrollRef.current;
+if (!scroller) return;
+const centerOf = () => {
 const node = pageEls.current.get(pageNumber);
-if (node && node.scrollIntoView) {
-node.scrollIntoView({ block: 'start', behavior: 'smooth' });
+if (!node) return null;
+const pageRect = node.getBoundingClientRect();
+const viewRect = scroller.getBoundingClientRect();
+if (!pageRect.height) return null;
+const offset = rect ? rect[1] * pageRect.height : 0;
+const height = rect ? Math.max(8, rect[3] * pageRect.height) : pageRect.height;
+const absolute = scroller.scrollTop + (pageRect.top - viewRect.top) + offset;
+return { absolute, height };
+};
+const place = () => {
+const box = centerOf();
+if (!box) return false;
+scroller.scrollTop = Math.max(0, box.absolute - (scroller.clientHeight - box.height) / 2);
+return true;
+};
+if (!place()) {
+const node = pageEls.current.get(pageNumber);
+if (node && node.scrollIntoView) node.scrollIntoView({ block: "center" });
 return;
 }
-const scroller = scrollRef.current;
-if (scroller) scroller.scrollTop = (pageNumber - 1) * 400;
+window.requestAnimationFrame(() => place());
+window.setTimeout(() => place(), 140);
 };
 React.useEffect(() => {
 const node = scrollRef.current;
@@ -4453,6 +4472,10 @@ if (!node || !anchor) return;
 zoomAnchor.current = null;
 node.scrollTop = Math.max(0, anchor.ratio * node.scrollHeight - anchor.offset);
 }, [zoom]);
+React.useEffect(() => {
+if (!hoverMark || state.status !== "ready") return;
+scrollToPage(Number(hoverMark.page) || 1, hoverMark.rect);
+}, [hoverMark ? hoverMark.id : "", state.status]);
 const onVisible = (pageNumber, ratio) => {
 if (ratio > 0.35) setCurrent((now) => (now === pageNumber ? now : pageNumber));
 };
@@ -4527,7 +4550,7 @@ at = haystack.indexOf(needle, to);
 }
 setHits(found);
 setHitIndex(0);
-if (found.length) scrollToPage(found[0].page);
+if (found.length) scrollToPage(found[0].page, found[0].rect || (found[0].rects && found[0].rects[0]));
 } finally {
 setSearching(false);
 }
@@ -4536,7 +4559,8 @@ const gotoHit = (next) => {
 if (!hits.length) return;
 const index = (next + hits.length) % hits.length;
 setHitIndex(index);
-scrollToPage(hits[index].page);
+const hit = hits[index];
+scrollToPage(hit.page, hit.rect || (hit.rects && hit.rects[0]));
 };
 const onRegion = (pageNumber, rect) => {
 addMark({

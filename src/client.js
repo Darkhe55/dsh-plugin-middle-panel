@@ -4983,14 +4983,35 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         else pageEls.current.delete(pageNumber);
       };
 
-      const scrollToPage = (pageNumber) => {
-        const node = pageEls.current.get(pageNumber);
-        if (node && node.scrollIntoView) {
-          node.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      const scrollToPage = (pageNumber, rect) => {
+        const scroller = scrollRef.current;
+        if (!scroller) return;
+        const centerOf = () => {
+          const node = pageEls.current.get(pageNumber);
+          if (!node) return null;
+          const pageRect = node.getBoundingClientRect();
+          const viewRect = scroller.getBoundingClientRect();
+          if (!pageRect.height) return null;
+          const offset = rect ? rect[1] * pageRect.height : 0;
+          const height = rect ? Math.max(8, rect[3] * pageRect.height) : pageRect.height;
+          const absolute = scroller.scrollTop + (pageRect.top - viewRect.top) + offset;
+          return { absolute, height };
+        };
+        const place = () => {
+          const box = centerOf();
+          if (!box) return false;
+          // Centre the target; a hit near the bottom must not land under the rail.
+          scroller.scrollTop = Math.max(0, box.absolute - (scroller.clientHeight - box.height) / 2);
+          return true;
+        };
+        if (!place()) {
+          const node = pageEls.current.get(pageNumber);
+          if (node && node.scrollIntoView) node.scrollIntoView({ block: "center" });
           return;
         }
-        const scroller = scrollRef.current;
-        if (scroller) scroller.scrollTop = (pageNumber - 1) * 400;
+        // The rail can expand right after, which shrinks the viewport: settle again.
+        window.requestAnimationFrame(() => place());
+        window.setTimeout(() => place(), 140);
       };
 
       // Ctrl (Cmd) + wheel zooms the page, like every other document viewer. React
@@ -5022,6 +5043,14 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         zoomAnchor.current = null;
         node.scrollTop = Math.max(0, anchor.ratio * node.scrollHeight - anchor.offset);
       }, [zoom]);
+
+      // Following a mark: hovering its rail row brings the page to it, so the
+      // highlight is never off screen.
+      React.useEffect(() => {
+        if (!hoverMark || state.status !== "ready") return;
+        scrollToPage(Number(hoverMark.page) || 1, hoverMark.rect);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [hoverMark ? hoverMark.id : "", state.status]);
 
       const onVisible = (pageNumber, ratio) => {
         if (ratio > 0.35) setCurrent((now) => (now === pageNumber ? now : pageNumber));
@@ -5100,7 +5129,7 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
           }
           setHits(found);
           setHitIndex(0);
-          if (found.length) scrollToPage(found[0].page);
+    if (found.length) scrollToPage(found[0].page, found[0].rect || (found[0].rects && found[0].rects[0]));
         } finally {
           setSearching(false);
         }
@@ -5110,7 +5139,8 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         if (!hits.length) return;
         const index = (next + hits.length) % hits.length;
         setHitIndex(index);
-        scrollToPage(hits[index].page);
+        const hit = hits[index];
+        scrollToPage(hit.page, hit.rect || (hit.rects && hit.rects[0]));
       };
 
       const onRegion = (pageNumber, rect) => {
