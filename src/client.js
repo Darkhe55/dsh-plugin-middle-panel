@@ -978,7 +978,7 @@ return Math.abs(Number(left.start) - Number(right.start)) <= 0.2 && Math.abs(Num
       '.dshcv-spacer{flex:1 1 auto;min-width:8px}',
       '.dshcv-body{display:flex;flex:1 1 0;min-height:0;overflow:hidden}',
       '.dshcv-slots{display:flex;flex:1 1 0;min-height:0;min-width:0;overflow:hidden}',
-      '.dshcv-video{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:8px;padding:10px 12px 12px}',
+      '.dshcv-video{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:8px;padding:10px 12px 12px;position:relative}',
       '.dshcv-videostage{flex:1 1 auto;min-height:0;position:relative;display:flex;align-items:center;justify-content:center;background:#0b0c0e;border-radius:10px;overflow:hidden;touch-action:none}',
       '.dshcv-videostage video{max-width:100%;max-height:100%;display:block;cursor:pointer}',
       '.dshcv-videostage[data-boxing="1"]{cursor:crosshair}',
@@ -989,6 +989,7 @@ return Math.abs(Number(left.start) - Number(right.start)) <= 0.2 && Math.abs(Num
       '.dshcv-track{position:relative;height:22px;border-radius:11px;background:color-mix(in srgb,var(--dsw-alias-bg-layer-2) 88%,transparent);cursor:pointer;touch-action:none;overflow:hidden}',
       '.dshcv-trackfill{position:absolute;left:0;top:0;bottom:0;background:color-mix(in srgb,var(--dsw-alias-brand-primary) 18%,transparent)}',
       '.dshcv-trackhead{position:absolute;top:-2px;bottom:-2px;width:2px;margin-left:-1px;background:var(--dsw-alias-brand-primary)}',
+      '.dshcv-hoverhead{position:absolute;top:-2px;bottom:-2px;width:0;margin-left:-0.5px;border-left:1px dashed rgba(79,140,255,.85);pointer-events:none}',
       '.dshcv-trackband{position:absolute;top:0;bottom:0;background:rgba(79,140,255,.35);border-left:1px solid rgba(79,140,255,.8);border-right:1px solid rgba(79,140,255,.8)}',
       '.dshcv-tracktip{position:absolute;bottom:calc(100% + 6px);transform:translateX(-50%);background:#0f1115;color:#fff;font:11px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;padding:3px 7px;border-radius:6px;white-space:nowrap;pointer-events:none;font-variant-numeric:tabular-nums}',
       '.dshcv-timeinput{width:92px;height:24px;padding:0 7px;border-radius:7px;border:1px solid color-mix(in srgb,var(--dsw-alias-border-l1) 90%,transparent);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:12px/1 ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums;text-align:center}',
@@ -1004,7 +1005,7 @@ return Math.abs(Number(left.start) - Number(right.start)) <= 0.2 && Math.abs(Num
       '.dshcv-inmark::after{left:0}',
       '.dshcv-outmark::after{right:0}',
       '.dshcv-inoutband{position:absolute;top:0;bottom:0;background:rgba(79,140,255,.20);pointer-events:none}',
-      '.dshcv-videomenu{position:fixed;z-index:60;min-width:200px;padding:5px;border-radius:10px;border:1px solid color-mix(in srgb,var(--dsw-alias-border-l1) 90%,transparent);background:var(--dsw-alias-bg-layer-2);box-shadow:0 12px 34px rgba(15,17,21,.18);display:flex;flex-direction:column;gap:1px}',
+      '.dshcv-videomenu{position:absolute;z-index:60;min-width:200px;padding:5px;border-radius:10px;border:1px solid color-mix(in srgb,var(--dsw-alias-border-l1) 90%,transparent);background:var(--dsw-alias-bg-layer-2);box-shadow:0 12px 34px rgba(15,17,21,.18);display:flex;flex-direction:column;gap:1px}',
       '.dshcv-videomenu .dshcv-menuitem[disabled]{opacity:.45;cursor:default}',
       '.dshcv-videomenu .dshcv-menuitem[disabled]:hover{background:none}',
       '.dshcv-timecode{font:inherit;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:inherit;background:none;border:0;padding:0;cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px}',
@@ -7245,6 +7246,7 @@ function SplitDivider(props) {
       const rootRef = React.useRef(null);
       const trackRef = React.useRef(null);
       const hoverBase = React.useRef(0);
+      const previewing = React.useRef(false);
       const previewFrame = React.useRef(0);
       const pressRef = React.useRef(null);
 
@@ -7322,16 +7324,18 @@ function SplitDivider(props) {
         setView(zoomWindow(view.start, span, duration, anchorTime, factor, minSpan));
       };
 
+      // Previewing moves the picture, never the committed playhead: the solid
+      // marker and the time readout are the truth, the dashed line is the pointer.
       const previewAt = (time) => {
         const node = video();
         if (!node) return;
+        previewing.current = true;
         if (previewFrame.current) cancelAnimationFrame(previewFrame.current);
         previewFrame.current = requestAnimationFrame(() => {
           previewFrame.current = 0;
           const target = Math.min(node.duration || 0, Math.max(0, time || 0));
           if (Math.abs(node.currentTime - target) < 0.01) return;
           node.currentTime = target;
-          setInfo((current) => Object.assign({}, current, { current: node.currentTime }));
         });
       };
       const cancelPreview = () => {
@@ -7345,6 +7349,7 @@ function SplitDivider(props) {
         const node = video();
         if (!node) return;
         cancelPreview();
+        previewing.current = false;
         node.currentTime = Math.min(node.duration || 0, Math.max(0, time));
         setInfo((current) => Object.assign({}, current, { current: node.currentTime }));
         // A committed move is the new resting place: leaving the track must not
@@ -7463,17 +7468,33 @@ function SplitDivider(props) {
         if (drag) return;
         if (hover === null) return;
         setHover(null);
-        previewAt(hoverBase.current);
+        previewing.current = false;
+        // Put the picture back where the playhead actually is; the marker never moved.
+        const node = video();
+        if (node && Math.abs(node.currentTime - hoverBase.current) > 0.01) {
+          node.currentTime = Math.max(0, hoverBase.current);
+        }
       };
 
       // React binds wheel as a passive listener, so preventDefault there is ignored
       // and the page would scroll while the timeline zooms. Bind it ourselves.
       const wheelRef = React.useRef(null);
       wheelRef.current = (event) => {
-        if (!event.altKey || !duration) return;
-        event.preventDefault();
-        const anchorTime = timeFromClientX(event.clientX);
-        zoomAt(anchorTime, event.deltaY < 0 ? 1 / 1.4 : 1.4);
+        if (!duration) return;
+        if (event.altKey) {
+          event.preventDefault();
+          const anchorTime = timeFromClientX(event.clientX);
+          zoomAt(anchorTime, event.deltaY < 0 ? 1 / 1.4 : 1.4);
+          return;
+        }
+        // Shift+wheel pans the zoomed window without changing its width.
+        if (event.shiftKey) {
+          if (!Number.isFinite(span) || span >= fullSpan - 1e-6) return;
+          event.preventDefault();
+          const step = (event.deltaY !== 0 ? Math.sign(event.deltaY) : 0) * span * 0.12;
+          if (!step) return;
+          setView({ start: Math.max(0, Math.min(fullSpan - span, viewStart + step)), span });
+        }
       };
       React.useEffect(() => {
         const node = trackRef.current;
@@ -7488,7 +7509,11 @@ function SplitDivider(props) {
       const onTrackMenu = (event) => {
         if (!duration) return;
         event.preventDefault();
-        setMenuAt({ x: event.clientX, y: event.clientY });
+        // Anchored to the panel, not the viewport: an ancestor transform makes
+        // position:fixed resolve against that ancestor, which put the menu offscreen.
+        const root = rootRef.current;
+        const rect = root ? root.getBoundingClientRect() : { left: 0, top: 0 };
+        setMenuAt({ x: event.clientX - rect.left, y: event.clientY - rect.top });
       };
 
       const onStageDown = (event) => {
@@ -7640,6 +7665,9 @@ function SplitDivider(props) {
               node.requestVideoFrameCallback(sample);
             },
             onTimeUpdate: (event) => {
+              // A scrubbing preview fires timeupdate too; it must not move the
+              // committed playhead.
+              if (previewing.current) return;
               const node = event.currentTarget;
               setInfo((current) => Object.assign({}, current, { current: node.currentTime }));
             },
@@ -7771,6 +7799,9 @@ function SplitDivider(props) {
             }),
           ),
           h('div', { className: 'dshcv-trackhead', style: { left: headPercent + '%' } }),
+          hover !== null && !drag
+            ? h('div', { className: 'dshcv-hoverhead', style: { left: timeToPercent(hover) + '%' } })
+            : null,
           hover !== null || drag
             ? h(
                 'div',
@@ -7807,7 +7838,7 @@ function SplitDivider(props) {
               'div',
               {
                 className: 'dshcv-videomenu',
-                style: { left: Math.max(8, menuAt.x - 120) + 'px', top: menuAt.y + 6 + 'px' },
+                style: { left: Math.max(8, menuAt.x - 160) + 'px', top: Math.max(8, menuAt.y) + 'px' },
               },
               h(
                 'button',

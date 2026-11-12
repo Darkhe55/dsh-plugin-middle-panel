@@ -149,7 +149,7 @@ check(/const previewAt = \(time\) => \{/.test(src), '有节流的预览跳帧');
 check(/previewFrame\.current = requestAnimationFrame/.test(src), '预览按帧合并，不逐次 seek');
 check(/if \(info\.playing\) return;\s*\n\s*if \(hover === null\) hoverBase\.current = info\.current;/.test(src), '播放中不预览');
 check(/setHover\(time\);\s*\n\s*previewAt\(time\);/.test(src), '悬停时间轴即切换预览画面');
-check(/previewAt\(hoverBase\.current\);/.test(src), '移出轨道恢复原位置');
+check(src.includes('node.currentTime = Math.max(0, hoverBase.current);'), '移出轨道恢复落定位置');
 check(/if \(moved && !info\.playing\) previewAt\(time\);/.test(src), '拖动选区时同步预览终点');
 check(/className: 'dshcv-tracktip'/.test(src), '拖动/悬停显示时间提示');
 check(/Math\.abs\(drag\.to - drag\.from\)\.toFixed\(1\)/.test(src), '提示里显示选区时长');

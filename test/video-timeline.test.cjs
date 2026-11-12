@@ -85,7 +85,7 @@ check(win.span === Infinity, '时长为 0 安全', JSON.stringify(win));
 // ---------------- 交互契约 ----------------
 const has = (text) => src.includes(text);
 check(has("addEventListener('wheel', handler, { passive: false })"), '滚轮用非被动原生监听');
-check(has('if (!event.altKey || !duration) return;'), '只在按住 Alt 且有时长时缩放');
+check(has('if (!duration) return;') && has('if (event.altKey) {'), '只在有时长时处理滚轮，且 Alt 走缩放');
 check(has('wheelRef.current = (event) => {'), '处理器持有最新闭包');
 check(!src.includes('onWheel: onTrackWheel'), '不再用 React 的被动 onWheel');
 check(has('event.deltaY < 0 ? 1 / 1.4 : 1.4'), '滚轮方向决定放大/收回');
