@@ -1122,6 +1122,10 @@ const CSS_PANEL = [
 '.dshcv-trackhead{position:absolute;top:-2px;bottom:-2px;width:2px;margin-left:-1px;background:var(--dsw-alias-brand-primary)}',
 '.dshcv-markband{position:absolute;top:-1px;bottom:-1px;background:rgba(79,140,255,.22);box-shadow:0 0 10px rgba(79,140,255,.55),inset 0 0 6px rgba(79,140,255,.35);pointer-events:none;border-radius:3px}',
 '.dshcv-markhead{position:absolute;top:-3px;bottom:-3px;width:2px;margin-left:-1px;background:rgba(79,140,255,.95);box-shadow:0 0 8px rgba(79,140,255,.85);pointer-events:none}',
+'.dshcv-pdftext{position:absolute;inset:0;overflow:hidden;line-height:1;pointer-events:auto;user-select:text}',
+'.dshcv-pdftext span{position:absolute;white-space:pre;color:transparent;transform-origin:0 0;cursor:text}',
+'.dshcv-pdftext span::selection{background:rgba(79,140,255,.34);color:transparent}',
+'.dshcv-pdftext span::-moz-selection{background:rgba(79,140,255,.34);color:transparent}',
 '.dshcv-pdfcanvasbox{position:relative;align-self:center;margin:0 auto;line-height:0}',
 '.dshcv-pdfcanvas{display:block;background:#fff;box-shadow:0 2px 14px rgba(0,0,0,.16)}',
 '.dshcv-scroll{overflow:auto}',
@@ -3964,12 +3968,15 @@ const [page, setPage] = React.useState(1);
 const [zoom, setZoom] = React.useState(1);
 const [markMode, setMarkMode] = React.useState(false);
 const [drag, setDrag] = React.useState(null);
+const [textItems, setTextItems] = React.useState([]);
+const [selection, setSelection] = React.useState(null);
 const [width, setWidth] = React.useState(0);
 const docRef = React.useRef(null);
 const pageRef = React.useRef(null);
 const canvasRef = React.useRef(null);
 const boxRef = React.useRef(null);
 const pressRef = React.useRef(null);
+const pdfjsRef = React.useRef(null);
 const renderToken = React.useRef(0);
 const hovered = useHoverMark(doc.path);
 const hoverRegion =
@@ -3984,6 +3991,7 @@ let task = null;
 setState({ status: 'loading', error: '', pages: 0 });
 Promise.all([loadPdfJs(), readBytesFile(sessionId, doc.path, controller.signal)])
 .then(async ([pdfjs, bytes]) => {
+pdfjsRef.current = pdfjs;
 if (cancelled || !bytes) return;
 task = pdfjs.getDocument({
 data: bytes,
@@ -4059,6 +4067,26 @@ if (!context) return;
 context.setTransform(ratio, 0, 0, ratio, 0, 0);
 context.clearRect(0, 0, viewport.width, viewport.height);
 await pdfPage.render({ canvasContext: context, viewport }).promise;
+const content = await pdfPage.getTextContent();
+if (cancelled || renderToken.current !== token) return;
+const spans = [];
+for (const item of content.items || []) {
+if (!item || typeof item.str !== "string" || !item.str.trim()) continue;
+const Util = pdfjsRef.current && pdfjsRef.current.Util;
+if (!Util) break;
+const transform = pdfjsRef.current.Util.transform(viewport.transform, item.transform);
+const fontHeight = Math.hypot(transform[2], transform[3]);
+if (!fontHeight) continue;
+const width = Math.max(0, Number(item.width) || 0) * viewport.scale;
+spans.push({
+str: item.str,
+left: transform[4],
+top: transform[5] - fontHeight,
+fontHeight,
+width,
+});
+}
+setTextItems(spans);
 })().catch((error) => {
 if (!cancelled) setState((current) => Object.assign({}, current, { error: errText(error) }));
 });
@@ -4066,6 +4094,45 @@ return () => {
 cancelled = true;
 };
 }, [state.status, page, zoom, width]);
+const readSelection = () => {
+const canvas = canvasRef.current;
+if (!canvas) return null;
+const active = window.getSelection ? window.getSelection() : null;
+if (!active || active.isCollapsed) return null;
+const text = String(active.toString() || "").replace(/\s+$/g, "");
+if (!text.trim()) return null;
+const range = active.getRangeAt(0);
+const box = canvas.getBoundingClientRect();
+const rects = Array.from(range.getClientRects()).filter((item) => item.width > 1 && item.height > 1);
+if (!rects.length) return null;
+const left = Math.min(...rects.map((item) => item.left)) - box.left;
+const top = Math.min(...rects.map((item) => item.top)) - box.top;
+const right = Math.max(...rects.map((item) => item.right)) - box.left;
+const bottom = Math.max(...rects.map((item) => item.bottom)) - box.top;
+if (right <= left || bottom <= top) return null;
+return {
+text: text.slice(0, 400),
+rect: [left / box.width, top / box.height, (right - left) / box.width, (bottom - top) / box.height],
+};
+};
+const onTextUp = () => {
+const picked = readSelection();
+setSelection(picked);
+};
+const markSelection = () => {
+const picked = selection || readSelection();
+if (!picked) return;
+addMark({
+kind: "region",
+path: doc.path,
+page,
+norm: true,
+text: true,
+rect: picked.rect.map((value) => Math.round(value * 10000) / 10000),
+quote: picked.text,
+});
+setSelection(null);
+};
 const ratioOf = (event) => {
 const canvas = canvasRef.current;
 if (!canvas) return null;
@@ -4163,6 +4230,19 @@ pressRef.current = null;
 },
 markMode ? '退出框选' : '框选标注',
 ),
+selection
+? h(
+'button',
+{
+type: 'button',
+className: 'dshcv-btn',
+'data-kind': 'primary',
+title: '把选中的文字标注下来（引用原文）',
+onClick: markSelection,
+},
+'标注选中文字',
+)
+: null,
 ),
 h(
 'div',
@@ -4171,6 +4251,27 @@ h(
 'div',
 { className: 'dshcv-pdfcanvasbox' },
 h('canvas', { ref: canvasRef, className: 'dshcv-pdfcanvas' }),
+h(
+'div',
+{ className: 'dshcv-pdftext', onMouseUp: onTextUp },
+textItems.map((item, itemIndex) =>
+h(
+'span',
+{
+key: itemIndex,
+style: {
+left: item.left + 'px',
+top: item.top + 'px',
+fontSize: item.fontHeight + 'px',
+width: item.width ? item.width + 'px' : undefined,
+},
+display: 'block',
+overflow: 'hidden',
+},
+item.str,
+),
+),
+),
 hoverRegion
 ? h('div', {
 className: 'dshcv-pdfregion',

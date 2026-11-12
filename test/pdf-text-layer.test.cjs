@@ -1,0 +1,48 @@
+// PDF 文字层：可选中、可复制，并能把选中文字变成标注。
+const fs = require('fs');
+const src = fs.readFileSync('src/client.js', 'utf8');
+
+let failures = 0;
+const check = (ok, label, detail) => {
+  console.log((ok ? 'PASS ' : 'FAIL ') + label + (ok || !detail ? '' : ' → ' + detail));
+  if (!ok) failures += 1;
+};
+const has = (text) => src.includes(text);
+
+const start = src.indexOf('function PdfCanvasDoc(props) {');
+const end = src.indexOf('function PdfDoc(props) {');
+const body = src.slice(start, end);
+
+// —— 提取 ——
+check(body.includes('await pdfPage.getTextContent()'), '读取页面文字');
+check(body.includes('pdfjsRef.current.Util.transform(viewport.transform, item.transform)'), '按页面变换定位每段文字');
+check(body.includes('Math.hypot(transform[2], transform[3])'), '字号由变换推出');
+check(body.includes('setTextItems(spans)'), '结果进入状态');
+check(body.includes("if (!item || typeof item.str !== \"string\" || !item.str.trim()) continue;"), '跳过空片段');
+
+// —— 渲染层 ——
+check(body.includes("className: 'dshcv-pdftext'"), '有文字层容器');
+check(body.includes("left: item.left + 'px'"), '按像素定位');
+check(body.includes("fontSize: item.fontHeight + 'px'"), '字号对齐');
+check(body.includes('item.str,'), '写入真实文本');
+
+// —— 样式 ——
+check(has("'.dshcv-pdftext{position:absolute;inset:0"), '文字层覆盖页面');
+check(has('color:transparent'), '文字透明，视觉仍为位图');
+check(has('span::selection{background:rgba(79,140,255,.34)'), '选中可见');
+check(has('user-select:text'), '允许选中');
+
+// —— 选中 → 标注 ——
+check(body.includes('const readSelection = () => {'), '能读取选区');
+check(body.includes('range.getClientRects()'), '支持多行选区');
+check(body.includes('active.toString()'), '取选中原文');
+check(body.includes('const onTextUp = () => {'), '松手时记录选区');
+check(body.includes('const markSelection = () => {'), '可把选区变成标注');
+check(body.includes('text: true,'), '标注标记为文字来源');
+check(body.includes('quote: picked.text,'), '引用原文');
+check(body.includes("'标注选中文字'"), '工具栏有对应按钮');
+
+if (failures) {
+  console.log('失败 ' + failures + ' 项');
+  process.exit(1);
+}
