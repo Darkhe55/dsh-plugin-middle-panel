@@ -234,6 +234,18 @@ if (left.kind !== right.kind || !sameFile(left.path, right.path)) return false;
 if (left.kind === 'text') return Boolean(left.lines && right.lines) && left.lines[0] === right.lines[0] && left.lines[1] === right.lines[1];
 if (left.kind === 'element' || left.kind === 'layer') return left.selector === right.selector;
 if (left.kind === 'paragraph') return left.paragraph === right.paragraph;
+const parseTime = (text) => {
+const raw = String(text === undefined || text === null ? '' : text).trim();
+if (!raw) return NaN;
+const parts = raw.split(':');
+if (parts.length > 3) return NaN;
+let total = 0;
+for (const part of parts) {
+if (!/^\d+(\.\d+)?$/.test(part.trim())) return NaN;
+total = total * 60 + Number(part.trim());
+}
+return total;
+};
 if (left.kind === 'video') {
 return Math.abs(Number(left.start) - Number(right.start)) <= 0.2 && Math.abs(Number(left.end) - Number(right.end)) <= 0.2;
 }
@@ -818,6 +830,10 @@ const CSS_PANEL = [
 '.dshcv-trackfill{position:absolute;left:0;top:0;bottom:0;background:color-mix(in srgb,var(--dsw-alias-brand-primary) 18%,transparent)}',
 '.dshcv-trackhead{position:absolute;top:-2px;bottom:-2px;width:2px;margin-left:-1px;background:var(--dsw-alias-brand-primary)}',
 '.dshcv-trackband{position:absolute;top:0;bottom:0;background:rgba(79,140,255,.35);border-left:1px solid rgba(79,140,255,.8);border-right:1px solid rgba(79,140,255,.8)}',
+'.dshcv-tracktip{position:absolute;bottom:calc(100% + 6px);transform:translateX(-50%);background:#0f1115;color:#fff;font:11px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;padding:3px 7px;border-radius:6px;white-space:nowrap;pointer-events:none;font-variant-numeric:tabular-nums}',
+'.dshcv-timeinput{width:92px;height:24px;padding:0 7px;border-radius:7px;border:1px solid color-mix(in srgb,var(--dsw-alias-border-l1) 90%,transparent);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:12px/1 ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums;text-align:center}',
+'.dshcv-timeinput:focus{outline:none;border-color:color-mix(in srgb,var(--dsw-alias-brand-primary) 45%,transparent);box-shadow:0 0 0 2px color-mix(in srgb,var(--dsw-alias-brand-primary) 16%,transparent)}',
+'.dshcv-track{overflow:visible}',
 '.dshcv-videohint{font-size:11px;color:var(--dsw-alias-label-tertiary)}',
 '.dshcv-timecode{font:inherit;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:inherit;background:none;border:0;padding:0;cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px}',
 '.dshcv-timecode:hover{color:var(--dsw-alias-brand-primary)}',
@@ -6395,6 +6411,10 @@ const focused = props.focused !== false;
 const [state, setState] = React.useState({ status: native ? 'loading' : 'unsupported', url: '', error: '' });
 const [info, setInfo] = React.useState({ duration: 0, current: 0, playing: false, rate: 1 });
 const [drag, setDrag] = React.useState(null);
+const [hover, setHover] = React.useState(null);
+const hoverBase = React.useRef(0);
+const previewFrame = React.useRef(0);
+const [timeDraft, setTimeDraft] = React.useState('');
 const [boxing, setBoxing] = React.useState(false);
 const [marquee, setMarquee] = React.useState(null);
 const hovered = useHoverMark(doc.path);
@@ -6452,6 +6472,18 @@ const delta = (frames * 1) / 30;
 node.currentTime = Math.min(node.duration || 0, Math.max(0, node.currentTime + delta));
 setInfo((current) => Object.assign({}, current, { current: node.currentTime }));
 };
+const previewAt = (time) => {
+const node = video();
+if (!node) return;
+if (previewFrame.current) cancelAnimationFrame(previewFrame.current);
+previewFrame.current = requestAnimationFrame(() => {
+previewFrame.current = 0;
+const target = Math.min(node.duration || 0, Math.max(0, time || 0));
+if (Math.abs(node.currentTime - target) < 0.01) return;
+node.currentTime = target;
+setInfo((current) => Object.assign({}, current, { current: node.currentTime }));
+});
+};
 const seekTo = (time) => {
 const node = video();
 if (!node) return;
@@ -6491,8 +6523,22 @@ setDrag({ from: time, to: time });
 event.currentTarget.setPointerCapture(event.pointerId);
 };
 const onTrackMove = (event) => {
-if (!drag) return;
-setDrag({ from: drag.from, to: timeFromEvent(event) });
+const time = timeFromEvent(event);
+if (drag) {
+setDrag({ from: drag.from, to: time });
+if (!info.playing) previewAt(time);
+return;
+}
+if (info.playing) return;
+if (hover === null) hoverBase.current = info.current;
+setHover(time);
+previewAt(time);
+};
+const onTrackLeave = () => {
+if (drag) return;
+if (hover === null) return;
+setHover(null);
+previewAt(hoverBase.current);
 };
 const onTrackUp = (event) => {
 if (!drag) return;
@@ -6634,6 +6680,40 @@ h('button', { type: 'button', className: 'dshcv-btn', 'data-kind': 'primary', on
 h('button', { type: 'button', className: 'dshcv-btn', 'data-kind': 'quiet', title: '后退一帧（←）', onClick: () => step(-1) }, '−1f'),
 h('button', { type: 'button', className: 'dshcv-btn', 'data-kind': 'quiet', title: '前进一帧（→）', onClick: () => step(1) }, '+1f'),
 h('button', { type: 'button', className: 'dshcv-btn', 'data-kind': 'quiet', title: '播放速度', onClick: cycleRate }, info.rate + '×'),
+h('input', {
+type: 'text',
+className: 'dshcv-timeinput',
+inputMode: 'decimal',
+spellCheck: false,
+value: timeDraft,
+title: '输入时间后回车跳转：12.4 / 01:23.4 / 01:02:03.5',
+placeholder: formatTime(info.current),
+'aria-label': '跳转到指定时间',
+onFocus: () => setTimeDraft(formatTime(info.current)),
+onChange: (event) => setTimeDraft(event.target.value),
+onBlur: () => setTimeDraft(''),
+onKeyDown: (event) => {
+if (event.key === 'Escape') {
+setTimeDraft('');
+event.currentTarget.blur();
+return;
+}
+if (event.key !== 'Enter') return;
+event.preventDefault();
+const target = parseTime(timeDraft);
+if (!Number.isFinite(target)) {
+flash('时间格式不对：试试 12.4、01:23.4 或 01:02:03.5');
+return;
+}
+if (info.duration && target > info.duration + 0.05) {
+flash('超出片长：最长 ' + formatTime(info.duration));
+return;
+}
+seekTo(target);
+setTimeDraft('');
+event.currentTarget.blur();
+},
+}),
 h('span', { className: 'dshcv-videotime' }, formatTime(info.current) + ' / ' + formatTime(info.duration)),
 h('span', { style: { flex: '1 1 auto' } }),
 h(
@@ -6660,12 +6740,34 @@ className: 'dshcv-track',
 onPointerDown: onTrackDown,
 onPointerMove: onTrackMove,
 onPointerUp: onTrackUp,
+onPointerLeave: onTrackLeave,
+'data-scrub': drag ? drag.from.toFixed(1) + '→' + (drag.to || 0).toFixed(1) : '',
 },
 h('div', { className: 'dshcv-trackfill', style: { width: ratio * 100 + '%' } }),
 h('div', {
 className: 'dshcv-trackhead',
 style: { left: ratio * 100 + '%' },
 }),
+hover !== null || drag
+? h(
+'div',
+{
+className: 'dshcv-tracktip',
+style: {
+left:
+((drag ? drag.to : hover || 0) / Math.max(0.001, info.duration || 1)) * 100 + '%',
+},
+},
+drag
+? formatTime(Math.min(drag.from, drag.to)) +
+'–' +
+formatTime(Math.max(drag.from, drag.to)) +
+' · ' +
+Math.abs(drag.to - drag.from).toFixed(1) +
+'s'
+: formatTime(hover || 0),
+)
+: null,
 drag && bandTo > bandFrom
 ? h('div', {
 className: 'dshcv-trackband',

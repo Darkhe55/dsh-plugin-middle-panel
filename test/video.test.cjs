@@ -119,6 +119,42 @@ check(/className: 'dshcv-track'/.test(src), '有进度条');
 check(/onPointerDown: onTrackDown/.test(src), '进度条可按下');
 check(/onPointerMove: onTrackMove/.test(src), '进度条可拖动');
 
+// —— 时间输入与回车跳转 ——
+const parseStart = src.indexOf('    const parseTime = (text) => {');
+const parseEnd = src.indexOf('    // A clip mark is the same spot');
+if (parseStart > 0 && parseEnd > parseStart) {
+  const parse = new Function(src.slice(parseStart, parseEnd) + '\nreturn parseTime;')();
+  check(parse('12.4') === 12.4, '12.4 → 12.4', String(parse('12.4')));
+  check(parse('1:23.4') === 83.4, '1:23.4 → 83.4', String(parse('1:23.4')));
+  check(parse('01:02:03.5') === 3723.5, '01:02:03.5 → 3723.5', String(parse('01:02:03.5')));
+  check(parse(' 8 ') === 8, '忽略首尾空格');
+  check(Number.isNaN(parse('')), '空字符串不可用');
+  check(Number.isNaN(parse('abc')), '非数字不可用');
+  check(Number.isNaN(parse('1::2')), '空段不可用');
+  check(Number.isNaN(parse('-3')), '负数不可用');
+  check(Number.isNaN(parse('1:2:3:4')), '超过三段不可用');
+  check(parse('0') === 0, '0 是合法时间');
+}
+
+check(/onKeyDown: \(event\) => \{[\s\S]{0,400}event\.key !== 'Enter'/.test(src), '输入框监听回车');
+check(/const target = parseTime\(timeDraft\);/.test(src), '回车时解析输入');
+check(/seekTo\(target\);/.test(src), '解析成功即跳转');
+check(/时间格式不对：试试 12\.4、01:23\.4/.test(src), '格式错误给提示');
+check(/超出片长：最长 /.test(src), '超出片长给提示');
+check(/'aria-label': '跳转到指定时间'/.test(src), '输入框有可访问名称');
+check(/onFocus: \(\) => setTimeDraft\(formatTime\(info\.current\)\)/.test(src), '聚焦时填入当前时间');
+
+// —— 悬停与拖动时预览画面 ——
+check(/const previewAt = \(time\) => \{/.test(src), '有节流的预览跳帧');
+check(/previewFrame\.current = requestAnimationFrame/.test(src), '预览按帧合并，不逐次 seek');
+check(/if \(info\.playing\) return;\s*\n\s*if \(hover === null\) hoverBase\.current = info\.current;/.test(src), '播放中不预览');
+check(/setHover\(time\);\s*\n\s*previewAt\(time\);/.test(src), '悬停时间轴即切换预览画面');
+check(/previewAt\(hoverBase\.current\);/.test(src), '移出轨道恢复原位置');
+check(/if \(!info\.playing\) previewAt\(time\);/.test(src), '拖动选区时同步预览终点');
+check(/className: 'dshcv-tracktip'/.test(src), '拖动/悬停显示时间提示');
+check(/Math\.abs\(drag\.to - drag\.from\)\.toFixed\(1\)/.test(src), '提示里显示选区时长');
+check(/onPointerLeave: onTrackLeave/.test(src), '轨道监听移出');
+
 if (failures) {
   console.log('失败 ' + failures + ' 项');
   process.exit(1);
