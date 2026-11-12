@@ -17,7 +17,7 @@ const body = src.slice(start, end);
 check(body.includes('await textContentOf(pdf, pageNumber)'), '读取页面文字（带缓存）');
 check(body.includes('Util.transform(viewport.transform, item.transform)'), '按页面变换定位每段文字');
 check(body.includes('Math.hypot(transform[2], transform[3])'), '字号由变换推出');
-check(body.includes('setItems(spans)'), '结果进入页面状态');
+check(body.includes('setItems(glyphs)'), '结果进入页面状态');
 check(body.includes('!item.str.trim()'), '跳过空片段');
 
 // —— 渲染层 ——

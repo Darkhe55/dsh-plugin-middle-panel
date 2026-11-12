@@ -14,7 +14,7 @@ const end = src.indexOf('function PdfThumb(props) {');
 const page = src.slice(start, end);
 
 check(page.includes('const declared = Math.max(0, Number(item.width) || 0) * viewport.scale;'), '声明宽度作为基准');
-check(page.includes('span.layoutWidth = scaleX ? span.width / scaleX : span.width;'), '布局宽度按缩放反算');
+check(page.includes('layoutWidth: one ? span.width / one : span.width,') || page.includes('layoutWidth: scaleX ? width / scaleX : width,'), '布局宽度按缩放反算');
 check(page.includes("transformOrigin: '0 0',"), '缩放从左侧开始，左边界不动');
 check(
   page.includes("transform: item.scaleX && item.scaleX !== 1 ? 'scaleX(' + item.scaleX + ')' : undefined,"),

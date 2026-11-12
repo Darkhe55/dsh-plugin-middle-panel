@@ -4191,17 +4191,49 @@ for (const span of group) span.width *= factor;
 }
 }
 }
+const glyphs = [];
 for (const span of spans) {
-let scaleX = 1;
-if (measure && span.width > 0) {
+const chars = Array.from(span.str);
+let shares = null;
+let total = 0;
+if (measure && chars.length > 1) {
 measure.font = span.fontHeight + "px sans-serif";
-const natural = measure.measureText(span.str).width;
-if (natural > 0) scaleX = span.width / natural;
+shares = chars.map((ch) => measure.measureText(ch).width);
+for (const share of shares) total += share;
 }
-span.scaleX = scaleX;
-span.layoutWidth = scaleX ? span.width / scaleX : span.width;
+if (!shares || !(total > 0)) {
+const natural = measure ? measure.measureText(span.str).width : 0;
+const one = natural > 0 ? span.width / natural : 1;
+glyphs.push({
+str: span.str,
+left: span.left,
+top: span.top,
+fontHeight: span.fontHeight,
+width: span.width,
+scaleX: one,
+layoutWidth: one ? span.width / one : span.width,
+});
+continue;
 }
-setItems(spans);
+let before = 0;
+for (let index = 0; index < chars.length; index += 1) {
+const share = shares[index];
+const left = span.left + span.width * (before / total);
+const width = span.width * (share / total);
+before += share;
+const scaleX = share > 0 ? width / share : 1;
+glyphs.push({
+str: chars[index],
+left,
+top: span.top,
+fontHeight: span.fontHeight,
+width,
+scaleX,
+layoutWidth: scaleX ? width / scaleX : width,
+});
+}
+}
+setItems(glyphs);
 })().catch(() => setItems([]));
 return () => {
 cancelled = true;

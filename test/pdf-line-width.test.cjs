@@ -24,7 +24,7 @@ check(page.includes('for (const span of group) span.width *= factor;'), '整行�
 check(page.includes('const y0 = Math.max(0, Math.floor((first.top - first.fontHeight * 0.4) * ratio));'), '扫描带留出上行余量');
 check(page.includes('const y1 = Math.min(pixels.height, Math.ceil((first.top + first.fontHeight * 1.4) * ratio));'), '扫描带留出下行余量');
 check(page.includes('if (!pixels) pixels = bufferCtx.getImageData(0, 0, buffer.width, buffer.height);'), '整页像素只读一次');
-check(page.includes('span.layoutWidth = scaleX ? span.width / scaleX : span.width;'), '布局宽度与缩放保持恒等');
+check(page.includes('layoutWidth: scaleX ? width / scaleX : width,'), '布局宽度与缩放保持恒等');
 
 if (failures) {
   console.log('失败 ' + failures + ' 项');
