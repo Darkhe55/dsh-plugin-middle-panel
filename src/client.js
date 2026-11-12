@@ -1334,7 +1334,11 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
     // The page box owns the coordinate system: every overlay inside a page is
     // positioned against it, so it must be the positioned ancestor.
     '.dshcv-pdfpagebox{position:relative;overflow:hidden;background:#fff;line-height:0;border-radius:2px;box-shadow:0 2px 14px rgba(0,0,0,.16);flex:0 0 auto}',
-    '.dshcv-pdfpagebox canvas{display:block}',
+    '.dshcv-pdfpagebox canvas{position:absolute;inset:0;width:100%;height:100%;display:block}',
+    // While the sharper bitmap is still being produced the stretched one shows; the
+    // flag exists so a future step can dim it instead of adding a transition.
+    '.dshcv-pdfpagebox[data-sharp="0"] canvas{image-rendering:auto}',
+    '.dshcv-pdfpagebox{contain:paint}',
     '.dshcv-pdfcanvasbox{position:relative;align-self:center;margin:0 auto;line-height:0}',
     '.dshcv-pdfcanvas{display:block;background:#fff;box-shadow:0 2px 14px rgba(0,0,0,.16)}',
     '.dshcv-scroll{overflow:auto}',
@@ -4531,12 +4535,18 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
       return content;
     };
 
-    // One page: canvas, text layer, mark overlays. Rendered only when near the viewport.
+    // One page: canvas, text layer, mark overlays.
+    //
+    // The layout size is computed synchronously from the page's own dimensions and the
+    // zoom, while the bitmap is produced asynchronously. That split is what keeps
+    // zooming stable: the scroll column never waits for a render to change height, and
+    // the old bitmap simply stretches until the sharper one is swapped in.
     function PdfPage(props) {
       const {
         pdf,
         pageNumber,
         scale,
+        baseSize,
         markMode,
         onRegion,
         onSelect,
@@ -4549,9 +4559,11 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         hoverRect,
         pdfjs,
       } = props;
-      const [size, setSize] = React.useState({ width: 0, height: 0 });
+      const width = Math.max(0, (baseSize && baseSize.width ? baseSize.width : 612) * scale);
+      const height = Math.max(0, (baseSize && baseSize.height ? baseSize.height : 792) * scale);
       const [items, setItems] = React.useState([]);
-      const [visible, setVisible] = React.useState(pageNumber === 1);
+      const [renderedAt, setRenderedAt] = React.useState(0);
+      const [visible, setVisible] = React.useState(pageNumber <= 2);
       const [drag, setDrag] = React.useState(null);
       const canvasRef = React.useRef(null);
       const wrapRef = React.useRef(null);
@@ -4566,7 +4578,6 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [pageNumber]);
 
-      // Render only what is close to the viewport.
       React.useEffect(() => {
         const node = wrapRef.current;
         if (!node || typeof IntersectionObserver !== 'function') {
@@ -4577,8 +4588,10 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
           (entries) => {
             const entry = entries[0];
             if (!entry) return;
-            if (entry.isIntersecting) setVisible(true);
-            if (entry.isIntersecting && onVisible) onVisible(pageNumber, entry.intersectionRatio);
+            if (entry.isIntersecting) {
+              setVisible(true);
+              if (onVisible) onVisible(pageNumber, entry.intersectionRatio);
+            }
           },
           { rootMargin: '600px 0px' },
         );
@@ -4587,29 +4600,34 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [pageNumber]);
 
+      // Render into an offscreen canvas, then swap in one paint: the visible canvas is
+      // never left half-drawn, and its CSS size already fills the (new) box.
       React.useEffect(() => {
-        if (!visible || !pdf) return undefined;
+        if (!visible || !pdf || !width) return undefined;
         const token = tokenRef.current + 1;
         tokenRef.current = token;
         let cancelled = false;
         (async () => {
           const page = await pdf.getPage(pageNumber);
           if (cancelled || tokenRef.current !== token) return;
-          const viewport = page.getViewport({ scale });
+          const viewport = page.getViewport({ scale: width / (baseSize && baseSize.width ? baseSize.width : 612) });
+          const ratio = Math.min(3, window.devicePixelRatio || 1);
+          const buffer = document.createElement('canvas');
+          buffer.width = Math.max(1, Math.round(viewport.width * ratio));
+          buffer.height = Math.max(1, Math.round(viewport.height * ratio));
+          const bufferCtx = buffer.getContext('2d');
+          if (!bufferCtx) return;
+          bufferCtx.setTransform(ratio, 0, 0, ratio, 0, 0);
+          await page.render({ canvasContext: bufferCtx, viewport }).promise;
+          if (cancelled || tokenRef.current !== token) return;
           const canvas = canvasRef.current;
           if (!canvas) return;
-          const ratio = Math.min(3, window.devicePixelRatio || 1);
-          canvas.width = Math.round(viewport.width * ratio);
-          canvas.height = Math.round(viewport.height * ratio);
-          canvas.style.width = viewport.width + 'px';
-          canvas.style.height = viewport.height + 'px';
-          const context = canvas.getContext('2d');
-          if (!context) return;
-          context.setTransform(ratio, 0, 0, ratio, 0, 0);
-          context.clearRect(0, 0, viewport.width, viewport.height);
-          await page.render({ canvasContext: context, viewport }).promise;
-          if (cancelled || tokenRef.current !== token) return;
-          setSize({ width: viewport.width, height: viewport.height });
+          canvas.width = buffer.width;
+          canvas.height = buffer.height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return;
+          ctx.drawImage(buffer, 0, 0);
+          setRenderedAt(viewport.width);
           const content = await textContentOf(pdf, pageNumber);
           if (cancelled || tokenRef.current !== token) return;
           const Util = pdfjs && pdfjs.Util;
@@ -4617,30 +4635,26 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
             setItems([]);
             return;
           }
+          const measure = document.createElement('canvas').getContext('2d');
           const spans = [];
-          // The glyphs are invisible, but their box decides the selection and the band.
-          // Measuring once and scaling keeps that box equal to item.width at every zoom,
-          // instead of letting the fallback font grow faster than the page.
-          const measureCanvas = document.createElement("canvas");
-          const measureCtx = measureCanvas.getContext("2d");
           for (const item of content.items || []) {
-            if (!item || typeof item.str !== "string" || !item.str.trim()) continue;
+            if (!item || typeof item.str !== 'string' || !item.str.trim()) continue;
             const transform = Util.transform(viewport.transform, item.transform);
             const fontHeight = Math.hypot(transform[2], transform[3]);
             if (!fontHeight) continue;
-            const width = Math.max(0, Number(item.width) || 0) * viewport.scale;
+            const spanWidth = Math.max(0, Number(item.width) || 0) * viewport.scale;
             let scaleX = 1;
-            if (measureCtx && width > 0) {
-              measureCtx.font = fontHeight + "px sans-serif";
-              const measured = measureCtx.measureText(item.str).width;
-              if (measured > 0) scaleX = width / measured;
+            if (measure && spanWidth > 0) {
+              measure.font = fontHeight + 'px sans-serif';
+              const measured = measure.measureText(item.str).width;
+              if (measured > 0) scaleX = spanWidth / measured;
             }
             spans.push({
               str: item.str,
               left: transform[4],
               top: transform[5] - fontHeight,
               fontHeight,
-              width,
+              width: spanWidth,
               scaleX,
             });
           }
@@ -4650,7 +4664,7 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
           cancelled = true;
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-      }, [visible, pageNumber, scale, pdf]);
+      }, [visible, pageNumber, width, pdf]);
 
       const toFraction = (event) => {
         const wrap = wrapRef.current;
@@ -4697,13 +4711,11 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         if (onRegion) onRegion(pageNumber, [x, y, w, h]);
       };
 
-      // Every line fragment gets its own band, so a mark hugs the text instead of
-      // drawing one box around the whole selection.
       const readSelection = () => {
         const wrap = wrapRef.current;
         const active = window.getSelection ? window.getSelection() : null;
         if (!wrap || !active || active.isCollapsed) return;
-        const text = String(active.toString() || "").replace(/\s+$/g, "");
+        const text = String(active.toString() || '').replace(/\s+$/g, '');
         if (!text.trim()) return;
         const box = wrap.getBoundingClientRect();
         const fragments = Array.from(active.getRangeAt(0).getClientRects()).filter(
@@ -4738,8 +4750,9 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         {
           ref: wrapRef,
           className: 'dshcv-pdfpagebox',
-          style: size.width ? { width: size.width + 'px', height: size.height + 'px' } : null,
+          style: width ? { width: width + 'px', height: height + 'px' } : null,
           'data-page': pageNumber,
+          'data-sharp': renderedAt && Math.abs(renderedAt - width) < 1 ? '1' : '0',
         },
         h('canvas', { ref: canvasRef, className: 'dshcv-pdfcanvas' }),
         h(
@@ -4767,16 +4780,16 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         ),
         pageHits.map((hit, index) =>
           (hit.rects || [hit.rect]).map((rect, rectIndex) =>
-            h("div", {
-              key: "hit" + index + "-" + rectIndex,
-              className: "dshcv-pdfhit",
-              "data-active":
-                activeHit && activeHit.page === pageNumber && activeHit.index === hit.index ? "1" : "0",
+            h('div', {
+              key: 'hit' + index + '-' + rectIndex,
+              className: 'dshcv-pdfhit',
+              'data-active':
+                activeHit && activeHit.page === pageNumber && activeHit.index === hit.index ? '1' : '0',
               style: {
-                left: rect[0] * 100 + "%",
-                top: rect[1] * 100 + "%",
-                width: rect[2] * 100 + "%",
-                height: rect[3] * 100 + "%",
+                left: rect[0] * 100 + '%',
+                top: rect[1] * 100 + '%',
+                width: rect[2] * 100 + '%',
+                height: rect[3] * 100 + '%',
               },
             }),
           ),
@@ -4786,38 +4799,38 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         pageMarks.map((mark, index) =>
           mark.text
             ? null
-            : h("div", {
-                key: "mark" + index,
-                className: "dshcv-pdfregion",
+            : h('div', {
+                key: 'mark' + index,
+                className: 'dshcv-pdfregion',
                 style: {
-                  left: mark.rect[0] * 100 + "%",
-                  top: mark.rect[1] * 100 + "%",
-                  width: mark.rect[2] * 100 + "%",
-                  height: mark.rect[3] * 100 + "%",
+                  left: mark.rect[0] * 100 + '%',
+                  top: mark.rect[1] * 100 + '%',
+                  width: mark.rect[2] * 100 + '%',
+                  height: mark.rect[3] * 100 + '%',
                 },
               }),
         ),
         hoverBands && hoverBands.length
           ? hoverBands.map((band, bandIndex) =>
-              h("div", {
-                key: "hover" + bandIndex,
-                className: "dshcv-pdftexthit dshcv-pdftexthit-hot",
+              h('div', {
+                key: 'hover' + bandIndex,
+                className: 'dshcv-pdftexthit dshcv-pdftexthit-hot',
                 style: {
-                  left: band[0] * 100 + "%",
-                  top: band[1] * 100 + "%",
-                  width: band[2] * 100 + "%",
-                  height: band[3] * 100 + "%",
+                  left: band[0] * 100 + '%',
+                  top: band[1] * 100 + '%',
+                  width: band[2] * 100 + '%',
+                  height: band[3] * 100 + '%',
                 },
               }),
             )
           : hoverRect
-            ? h("div", {
-                className: "dshcv-pdfregion dshcv-pdfregion-hot",
+            ? h('div', {
+                className: 'dshcv-pdfregion dshcv-pdfregion-hot',
                 style: {
-                  left: hoverRect[0] * 100 + "%",
-                  top: hoverRect[1] * 100 + "%",
-                  width: hoverRect[2] * 100 + "%",
-                  height: hoverRect[3] * 100 + "%",
+                  left: hoverRect[0] * 100 + '%',
+                  top: hoverRect[1] * 100 + '%',
+                  width: hoverRect[2] * 100 + '%',
+                  height: hoverRect[3] * 100 + '%',
                 },
               })
             : null,
@@ -4899,6 +4912,9 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
       const [selection, setSelection] = React.useState(null);
       const [width, setWidth] = React.useState(760);
       const [searching, setSearching] = React.useState(false);
+      // Page geometry, so a page box can be sized without waiting for its bitmap.
+      const [pageSizes, setPageSizes] = React.useState({});
+      const [baseSize, setBaseSize] = React.useState(null);
       const docRef = React.useRef(null);
       const pdfjsRef = React.useRef(null);
       const scrollRef = React.useRef(null);
@@ -4933,6 +4949,27 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
             const loaded = await task.promise;
             if (cancelled) return;
             docRef.current = loaded;
+            const first = await loaded.getPage(1);
+            const firstBox = first.getViewport({ scale: 1 });
+            setBaseSize({ width: firstBox.width, height: firstBox.height });
+            if (!cancelled) {
+              // Uniform pages are the norm, so page 1 already sizes the whole column;
+              // the full table only refines mixed-size documents.
+              (async () => {
+                const table = { 1: { width: firstBox.width, height: firstBox.height } };
+                for (let n = 2; n <= loaded.numPages; n += 1) {
+                  if (cancelled) return;
+                  try {
+                    const page = await loaded.getPage(n);
+                    const box = page.getViewport({ scale: 1 });
+                    table[n] = { width: box.width, height: box.height };
+                  } catch (error) {
+                    /* keep page 1 geometry for this one */
+                  }
+                }
+                if (!cancelled) setPageSizes(table);
+              })();
+            }
             setState({ status: 'ready', error: '', pages: loaded.numPages });
           })
           .catch((error) => {
@@ -5021,30 +5058,48 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         const node = scrollRef.current;
         if (!node) return undefined;
         let token = 0;
-        const onWheel = (event) => {
-          if (!event.ctrlKey && !event.metaKey) return;
-          event.preventDefault();
-          const rect = node.getBoundingClientRect();
-          const anchor = {
-            ratio: (event.clientY - rect.top + node.scrollTop) / Math.max(1, node.scrollHeight),
-            offset: event.clientY - rect.top,
-            until: Date.now() + 320,
-          };
-          token += 1;
+        let pendingFactor = 1;
+        let frame = 0;
+        let anchor = null;
+        const applyZoom = () => {
+          frame = 0;
+          const factor = pendingFactor;
+          pendingFactor = 1;
+          if (factor !== 1) {
+            setZoom((z) => Math.min(4, Math.max(0.4, Math.round(z * factor * 100) / 100)));
+          }
+          if (!anchor) return;
           const mine = token;
-          const factor = event.deltaY < 0 ? 1.1 : 1 / 1.1;
-          setZoom((z) => Math.min(4, Math.max(0.4, Math.round(z * factor * 100) / 100)));
-          // Pages resize asynchronously, so a single correction would run against a
-          // stale scrollHeight and the content would jump. Keep pinning the anchor
-          // across frames until the layout settles.
+          const until = Date.now() + 240;
+          // Sizes are synchronous now, so one correction usually lands; the short loop
+          // only absorbs the frames between the state update and the new layout.
           const tick = () => {
             if (mine !== token) return;
             const target = scrollRef.current;
             if (!target) return;
             target.scrollTop = Math.max(0, anchor.ratio * target.scrollHeight - anchor.offset);
-            if (Date.now() < anchor.until) window.requestAnimationFrame(tick);
+            if (Date.now() < until) window.requestAnimationFrame(tick);
           };
           window.requestAnimationFrame(tick);
+        };
+
+        const onWheel = (event) => {
+          if (!event.ctrlKey && !event.metaKey) return;
+          event.preventDefault();
+          const node = scrollRef.current;
+          if (!node) return;
+          if (!frame) {
+            const rect = node.getBoundingClientRect();
+            anchor = {
+              ratio: (event.clientY - rect.top + node.scrollTop) / Math.max(1, node.scrollHeight),
+              offset: event.clientY - rect.top,
+            };
+            token += 1;
+          }
+          // One physical gesture emits many events: fold them into a single zoom step per
+          // frame so the layout changes once, not fifteen times.
+          pendingFactor *= event.deltaY < 0 ? 1.1 : 1 / 1.1;
+          if (!frame) frame = window.requestAnimationFrame(applyZoom);
         };
         node.addEventListener("wheel", onWheel, { passive: false });
         return () => {
@@ -5307,6 +5362,7 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
                       pdfjs: pdfjsRef.current,
                       pageNumber,
                       scale: zoom,
+                      baseSize: pageSizes[pageNumber] || baseSize,
                       markMode,
                       onRegion,
                       onSelect,

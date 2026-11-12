@@ -25,8 +25,16 @@ check(pages.includes('overflow:auto'), '滚动区仍是滚动容器');
 check(pages.includes('flex-direction: column') === false, '滚动区不再自己纵向排布（交给列容器）', pages);
 
 // 尺寸由渲染结果驱动，不能是固定小值
-check(src.includes("style: size.width ? { width: size.width + 'px', height: size.height + 'px' } : null,"), '页面尺寸来自渲染结果');
-check(src.includes('setSize({ width: viewport.width, height: viewport.height });'), '渲染后写入尺寸');
+check(
+  src.includes("style: width ? { width: width + 'px', height: height + 'px' } : null,"),
+  '页面尺寸同步算出（不等渲染）',
+);
+check(
+  src.includes('const width = Math.max(0, (baseSize && baseSize.width ? baseSize.width : 612) * scale);'),
+  '尺寸 = 页面基准 × 缩放',
+);
+check(src.includes('canvas.width = buffer.width;'), '位图另存于离屏缓冲');
+check(src.includes('ctx.drawImage(buffer, 0, 0);'), '一次 drawImage 完成替换');
 
 // 搜索与缩放的依赖没有被破坏
 check(src.includes('const search = async () => {'), '搜索仍在');

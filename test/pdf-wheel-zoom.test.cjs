@@ -16,12 +16,13 @@ check(view.includes('const zoomAnchor = React.useRef(null);'), '记录缩放锚�
 check(view.includes('node.addEventListener("wheel", onWheel, { passive: false });'), '原生非被动监听');
 check(view.includes('if (!event.ctrlKey && !event.metaKey) return;'), '只在 Ctrl/Cmd 按下时缩放');
 check(view.includes('event.preventDefault();'), '阻止浏览器整体缩放');
-check(view.includes('const factor = event.deltaY < 0 ? 1.1 : 1 / 1.1;'), '按滚动方向放大/缩小');
+check(view.includes('pendingFactor *= event.deltaY < 0 ? 1.1 : 1 / 1.1;'), '按滚动方向累积缩放系数');
 check(view.includes('setZoom((z) => Math.min(4, Math.max(0.4, Math.round(z * factor * 100) / 100)));'), '夹在 0.4–4 并取两位小数');
 check(view.includes('ratio: (event.clientY - rect.top + node.scrollTop) / Math.max(1, node.scrollHeight),'), '记录光标处的相对位置');
-check(view.includes('until: Date.now() + 320,'), '锚点保持一段时间');
+check(view.includes('const until = Date.now() + 240;'), '锚点在一小段时间内保持');
 check(view.includes('target.scrollTop = Math.max(0, anchor.ratio * target.scrollHeight - anchor.offset);'), '缩放后回到同一处');
 check(view.includes('window.requestAnimationFrame(tick);'), '逐帧校正，避免抖动');
+check(view.includes('if (!frame) frame = window.requestAnimationFrame(applyZoom);'), '一帧只应用一次缩放');
 check(view.includes('if (mine !== token) return;'), '新的滚动事件会取消旧的校正循环');
 check(!view.includes('}, [zoom]);'), '不再用单次 effect 校正（会被异步重排打乱）');
 

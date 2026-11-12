@@ -23,9 +23,9 @@ check(page.includes('bands.map((item) => item.map((value) => Math.round(value * 
 // —— 渲染：文字用带子、区域用框 ——
 check(page.includes('mark.text') && page.includes('? null'), '文字标注不再常驻渲染');
 check(page.includes('dshcv-pdftexthit'), '带子有独立类名');
-check(page.includes('className: "dshcv-pdfregion",'), '区域标注仍画框');
+check(page.includes('dshcv-pdfregion'), '区域标注仍画框');
 check(page.includes('hoverBands && hoverBands.length'), '悬停文字也按带子高亮');
-check(page.includes('className: "dshcv-pdftexthit dshcv-pdftexthit-hot",'), '悬停带子更亮');
+check(page.includes('dshcv-pdftexthit dshcv-pdftexthit-hot'), '悬停带子更亮');
 
 // —— 样式：无边框 ——
 const css = src.slice(src.indexOf("'.dshcv-pdftexthit{"), src.indexOf("'.dshcv-pdftexthit{") + 400);

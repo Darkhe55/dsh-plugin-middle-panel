@@ -1143,7 +1143,9 @@ const CSS_PANEL = [
 '.dshcv-pdfhit[data-active="1"]{background:rgba(255,138,0,.55);box-shadow:0 0 0 1px rgba(255,138,0,.85)}',
 '.dshcv-pdfregion-hot{background:rgba(79,140,255,.22)!important;box-shadow:0 0 12px rgba(79,140,255,.65)!important;border-style:solid!important}',
 '.dshcv-pdfpagebox{position:relative;overflow:hidden;background:#fff;line-height:0;border-radius:2px;box-shadow:0 2px 14px rgba(0,0,0,.16);flex:0 0 auto}',
-'.dshcv-pdfpagebox canvas{display:block}',
+'.dshcv-pdfpagebox canvas{position:absolute;inset:0;width:100%;height:100%;display:block}',
+'.dshcv-pdfpagebox[data-sharp="0"] canvas{image-rendering:auto}',
+'.dshcv-pdfpagebox{contain:paint}',
 '.dshcv-pdfcanvasbox{position:relative;align-self:center;margin:0 auto;line-height:0}',
 '.dshcv-pdfcanvas{display:block;background:#fff;box-shadow:0 2px 14px rgba(0,0,0,.16)}',
 '.dshcv-scroll{overflow:auto}',
@@ -4006,6 +4008,7 @@ const {
 pdf,
 pageNumber,
 scale,
+baseSize,
 markMode,
 onRegion,
 onSelect,
@@ -4018,9 +4021,11 @@ hoverBands,
 hoverRect,
 pdfjs,
 } = props;
-const [size, setSize] = React.useState({ width: 0, height: 0 });
+const width = Math.max(0, (baseSize && baseSize.width ? baseSize.width : 612) * scale);
+const height = Math.max(0, (baseSize && baseSize.height ? baseSize.height : 792) * scale);
 const [items, setItems] = React.useState([]);
-const [visible, setVisible] = React.useState(pageNumber === 1);
+const [renderedAt, setRenderedAt] = React.useState(0);
+const [visible, setVisible] = React.useState(pageNumber <= 2);
 const [drag, setDrag] = React.useState(null);
 const canvasRef = React.useRef(null);
 const wrapRef = React.useRef(null);
@@ -4042,8 +4047,10 @@ const observer = new IntersectionObserver(
 (entries) => {
 const entry = entries[0];
 if (!entry) return;
-if (entry.isIntersecting) setVisible(true);
-if (entry.isIntersecting && onVisible) onVisible(pageNumber, entry.intersectionRatio);
+if (entry.isIntersecting) {
+setVisible(true);
+if (onVisible) onVisible(pageNumber, entry.intersectionRatio);
+}
 },
 { rootMargin: '600px 0px' },
 );
@@ -4051,28 +4058,31 @@ observer.observe(node);
 return () => observer.disconnect();
 }, [pageNumber]);
 React.useEffect(() => {
-if (!visible || !pdf) return undefined;
+if (!visible || !pdf || !width) return undefined;
 const token = tokenRef.current + 1;
 tokenRef.current = token;
 let cancelled = false;
 (async () => {
 const page = await pdf.getPage(pageNumber);
 if (cancelled || tokenRef.current !== token) return;
-const viewport = page.getViewport({ scale });
+const viewport = page.getViewport({ scale: width / (baseSize && baseSize.width ? baseSize.width : 612) });
+const ratio = Math.min(3, window.devicePixelRatio || 1);
+const buffer = document.createElement('canvas');
+buffer.width = Math.max(1, Math.round(viewport.width * ratio));
+buffer.height = Math.max(1, Math.round(viewport.height * ratio));
+const bufferCtx = buffer.getContext('2d');
+if (!bufferCtx) return;
+bufferCtx.setTransform(ratio, 0, 0, ratio, 0, 0);
+await page.render({ canvasContext: bufferCtx, viewport }).promise;
+if (cancelled || tokenRef.current !== token) return;
 const canvas = canvasRef.current;
 if (!canvas) return;
-const ratio = Math.min(3, window.devicePixelRatio || 1);
-canvas.width = Math.round(viewport.width * ratio);
-canvas.height = Math.round(viewport.height * ratio);
-canvas.style.width = viewport.width + 'px';
-canvas.style.height = viewport.height + 'px';
-const context = canvas.getContext('2d');
-if (!context) return;
-context.setTransform(ratio, 0, 0, ratio, 0, 0);
-context.clearRect(0, 0, viewport.width, viewport.height);
-await page.render({ canvasContext: context, viewport }).promise;
-if (cancelled || tokenRef.current !== token) return;
-setSize({ width: viewport.width, height: viewport.height });
+canvas.width = buffer.width;
+canvas.height = buffer.height;
+const ctx = canvas.getContext('2d');
+if (!ctx) return;
+ctx.drawImage(buffer, 0, 0);
+setRenderedAt(viewport.width);
 const content = await textContentOf(pdf, pageNumber);
 if (cancelled || tokenRef.current !== token) return;
 const Util = pdfjs && pdfjs.Util;
@@ -4080,27 +4090,26 @@ if (!Util) {
 setItems([]);
 return;
 }
+const measure = document.createElement('canvas').getContext('2d');
 const spans = [];
-const measureCanvas = document.createElement("canvas");
-const measureCtx = measureCanvas.getContext("2d");
 for (const item of content.items || []) {
-if (!item || typeof item.str !== "string" || !item.str.trim()) continue;
+if (!item || typeof item.str !== 'string' || !item.str.trim()) continue;
 const transform = Util.transform(viewport.transform, item.transform);
 const fontHeight = Math.hypot(transform[2], transform[3]);
 if (!fontHeight) continue;
-const width = Math.max(0, Number(item.width) || 0) * viewport.scale;
+const spanWidth = Math.max(0, Number(item.width) || 0) * viewport.scale;
 let scaleX = 1;
-if (measureCtx && width > 0) {
-measureCtx.font = fontHeight + "px sans-serif";
-const measured = measureCtx.measureText(item.str).width;
-if (measured > 0) scaleX = width / measured;
+if (measure && spanWidth > 0) {
+measure.font = fontHeight + 'px sans-serif';
+const measured = measure.measureText(item.str).width;
+if (measured > 0) scaleX = spanWidth / measured;
 }
 spans.push({
 str: item.str,
 left: transform[4],
 top: transform[5] - fontHeight,
 fontHeight,
-width,
+width: spanWidth,
 scaleX,
 });
 }
@@ -4109,7 +4118,7 @@ setItems(spans);
 return () => {
 cancelled = true;
 };
-}, [visible, pageNumber, scale, pdf]);
+}, [visible, pageNumber, width, pdf]);
 const toFraction = (event) => {
 const wrap = wrapRef.current;
 if (!wrap) return null;
@@ -4156,7 +4165,7 @@ const readSelection = () => {
 const wrap = wrapRef.current;
 const active = window.getSelection ? window.getSelection() : null;
 if (!wrap || !active || active.isCollapsed) return;
-const text = String(active.toString() || "").replace(/\s+$/g, "");
+const text = String(active.toString() || '').replace(/\s+$/g, '');
 if (!text.trim()) return;
 const box = wrap.getBoundingClientRect();
 const fragments = Array.from(active.getRangeAt(0).getClientRects()).filter(
@@ -4190,8 +4199,9 @@ return h(
 {
 ref: wrapRef,
 className: 'dshcv-pdfpagebox',
-style: size.width ? { width: size.width + 'px', height: size.height + 'px' } : null,
+style: width ? { width: width + 'px', height: height + 'px' } : null,
 'data-page': pageNumber,
+'data-sharp': renderedAt && Math.abs(renderedAt - width) < 1 ? '1' : '0',
 },
 h('canvas', { ref: canvasRef, className: 'dshcv-pdfcanvas' }),
 h(
@@ -4219,16 +4229,16 @@ item.str,
 ),
 pageHits.map((hit, index) =>
 (hit.rects || [hit.rect]).map((rect, rectIndex) =>
-h("div", {
-key: "hit" + index + "-" + rectIndex,
-className: "dshcv-pdfhit",
-"data-active":
-activeHit && activeHit.page === pageNumber && activeHit.index === hit.index ? "1" : "0",
+h('div', {
+key: 'hit' + index + '-' + rectIndex,
+className: 'dshcv-pdfhit',
+'data-active':
+activeHit && activeHit.page === pageNumber && activeHit.index === hit.index ? '1' : '0',
 style: {
-left: rect[0] * 100 + "%",
-top: rect[1] * 100 + "%",
-width: rect[2] * 100 + "%",
-height: rect[3] * 100 + "%",
+left: rect[0] * 100 + '%',
+top: rect[1] * 100 + '%',
+width: rect[2] * 100 + '%',
+height: rect[3] * 100 + '%',
 },
 }),
 ),
@@ -4236,38 +4246,38 @@ height: rect[3] * 100 + "%",
 pageMarks.map((mark, index) =>
 mark.text
 ? null
-: h("div", {
-key: "mark" + index,
-className: "dshcv-pdfregion",
+: h('div', {
+key: 'mark' + index,
+className: 'dshcv-pdfregion',
 style: {
-left: mark.rect[0] * 100 + "%",
-top: mark.rect[1] * 100 + "%",
-width: mark.rect[2] * 100 + "%",
-height: mark.rect[3] * 100 + "%",
+left: mark.rect[0] * 100 + '%',
+top: mark.rect[1] * 100 + '%',
+width: mark.rect[2] * 100 + '%',
+height: mark.rect[3] * 100 + '%',
 },
 }),
 ),
 hoverBands && hoverBands.length
 ? hoverBands.map((band, bandIndex) =>
-h("div", {
-key: "hover" + bandIndex,
-className: "dshcv-pdftexthit dshcv-pdftexthit-hot",
+h('div', {
+key: 'hover' + bandIndex,
+className: 'dshcv-pdftexthit dshcv-pdftexthit-hot',
 style: {
-left: band[0] * 100 + "%",
-top: band[1] * 100 + "%",
-width: band[2] * 100 + "%",
-height: band[3] * 100 + "%",
+left: band[0] * 100 + '%',
+top: band[1] * 100 + '%',
+width: band[2] * 100 + '%',
+height: band[3] * 100 + '%',
 },
 }),
 )
 : hoverRect
-? h("div", {
-className: "dshcv-pdfregion dshcv-pdfregion-hot",
+? h('div', {
+className: 'dshcv-pdfregion dshcv-pdfregion-hot',
 style: {
-left: hoverRect[0] * 100 + "%",
-top: hoverRect[1] * 100 + "%",
-width: hoverRect[2] * 100 + "%",
-height: hoverRect[3] * 100 + "%",
+left: hoverRect[0] * 100 + '%',
+top: hoverRect[1] * 100 + '%',
+width: hoverRect[2] * 100 + '%',
+height: hoverRect[3] * 100 + '%',
 },
 })
 : null,
@@ -4345,6 +4355,8 @@ const [hitIndex, setHitIndex] = React.useState(0);
 const [selection, setSelection] = React.useState(null);
 const [width, setWidth] = React.useState(760);
 const [searching, setSearching] = React.useState(false);
+const [pageSizes, setPageSizes] = React.useState({});
+const [baseSize, setBaseSize] = React.useState(null);
 const docRef = React.useRef(null);
 const pdfjsRef = React.useRef(null);
 const scrollRef = React.useRef(null);
@@ -4378,6 +4390,24 @@ data: bytes,
 const loaded = await task.promise;
 if (cancelled) return;
 docRef.current = loaded;
+const first = await loaded.getPage(1);
+const firstBox = first.getViewport({ scale: 1 });
+setBaseSize({ width: firstBox.width, height: firstBox.height });
+if (!cancelled) {
+(async () => {
+const table = { 1: { width: firstBox.width, height: firstBox.height } };
+for (let n = 2; n <= loaded.numPages; n += 1) {
+if (cancelled) return;
+try {
+const page = await loaded.getPage(n);
+const box = page.getViewport({ scale: 1 });
+table[n] = { width: box.width, height: box.height };
+} catch (error) {
+}
+}
+if (!cancelled) setPageSizes(table);
+})();
+}
 setState({ status: 'ready', error: '', pages: loaded.numPages });
 })
 .catch((error) => {
@@ -4452,27 +4482,43 @@ React.useEffect(() => {
 const node = scrollRef.current;
 if (!node) return undefined;
 let token = 0;
-const onWheel = (event) => {
-if (!event.ctrlKey && !event.metaKey) return;
-event.preventDefault();
-const rect = node.getBoundingClientRect();
-const anchor = {
-ratio: (event.clientY - rect.top + node.scrollTop) / Math.max(1, node.scrollHeight),
-offset: event.clientY - rect.top,
-until: Date.now() + 320,
-};
-token += 1;
-const mine = token;
-const factor = event.deltaY < 0 ? 1.1 : 1 / 1.1;
+let pendingFactor = 1;
+let frame = 0;
+let anchor = null;
+const applyZoom = () => {
+frame = 0;
+const factor = pendingFactor;
+pendingFactor = 1;
+if (factor !== 1) {
 setZoom((z) => Math.min(4, Math.max(0.4, Math.round(z * factor * 100) / 100)));
+}
+if (!anchor) return;
+const mine = token;
+const until = Date.now() + 240;
 const tick = () => {
 if (mine !== token) return;
 const target = scrollRef.current;
 if (!target) return;
 target.scrollTop = Math.max(0, anchor.ratio * target.scrollHeight - anchor.offset);
-if (Date.now() < anchor.until) window.requestAnimationFrame(tick);
+if (Date.now() < until) window.requestAnimationFrame(tick);
 };
 window.requestAnimationFrame(tick);
+};
+const onWheel = (event) => {
+if (!event.ctrlKey && !event.metaKey) return;
+event.preventDefault();
+const node = scrollRef.current;
+if (!node) return;
+if (!frame) {
+const rect = node.getBoundingClientRect();
+anchor = {
+ratio: (event.clientY - rect.top + node.scrollTop) / Math.max(1, node.scrollHeight),
+offset: event.clientY - rect.top,
+};
+token += 1;
+}
+pendingFactor *= event.deltaY < 0 ? 1.1 : 1 / 1.1;
+if (!frame) frame = window.requestAnimationFrame(applyZoom);
 };
 node.addEventListener("wheel", onWheel, { passive: false });
 return () => {
@@ -4719,6 +4765,7 @@ pdf,
 pdfjs: pdfjsRef.current,
 pageNumber,
 scale: zoom,
+baseSize: pageSizes[pageNumber] || baseSize,
 markMode,
 onRegion,
 onSelect,
