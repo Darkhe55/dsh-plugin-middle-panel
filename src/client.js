@@ -296,30 +296,12 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
       if (left.kind === 'text') return Boolean(left.lines && right.lines) && left.lines[0] === right.lines[0] && left.lines[1] === right.lines[1];
       if (left.kind === 'element' || left.kind === 'layer') return left.selector === right.selector;
       if (left.kind === 'paragraph') return left.paragraph === right.paragraph;
-      // Accepts 12.4 / 1:23.4 / 01:02:03.5 — the three shapes a reviewer types.
-    const parseTime = (text) => {
-      // Lenient on purpose: "1:" means one minute, ":30" means half a minute.
-      const raw = String(text === undefined || text === null ? '' : text).replace(/\s+/g, '');
-      if (!raw) return NaN;
-      const parts = raw.split(':');
-      if (parts.length > 3) return NaN;
-      let total = 0;
-      for (const part of parts) {
-        if (part === '') {
-          total *= 60;
-          continue;
-        }
-        if (!/^\d+(\.\d+)?$/.test(part)) return NaN;
-        total = total * 60 + Number(part);
-      }
-      return total;
-    };
 
     // A clip mark is the same spot when both ends land within a fifth of a second.
-if (left.kind === 'video') {
-return Math.abs(Number(left.start) - Number(right.start)) <= 0.2 && Math.abs(Number(left.end) - Number(right.end)) <= 0.2;
-}
-// A generic pick: page, cell, slide, triangle, layer or pixel, identified by
+      if (left.kind === 'video') {
+        return Math.abs(Number(left.start) - Number(right.start)) <= 0.2 && Math.abs(Number(left.end) - Number(right.end)) <= 0.2;
+      }
+      // A generic pick: page, cell, slide, triangle, layer or pixel, identified by
       // its human-readable locator.
       if (left.kind === 'spot') return left.label === right.label;
       if (left.kind === 'region') {
@@ -687,6 +669,24 @@ return Math.abs(Number(left.start) - Number(right.start)) <= 0.2 && Math.abs(Num
             timeLabel(mark) + (Array.isArray(mark.rect) ? ' · 画面区域' : ''),
           )
         : markWhere(mark);
+
+    const parseTime = (text) => {
+    // Lenient on purpose: "1:" means one minute, ":30" means half a minute.
+    const raw = String(text === undefined || text === null ? '' : text).replace(/\s+/g, '');
+    if (!raw) return NaN;
+    const parts = raw.split(':');
+    if (parts.length > 3) return NaN;
+    let total = 0;
+    for (const part of parts) {
+      if (part === '') {
+        total *= 60;
+        continue;
+      }
+      if (!/^\d+(\.\d+)?$/.test(part)) return NaN;
+      total = total * 60 + Number(part);
+    }
+    return total;
+    };
 
     const markWhere = (mark) =>
       mark.kind === 'text'

@@ -11,7 +11,8 @@ const has = (text) => src.includes(text);
 
 // ---- 解析：宽容缺项 ----
 const start = src.indexOf('    const parseTime = (text) => {');
-const end = src.indexOf('    // A clip mark is the same spot');
+// parseTime 现在紧挨着 markWhere，用它当结束锚点（旧的注释锚点已随重构消失）
+const end = src.indexOf('    const markWhere = (mark) =>');
 const parse = new Function(src.slice(start, end) + '\nreturn parseTime;')();
 check(parse('1:') === 60, '"1:" 视为 1 分钟', String(parse('1:')));
 check(parse(':30') === 30, '":30" 视为 30 秒', String(parse(':30')));

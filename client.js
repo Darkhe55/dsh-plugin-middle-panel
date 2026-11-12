@@ -234,22 +234,6 @@ if (left.kind !== right.kind || !sameFile(left.path, right.path)) return false;
 if (left.kind === 'text') return Boolean(left.lines && right.lines) && left.lines[0] === right.lines[0] && left.lines[1] === right.lines[1];
 if (left.kind === 'element' || left.kind === 'layer') return left.selector === right.selector;
 if (left.kind === 'paragraph') return left.paragraph === right.paragraph;
-const parseTime = (text) => {
-const raw = String(text === undefined || text === null ? '' : text).replace(/\s+/g, '');
-if (!raw) return NaN;
-const parts = raw.split(':');
-if (parts.length > 3) return NaN;
-let total = 0;
-for (const part of parts) {
-if (part === '') {
-total *= 60;
-continue;
-}
-if (!/^\d+(\.\d+)?$/.test(part)) return NaN;
-total = total * 60 + Number(part);
-}
-return total;
-};
 if (left.kind === 'video') {
 return Math.abs(Number(left.start) - Number(right.start)) <= 0.2 && Math.abs(Number(left.end) - Number(right.end)) <= 0.2;
 }
@@ -573,6 +557,22 @@ onClick: () => seekVideoMark(mark),
 timeLabel(mark) + (Array.isArray(mark.rect) ? ' · 画面区域' : ''),
 )
 : markWhere(mark);
+const parseTime = (text) => {
+const raw = String(text === undefined || text === null ? '' : text).replace(/\s+/g, '');
+if (!raw) return NaN;
+const parts = raw.split(':');
+if (parts.length > 3) return NaN;
+let total = 0;
+for (const part of parts) {
+if (part === '') {
+total *= 60;
+continue;
+}
+if (!/^\d+(\.\d+)?$/.test(part)) return NaN;
+total = total * 60 + Number(part);
+}
+return total;
+};
 const markWhere = (mark) =>
 mark.kind === 'text'
 ? mark.lines && mark.lines[0] === mark.lines[1]
