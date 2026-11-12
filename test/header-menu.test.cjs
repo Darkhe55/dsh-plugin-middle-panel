@@ -1,6 +1,7 @@
+const { readSource } = require('./_source.cjs');
 // 头部「⋯」：窄面板折叠的次要操作入口，必须点得动且点了有内容。
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 
 let failures = 0;
 const check = (ok, label, detail) => {

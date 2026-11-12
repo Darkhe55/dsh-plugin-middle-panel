@@ -1,6 +1,7 @@
+const { readSource } = require('./_source.cjs');
 // 命中与跟随标注都要把目标滚到可视区中央，且能承受标注列表展开引起的布局变化。
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 
 let failures = 0;
 const check = (ok, label, detail) => {

@@ -1,6 +1,7 @@
+const { readSource } = require('./_source.cjs');
 // 文字标注按行高亮，不画外框；区域标注仍画框。
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 
 let failures = 0;
 const check = (ok, label, detail) => {

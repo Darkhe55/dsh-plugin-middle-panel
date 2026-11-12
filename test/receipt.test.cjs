@@ -1,6 +1,7 @@
+const { readSource } = require('./_source.cjs');
 // C3/C4: sending groups by file and skips the marks already ticked off.
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 const start = src.indexOf('const buildMarkdown = () => {');
 const end = src.indexOf('const insertIntoComposer = (text) => {');
 if (start < 0 || end < 0) {

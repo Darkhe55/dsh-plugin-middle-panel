@@ -1,6 +1,7 @@
+const { readSource } = require('./_source.cjs');
 // Verifies the line diff behind the "what changed" view.
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 const start = src.indexOf('const diffLines =');
 const end = src.indexOf('function TextDoc(props)');
 if (start < 0 || end < 0) {

@@ -1,6 +1,7 @@
+const { readSource } = require('./_source.cjs');
 // 精确时间轴：四态按钮、入出点互斥、Alt+滚轮缩放窗口。
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 
 let failures = 0;
 const check = (ok, label, detail) => {

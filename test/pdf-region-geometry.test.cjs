@@ -1,6 +1,7 @@
+const { readSource } = require('./_source.cjs');
 // 框选坐标与页面同处一个缩放容器：布局变化（标注列表展开）不得造成偏移。
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 
 let failures = 0;
 const check = (ok, label, detail) => {

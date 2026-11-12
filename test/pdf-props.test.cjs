@@ -1,6 +1,7 @@
+const { readSource } = require('./_source.cjs');
 // 组件用到的 props 必须真的被解构出来：hoverBands 漏解构曾让整个 PDF 视图被隔离。
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 
 let failures = 0;
 const check = (ok, label, detail) => {

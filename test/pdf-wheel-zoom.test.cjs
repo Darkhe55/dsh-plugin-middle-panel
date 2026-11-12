@@ -1,6 +1,7 @@
+const { readSource } = require('./_source.cjs');
 // Ctrl（Cmd）+ 滚轮缩放页面，并保持光标下的内容不动。
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 
 let failures = 0;
 const check = (ok, label, detail) => {

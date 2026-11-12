@@ -1,8 +1,9 @@
+const { readSource } = require('./_source.cjs');
 // 结构检查（局部匹配版）：模块级函数不能落在别的函数体范围里。
 // parseTime 曾被插进 sameLocator 内部，运行时报 "parseTime is not defined"，
 // 而所有基于文本匹配的测试都没发现——所以补这条。
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 const lines = src.split('\n');
 
 let failures = 0;

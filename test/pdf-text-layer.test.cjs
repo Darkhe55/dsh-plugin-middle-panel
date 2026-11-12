@@ -1,6 +1,7 @@
+const { readSource } = require('./_source.cjs');
 // PDF 文字层：可选中、可复制，并能把选中文字变成标注。
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 
 let failures = 0;
 const check = (ok, label, detail) => {

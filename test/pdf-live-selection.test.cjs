@@ -1,6 +1,7 @@
+const { readSource } = require('./_source.cjs');
 // 路线 B：浏览器负责选区语义，我们负责外观。
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 
 let failures = 0;
 const check = (ok, label, detail) => {

@@ -1,8 +1,9 @@
+const { readSource } = require('./_source.cjs');
 // A3: the control vocabulary is a contract, so a refactor that quietly turns a
 // switch back into a button should fail here instead of in a screenshot.
 const fs = require('fs');
 
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 const built = fs.readFileSync('client.js', 'utf8');
 
 let failures = 0;

@@ -1,7 +1,8 @@
+const { readSource } = require('./_source.cjs');
 // 可选区域的宽度必须等于页面文字宽度：scaleX 会同时缩小布局盒，
 // 所以布局宽度要按缩放反算回来；宽度本身按行做像素级校正。
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 
 let failures = 0;
 const check = (ok, label, detail) => {

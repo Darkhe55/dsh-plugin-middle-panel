@@ -1,6 +1,7 @@
+const { readSource } = require('./_source.cjs');
 // 缩放稳定性：布局尺寸同步、位图双缓冲、滚轮按帧合并。
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 
 let failures = 0;
 const check = (ok, label, detail) => {

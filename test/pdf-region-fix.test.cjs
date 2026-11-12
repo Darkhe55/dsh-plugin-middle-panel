@@ -1,6 +1,7 @@
+const { readSource } = require('./_source.cjs');
 // 框选坐标以 iframe 为准、标注文案带位置、工具栏不再出现进程说明。
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 
 let failures = 0;
 const check = (ok, label, detail) => {

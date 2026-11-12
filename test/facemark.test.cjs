@@ -1,6 +1,7 @@
+const { readSource } = require('./_source.cjs');
 // A 3D mark must carry enough to find the same face again.
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 const start = src.indexOf('const markToBlock = (mark) => {');
 const end = src.indexOf('const buildMarkdown');
 if (start < 0 || end < 0) {

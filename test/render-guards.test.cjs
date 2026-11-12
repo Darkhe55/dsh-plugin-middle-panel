@@ -1,8 +1,9 @@
+const { readSource } = require('./_source.cjs');
 // Guard against the regressions seen this round: a React element concatenated with
 // `+` (renders "[object Object]"), and a primary button whose styling depends on
 // anything that can fail to resolve.
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 
 let failures = 0;
 const check = (ok, label, detail) => {

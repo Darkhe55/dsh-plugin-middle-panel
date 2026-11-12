@@ -1,6 +1,7 @@
+const { readSource } = require('./_source.cjs');
 // 选中文字按视觉顺序拼接：DOM 顺序不等于阅读顺序时，引用原文必须与看到的一致。
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 
 let failures = 0;
 const check = (ok, label, detail) => {

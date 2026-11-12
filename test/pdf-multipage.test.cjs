@@ -1,6 +1,7 @@
+const { readSource } = require('./_source.cjs');
 // 连续滚动、缩略图侧栏、全文搜索三项能力。
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 
 let failures = 0;
 const check = (ok, label, detail) => {

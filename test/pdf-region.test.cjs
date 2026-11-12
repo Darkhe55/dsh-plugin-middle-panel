@@ -1,6 +1,7 @@
+const { readSource } = require('./_source.cjs');
 // PDF 框选标注：内置阅读器拦不住点击，就用一层自己的捕获层。
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 
 let failures = 0;
 const check = (ok, label, detail) => {

@@ -1,7 +1,8 @@
+const { readSource } = require('./_source.cjs');
 // Collada geometry: the indirection, the index maths, and the DOM reading, without
 // a browser. The fake DOM implements only the handful of methods the reader uses.
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 const start = src.indexOf('const readCollada = (xml) => {');
 const end = src.indexOf('const parseCollada = (bytes) => {');
 if (start < 0 || end < 0) {

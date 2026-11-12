@@ -1,8 +1,9 @@
+const { readSource } = require('./_source.cjs');
 // The SVG sanitizer is the only place where workspace content is injected into this
 // page's origin, so its blocklist is a security contract, not an implementation detail.
 const fs = require('fs');
 
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 const start = src.indexOf('const sanitizeSvg = (text) => {');
 const end = src.indexOf('function SvgDoc(props) {');
 if (start < 0 || end < 0) {

@@ -1,6 +1,7 @@
+const { readSource } = require('./_source.cjs');
 // 逐字符 span + 累积宽度分配：每个字的框独立，切片之和恒等于整个 run 的宽度。
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 
 let failures = 0;
 const check = (ok, label, detail) => {

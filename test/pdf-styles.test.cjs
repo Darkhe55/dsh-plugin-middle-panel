@@ -1,7 +1,8 @@
+const { readSource } = require('./_source.cjs');
 // 每个 pdf 视图的 className 都必须有对应样式，尤其页面盒子必须是定位祖先——
 // 缺 position:relative 时绝对定位的覆盖层会跑到外层，把工具栏整条盖住。
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 
 let failures = 0;
 const check = (ok, label, detail) => {

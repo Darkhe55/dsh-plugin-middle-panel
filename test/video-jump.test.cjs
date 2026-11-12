@@ -1,6 +1,7 @@
+const { readSource } = require('./_source.cjs');
 // 时间跳转（含宽容解析与"跳到"按钮）、菜单不越界、标注悬停高亮。
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 
 let failures = 0;
 const check = (ok, label, detail) => {

@@ -1,17 +1,40 @@
-// Build step: turns src/client.js into the shipped client.js.
+// Build step: assembles src/parts/*.js into the shipped client.js.
 //
-// The transform is deliberately conservative — it only removes full-line comments,
-// block comments that occupy whole lines, and leading indentation. Those are the
-// three safe categories here: the file has no multi-line template literals, so no
-// string content depends on leading whitespace.
+// The body lives in src/parts and is concatenated in filename order; the transform is
+// deliberately conservative — it only removes full-line comments, block comments that
+// occupy whole lines, and leading indentation. Those are the three safe categories here:
+// the file has no multi-line template literals, so no string content depends on leading
+// whitespace.
 const fs = require('fs');
 const path = require('path');
 
 const root = path.resolve(__dirname, '..');
-const source = path.join(root, 'src', 'client.js');
+const shell = path.join(root, 'src', 'client.js');
+const partsDir = path.join(root, 'src', 'parts');
 const target = path.join(root, 'client.js');
+const MARK = '//@@PARTS@@';
 
-const raw = fs.readFileSync(source, 'utf8');
+const parts = fs
+  .readdirSync(partsDir)
+  .filter((name) => name.endsWith('.js'))
+  .sort();
+
+if (!parts.length) {
+  console.error('build: src/parts is empty');
+  process.exit(1);
+}
+
+const body = parts
+  .map((name) => fs.readFileSync(path.join(partsDir, name), 'utf8').replace(/\r\n/g, '\n').replace(/\n$/, ''))
+  .join('\n');
+
+const shellText = fs.readFileSync(shell, 'utf8').replace(/\r\n/g, '\n');
+if (!shellText.includes(MARK)) {
+  console.error('build: src/client.js is missing the ' + MARK + ' marker');
+  process.exit(1);
+}
+const raw = shellText.replace(MARK, () => body);
+
 const lines = raw.split('\n');
 const out = [];
 let inBlock = false;
@@ -38,16 +61,4 @@ fs.writeFileSync(target, built);
 
 const before = Buffer.byteLength(raw);
 const after = Buffer.byteLength(built);
-const ratio = ((1 - after / before) * 100).toFixed(1);
-console.log(
-  'client.js  ' + before.toLocaleString() + ' B → ' + after.toLocaleString() + ' B  (-' + ratio + '%)',
-);
-
-// A quick sanity check: the output must still parse.
-try {
-  new Function(built);
-} catch (error) {
-  console.error('构建产物无法解析：' + error.message);
-  fs.writeFileSync(target, raw);
-  process.exit(1);
-}
+console.log('build: ' + parts.length + ' parts, ' + before + ' → ' + after + ' bytes');

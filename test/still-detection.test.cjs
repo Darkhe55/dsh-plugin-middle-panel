@@ -1,6 +1,7 @@
+const { readSource } = require('./_source.cjs');
 // 静止判定与选择器握手：SVG 的时间轴不能当作"在动"。
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 
 let failures = 0;
 const check = (ok, label, detail) => {

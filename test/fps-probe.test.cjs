@@ -1,6 +1,7 @@
+const { readSource } = require('./_source.cjs');
 // 帧率探测：用合成的最小 MP4 结构验证解析器，避免依赖真实素材。
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 
 let failures = 0;
 const check = (ok, label, detail) => {

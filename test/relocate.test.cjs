@@ -1,7 +1,8 @@
+const { readSource } = require('./_source.cjs');
 // Exercises the relocation helpers by extracting them from the source and feeding
 // them edited documents: the mark must follow its passage, not its old line number.
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 
 const start = src.indexOf('const similarChars = (left, right) => {');
 const end = src.indexOf('const addMark = (partial) => {');

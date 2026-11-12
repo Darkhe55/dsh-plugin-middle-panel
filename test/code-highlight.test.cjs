@@ -1,6 +1,7 @@
+const { readSource } = require('./_source.cjs');
 // 分词器的真实行为：不是文本形状，而是真的把代码切成带类名的片段。
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 
 let failures = 0;
 const check = (ok, label, detail) => {

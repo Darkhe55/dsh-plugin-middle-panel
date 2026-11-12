@@ -1,6 +1,7 @@
+const { readSource } = require('./_source.cjs');
 // 中文选区也必须让标注按钮出现：取词失败不能中断选区上报。
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 
 let failures = 0;
 const check = (ok, label, detail) => {

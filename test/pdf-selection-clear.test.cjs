@@ -1,6 +1,7 @@
+const { readSource } = require('./_source.cjs');
 // 取消选择时，工具栏按钮必须同步失效：色带清空与父组件状态是一体的。
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 
 let failures = 0;
 const check = (ok, label, detail) => {

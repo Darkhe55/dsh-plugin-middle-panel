@@ -1,6 +1,7 @@
+const { readSource } = require('./_source.cjs');
 // The rail shows paths, so two files with the same name stay distinguishable.
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 const start = src.indexOf('const shortenPath = (path, max) => {');
 const end = src.indexOf('// One file, one tab');
 if (start < 0 || end < 0) {

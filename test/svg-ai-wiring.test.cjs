@@ -1,6 +1,7 @@
+const { readSource } = require('./_source.cjs');
 // SVG 点击标注的接线：iframe 放行后，父窗口不能再用 paused 拦一次。
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 
 let failures = 0;
 const check = (ok, label, detail) => {

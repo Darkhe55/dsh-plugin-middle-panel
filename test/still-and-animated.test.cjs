@@ -1,6 +1,7 @@
+const { readSource } = require('./_source.cjs');
 // 无动画的 html/svg 不显示暂停条、可直接拾取；动图能播放也能暂停。
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 
 let failures = 0;
 const check = (ok, label, detail) => {

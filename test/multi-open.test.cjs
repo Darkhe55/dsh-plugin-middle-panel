@@ -1,7 +1,8 @@
+const { readSource } = require('./_source.cjs');
 // One canvas call may name several deliverables; each opens as its own tab and the
 // first one becomes active.
 const fs = require('fs');
-const client = fs.readFileSync('src/client.js', 'utf8');
+const client = readSource();
 const host = fs.readFileSync('index.js', 'utf8');
 
 let failures = 0;

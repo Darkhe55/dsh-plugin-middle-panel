@@ -1,6 +1,7 @@
+const { readSource } = require('./_source.cjs');
 // 工具栏必须常驻：多页滚动时仍能点到标注按钮。
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 
 let failures = 0;
 const check = (ok, label, detail) => {

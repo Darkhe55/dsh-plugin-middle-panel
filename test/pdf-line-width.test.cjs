@@ -1,6 +1,7 @@
+const { readSource } = require('./_source.cjs');
 // 行级宽度校正：PDF 声明的字宽若整体偏小，误差会沿行累积，所以按行实测墨迹并整行缩放。
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 
 let failures = 0;
 const check = (ok, label, detail) => {

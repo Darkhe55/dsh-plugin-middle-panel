@@ -1,6 +1,7 @@
+const { readSource } = require('./_source.cjs');
 // 搜索命中只标匹配片段，清空输入框立刻撤掉标记。
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 
 let failures = 0;
 const check = (ok, label, detail) => {

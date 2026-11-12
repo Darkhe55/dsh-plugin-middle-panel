@@ -1,6 +1,7 @@
+const { readSource } = require('./_source.cjs');
 // 代码高亮的接线与外观：token 要真的渲染出来，配色与缩进导引要在。
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 
 let failures = 0;
 const check = (ok, label, detail) => {

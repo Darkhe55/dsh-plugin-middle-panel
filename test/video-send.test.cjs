@@ -1,6 +1,7 @@
+const { readSource } = require('./_source.cjs');
 // 视频标注必须能走完现有的发送流程：markToBlock → buildMarkdown → 发送。
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 
 let failures = 0;
 const check = (ok, label, detail) => {

@@ -1,7 +1,8 @@
+const { readSource } = require('./_source.cjs');
 // 自带 PDF 渲染：pdf.js 从插件树按需加载，区域坐标以画布（真实页面）为准。
 const fs = require('fs');
 const path = require('path');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 
 let failures = 0;
 const check = (ok, label, detail) => {

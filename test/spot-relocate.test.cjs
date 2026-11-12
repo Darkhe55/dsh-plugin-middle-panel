@@ -1,6 +1,7 @@
+const { readSource } = require('./_source.cjs');
 // A1: a 3D mark must survive a re-export, and admit when it cannot.
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 const start = src.indexOf('const relocateSpotMarks = (path, positions, radius) => {');
 const end = src.indexOf('const addMark = (partial) => {');
 if (start < 0 || end < 0) {

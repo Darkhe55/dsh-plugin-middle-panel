@@ -1,6 +1,7 @@
+const { readSource } = require('./_source.cjs');
 // A5: sending one mark and the auto-clear preference must not fight each other.
 const fs = require('fs');
-const src = fs.readFileSync('src/client.js', 'utf8');
+const src = readSource();
 const start = src.indexOf('const sendOneMark = (mark) => {');
 const end = src.indexOf('const exportMarks = () => {');
 if (start < 0 || end < 0) {
