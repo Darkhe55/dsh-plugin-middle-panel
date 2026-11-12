@@ -270,3 +270,23 @@
 
 
 
+
+## PDF 源码布局
+
+`src/client.js` 只是加载壳，正文按职责放在 `src/parts/`，由 `scripts/build.cjs` 按文件名顺序拼接后再做去注释/缩进变换：
+
+| 片段 | 职责 |
+|---|---|
+| `00-head.js` | store、通用工具、非 PDF 视图 |
+| `20-pdf-vendor.js` | pdf.js 动态加载与 vendor 路径 |
+| `30-pdf-text.js` | 页面文本缓存 |
+| `35-pdf-selection.js` | 视觉顺序取词 |
+| `40-pdf-metrics.js` | 测量字体与累积宽度表 |
+| `45-pdf-ink.js` | 渲染像素墨迹测量 |
+| `60-pdf-page.js` | 单页渲染、文字层、覆盖层 |
+| `70-pdf-thumb.js` | 缩略图 |
+| `80-pdf-viewer.js` | 文档、缩放、搜索、选区编排 |
+| `85-pdf-wrapper.js` | 失败回退 |
+| `90-tail.js` | 其余视图与导出 |
+
+测试通过 `test/_source.cjs` 读取同一份拼接结果，不要直接读 `src/client.js`。
