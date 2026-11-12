@@ -20,7 +20,7 @@
       const width = Math.max(0, (baseSize && baseSize.width ? baseSize.width : 612) * scale);
       const height = Math.max(0, (baseSize && baseSize.height ? baseSize.height : 792) * scale);
       const [items, setItems] = React.useState([]);
-      const [renderedAt, setRenderedAt] = React.useState(0);
+
       const [visible, setVisible] = React.useState(pageNumber <= 2);
       const [drag, setDrag] = React.useState(null);
       const [live, setLive] = React.useState([]);
@@ -86,7 +86,7 @@
           const ctx = canvas.getContext('2d');
           if (!ctx) return;
           ctx.drawImage(buffer, 0, 0);
-          setRenderedAt(viewport.width);
+
           const content = await textContentOf(pdf, pageNumber);
           if (cancelled || tokenRef.current !== token) return;
           const Util = pdfjs && pdfjs.Util;
@@ -317,7 +317,7 @@ for (let index = 0; index < rawItems.length; index += 1) {
           className: 'dshcv-pdfpagebox',
           style: width ? { width: width + 'px', height: height + 'px' } : null,
           'data-page': pageNumber,
-          'data-sharp': renderedAt && Math.abs(renderedAt - width) < 1 ? '1' : '0',
+
         },
         h('canvas', { ref: canvasRef, className: 'dshcv-pdfcanvas' }),
         h(

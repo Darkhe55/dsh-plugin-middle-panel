@@ -1144,7 +1144,6 @@ const CSS_PANEL = [
 '.dshcv-pdfregion-hot{background:rgba(79,140,255,.22)!important;box-shadow:0 0 12px rgba(79,140,255,.65)!important;border-style:solid!important}',
 '.dshcv-pdfpagebox{position:relative;overflow:hidden;background:#fff;line-height:0;border-radius:2px;box-shadow:0 2px 14px rgba(0,0,0,.16);flex:0 0 auto}',
 '.dshcv-pdfpagebox canvas{position:absolute;inset:0;width:100%;height:100%;display:block}',
-'.dshcv-pdfpagebox[data-sharp="0"] canvas{image-rendering:auto}',
 '.dshcv-pdfpagebox{contain:paint}',
 '.dshcv-pdfcanvasbox{position:relative;align-self:center;margin:0 auto;line-height:0}',
 '.dshcv-pdfcanvas{display:block;background:#fff;box-shadow:0 2px 14px rgba(0,0,0,.16)}',
@@ -4068,7 +4067,6 @@ pdfjs,
 const width = Math.max(0, (baseSize && baseSize.width ? baseSize.width : 612) * scale);
 const height = Math.max(0, (baseSize && baseSize.height ? baseSize.height : 792) * scale);
 const [items, setItems] = React.useState([]);
-const [renderedAt, setRenderedAt] = React.useState(0);
 const [visible, setVisible] = React.useState(pageNumber <= 2);
 const [drag, setDrag] = React.useState(null);
 const [live, setLive] = React.useState([]);
@@ -4127,7 +4125,6 @@ canvas.height = buffer.height;
 const ctx = canvas.getContext('2d');
 if (!ctx) return;
 ctx.drawImage(buffer, 0, 0);
-setRenderedAt(viewport.width);
 const content = await textContentOf(pdf, pageNumber);
 if (cancelled || tokenRef.current !== token) return;
 const Util = pdfjs && pdfjs.Util;
@@ -4323,7 +4320,6 @@ ref: wrapRef,
 className: 'dshcv-pdfpagebox',
 style: width ? { width: width + 'px', height: height + 'px' } : null,
 'data-page': pageNumber,
-'data-sharp': renderedAt && Math.abs(renderedAt - width) < 1 ? '1' : '0',
 },
 h('canvas', { ref: canvasRef, className: 'dshcv-pdfcanvas' }),
 h(

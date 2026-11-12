@@ -1337,7 +1337,7 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
     '.dshcv-pdfpagebox canvas{position:absolute;inset:0;width:100%;height:100%;display:block}',
     // While the sharper bitmap is still being produced the stretched one shows; the
     // flag exists so a future step can dim it instead of adding a transition.
-    '.dshcv-pdfpagebox[data-sharp="0"] canvas{image-rendering:auto}',
+
     '.dshcv-pdfpagebox{contain:paint}',
     '.dshcv-pdfcanvasbox{position:relative;align-self:center;margin:0 auto;line-height:0}',
     '.dshcv-pdfcanvas{display:block;background:#fff;box-shadow:0 2px 14px rgba(0,0,0,.16)}',

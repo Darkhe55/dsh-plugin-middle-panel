@@ -39,15 +39,15 @@ check(page.includes("const buffer = document.createElement('canvas');"), '离屏
 check(page.includes('await page.render({ canvasContext: bufferCtx, viewport }).promise;'), '渲染到缓冲');
 check(page.includes('canvas.width = buffer.width;'), '替换时才改尺寸');
 check(page.includes('ctx.drawImage(buffer, 0, 0);'), '一次性合成');
-check(page.includes('setRenderedAt(viewport.width);'), '记录清晰度状态');
+check(!page.includes('setRenderedAt'), '不再维护无效的清晰度状态');
 
 // —— 3. 画布铺满盒子（拉伸过渡） ——
 check(
   src.includes("'.dshcv-pdfpagebox canvas{position:absolute;inset:0;width:100%;height:100%;display:block}'"),
   '画布铺满盒子，位图滞后时被拉伸',
 );
-check(src.includes("'.dshcv-pdfpagebox[data-sharp=\"0\"] canvas{image-rendering:auto}'"), '有清晰度标记');
-check(src.includes("'data-sharp':"), '页面标记清晰状态');
+check(!src.includes('data-sharp'), '不再有 data-sharp 属性');
+check(page.includes('className: \'dshcv-pdfpagebox\''), '页面盒子仍在');
 check(src.includes("'.dshcv-pdfpagebox{contain:paint}'"), '限制重绘范围');
 
 // —— 4. 滚轮按帧合并 ——

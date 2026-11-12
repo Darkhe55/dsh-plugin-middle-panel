@@ -290,3 +290,15 @@
 | `90-tail.js` | 其余视图与导出 |
 
 测试通过 `test/_source.cjs` 读取同一份拼接结果，不要直接读 `src/client.js`。
+
+### 坐标约定
+
+| 数据 | 唯一单位 | 产生处 | 消费处 |
+|---|---|---|---|
+| 标注 `rect` / `bands` | 页面比例 0–1 | 选词、框选 | 覆盖层按 `×100 + '%'` 渲染 |
+| 搜索命中 `rects` | 页面比例 0–1 | 搜索映射 | 同上 |
+| 实时选区 `live` | 页面比例 0–1 | `getClientRects` | 同上 |
+| span 的 `left/top/fontSize/width` | viewport CSS px | 文字层 | 仅文字层内部 |
+| canvas 位图 | 设备像素 | pdf.js render | 绘制与像素测量 |
+
+跨层只允许通过 `Geometry` 风格的比例换算，禁止直接写 `/ box.width`。
