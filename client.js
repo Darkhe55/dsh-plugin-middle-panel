@@ -6745,6 +6745,7 @@ addClip(action.start, action.end);
 };
 const markLabel = action.label;
 const onTrackDown = (event) => {
+if (event.button !== 0) return;
 if (!duration) {
 flash('视频时长还没读取出来，稍等一下再点');
 return;
@@ -6759,6 +6760,7 @@ setDrag({ from: time, to: time, moved: false });
 if (event.currentTarget.setPointerCapture) event.currentTarget.setPointerCapture(event.pointerId);
 };
 const onTrackMove = (event) => {
+if (menuAt) return;
 const time = timeFromClientX(event.clientX);
 if (drag) {
 const moved = drag.moved || Math.abs(event.clientX - (pressRef.current ? pressRef.current.clientX : event.clientX)) > 4;
@@ -6772,6 +6774,7 @@ setHover(time);
 previewAt(time);
 };
 const onTrackUp = (event) => {
+if (event.button !== 0) return;
 if (!drag) return;
 const time = timeFromClientX(event.clientX);
 const start = Math.min(drag.from, time);
@@ -6834,6 +6837,7 @@ const top = localY + height + 12 > rect.height ? Math.max(8, localY - height) : 
 setMenuAt({ x: left, y: top });
 };
 const onStageDown = (event) => {
+if (event.button !== 0) return;
 if (!boxing) return;
 const node = video();
 if (!node) return;

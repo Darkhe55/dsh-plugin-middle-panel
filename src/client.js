@@ -7459,6 +7459,9 @@ function SplitDivider(props) {
 
       // ---- pointer handling ----
       const onTrackDown = (event) => {
+        // Left button only: a right-click opens the menu and must not nudge the
+        // playhead, even if the pointer drifts while the menu is opening.
+        if (event.button !== 0) return;
         if (!duration) {
           flash('视频时长还没读取出来，稍等一下再点');
           return;
@@ -7474,6 +7477,7 @@ function SplitDivider(props) {
       };
 
       const onTrackMove = (event) => {
+        if (menuAt) return;
         const time = timeFromClientX(event.clientX);
         if (drag) {
           const moved = drag.moved || Math.abs(event.clientX - (pressRef.current ? pressRef.current.clientX : event.clientX)) > 4;
@@ -7488,6 +7492,7 @@ function SplitDivider(props) {
       };
 
       const onTrackUp = (event) => {
+        if (event.button !== 0) return;
         if (!drag) return;
         const time = timeFromClientX(event.clientX);
         const start = Math.min(drag.from, time);
@@ -7565,6 +7570,7 @@ function SplitDivider(props) {
       };
 
       const onStageDown = (event) => {
+        if (event.button !== 0) return;
         if (!boxing) return;
         const node = video();
         if (!node) return;

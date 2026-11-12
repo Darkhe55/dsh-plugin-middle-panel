@@ -59,6 +59,19 @@ check(durationIdx > 0 && jumpIdx > durationIdx, '跳转按钮排在总时长之�
 check(has("title: '跳转到 ' + formatTime(typed)"), '目标时间放进 title，方便悬停确认');
 check(has("'aria-label': '跳转到 ' + formatTime(typed)"), '无障碍名称带上目标时间');
 
+// —— 右键只弹菜单，不动播放头 ——
+check(has('if (event.button !== 0) return;'), '按下只认左键');
+const downIdx = src.indexOf('const onTrackDown = (event) => {');
+const downBody = src.slice(downIdx, src.indexOf('const onTrackMove', downIdx));
+check(downBody.indexOf('event.button !== 0') >= 0 && downBody.indexOf('event.button !== 0') < downBody.indexOf('seekTo('), '左键检查在 seek 之前');
+const upIdx = src.indexOf('const onTrackUp = (event) => {');
+const upBody = src.slice(upIdx, src.indexOf('const onTrackLeave', upIdx));
+check(upBody.indexOf('event.button !== 0') >= 0, '松开也只认左键');
+check(has('if (menuAt) return;'), '菜单打开时不预览，右键抖动不改画面');
+const menuIdx = src.indexOf('const onTrackMenu = (event) => {');
+const menuBody = src.slice(menuIdx, src.indexOf('const ferry', menuIdx) > 0 ? src.indexOf('const ferry', menuIdx) : menuIdx + 600);
+check(menuBody.indexOf('seekTo(') < 0, '右键菜单处理里没有 seek');
+
 if (failures) {
   console.log('失败 ' + failures + ' 项');
   process.exit(1);
