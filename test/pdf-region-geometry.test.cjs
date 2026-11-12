@@ -17,7 +17,10 @@ const fitIdx = body.indexOf('FitStage,');
 const innerIdx = body.indexOf("position: 'relative', width: '100%', height: '100%'", fitIdx);
 const iframeIdx = body.indexOf("title: 'canvas pdf preview'", innerIdx);
 const layerIdx = body.indexOf('ref: layerRef', iframeIdx);
-check(fitIdx > 0 && innerIdx > fitIdx && iframeIdx > innerIdx && layerIdx > iframeIdx, '捕获层嵌在舞台内、iframe 之后');
+const pageIdx = body.indexOf("className: 'dshcv-pdfpage'");
+const iframeIdx2 = body.indexOf("title: 'canvas pdf preview'", pageIdx);
+const layerIdx2 = body.indexOf('ref: layerRef', iframeIdx2);
+check(pageIdx > 0 && iframeIdx2 > pageIdx && layerIdx2 > iframeIdx2, '页面层包住 iframe、标注与捕获层');
 
 // —— 坐标：全部百分比，随容器一起缩放 ——
 check(body.includes("left: hoverRegion[0] * 100 + '%',"), '高亮用百分比');

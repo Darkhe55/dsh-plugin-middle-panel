@@ -1122,6 +1122,7 @@ const CSS_PANEL = [
 '.dshcv-trackhead{position:absolute;top:-2px;bottom:-2px;width:2px;margin-left:-1px;background:var(--dsw-alias-brand-primary)}',
 '.dshcv-markband{position:absolute;top:-1px;bottom:-1px;background:rgba(79,140,255,.22);box-shadow:0 0 10px rgba(79,140,255,.55),inset 0 0 6px rgba(79,140,255,.35);pointer-events:none;border-radius:3px}',
 '.dshcv-markhead{position:absolute;top:-3px;bottom:-3px;width:2px;margin-left:-1px;background:rgba(79,140,255,.95);box-shadow:0 0 8px rgba(79,140,255,.85);pointer-events:none}',
+'.dshcv-pdfpage{position:absolute;overflow:hidden}',
 '.dshcv-pdflayer{position:absolute;inset:0;cursor:crosshair;touch-action:none}',
 '.dshcv-pdflayer:not(.dshcv-pdflayer-on){cursor:default}',
 '.dshcv-pdfmarquee{position:absolute;border:1.5px solid rgba(79,140,255,.95);background:rgba(79,140,255,.16);box-shadow:0 0 10px rgba(79,140,255,.45);pointer-events:none;border-radius:2px}',
@@ -3938,11 +3939,12 @@ column,
 }
 function PdfDoc(props) {
 const { doc, sessionId } = props;
-const [state, setState] = React.useState({ status: 'idle', url: '', size: 0, error: '', pages: 0 });
+const [state, setState] = React.useState({ status: 'idle', url: '', size: 0, error: '', pages: 0, aspect: 0 });
 const [page, setPage] = React.useState(1);
 const [markMode, setMarkMode] = React.useState(false);
 const [drag, setDrag] = React.useState(null);
 const pdfRef = React.useRef(null);
+const pageRef = React.useRef(null);
 const layerRef = React.useRef(null);
 const pressRef = React.useRef(null);
 const hovered = useHoverMark(doc.path);
@@ -3957,9 +3959,9 @@ hovered.page === page
 const hoverPage =
 hovered && hovered.kind === 'region' && hovered.norm && hovered.page !== page ? hovered.page : 0;
 const ratioOf = (event) => {
-const frame = pdfRef.current;
-if (!frame) return null;
-const rect = frame.getBoundingClientRect();
+const page = pageRef.current;
+if (!page) return null;
+const rect = page.getBoundingClientRect();
 if (!rect.width || !rect.height) return null;
 return {
 x: Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)),
@@ -4021,7 +4023,15 @@ if (cancelled || !bytes) return;
 objectUrl = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
 const raw = new TextDecoder('latin1').decode(bytes.slice(0, Math.min(bytes.length, 8 * 1024 * 1024)));
 const found = (raw.match(/\/Type\s*\/Page[^s]/g) || []).length;
-setState({ status: 'ready', url: objectUrl, size: bytes.length, error: '', pages: found });
+const mediaBox = /\/MediaBox\s*\[\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s*\]/.exec(raw);
+const mediaAspect = mediaBox
+? (() => {
+const width = Number(mediaBox[3]) - Number(mediaBox[1]);
+const height = Number(mediaBox[4]) - Number(mediaBox[2]);
+return width > 0 && height > 0 ? width / height : 0;
+})()
+: 0;
+setState({ status: 'ready', url: objectUrl, size: bytes.length, error: '', pages: found, aspect: mediaAspect });
 })
 .catch((error) => {
 if (!cancelled) setState({ status: 'failed', url: '', size: 0, error: errText(error) });
@@ -4104,14 +4114,20 @@ markMode ? '退出框选' : '框选标注',
 h(
 'div',
 {
-style: { position: 'relative', flex: '1 1 auto', minHeight: 0, display: 'flex' },
+style: { position: 'relative', flex: '1 1 auto', minHeight: 0, display: 'flex', overflow: 'hidden' },
 },
 h(
 FitStage,
 { enabled: props.fit, designWidth: 900 },
 h(
 'div',
-{ style: { position: 'relative', width: '100%', height: '100%' } },
+{
+ref: pageRef,
+className: 'dshcv-pdfpage',
+style: state.aspect
+? { top: 0, left: 0, width: "100%", aspectRatio: String(state.aspect) }
+: { inset: 0 },
+},
 h('iframe', {
 ref: pdfRef,
 title: 'canvas pdf preview',

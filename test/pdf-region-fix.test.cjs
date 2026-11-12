@@ -12,12 +12,10 @@ const has = (text) => src.includes(text);
 // —— 坐标基准 ——
 check(has('const pdfRef = React.useRef(null);'), 'iframe 有 ref');
 check(has("h(\n            FitStage,") || has('FitStage,'), '舞台仍在');
-check(/FitStage,[\s\S]{0,120}position: 'relative', width: '100%', height: '100%'/.test(src), '捕获层与页面同处一个缩放容器');
-check(has('const rect = frame.getBoundingClientRect();'), '按 iframe 的真实矩形测量');
-check(
-  /const ratioOf = \(event\) => \{[\s\S]{0,300}const frame = pdfRef\.current;/.test(src),
-  '比例也以 iframe 为基准',
-);
+check(has("className: 'dshcv-pdfpage'"), '有与页面等比的页面层');
+check(has('aspectRatio: String(state.aspect)'), '页面层按 PDF 宽高比');
+check(has('const rect = page.getBoundingClientRect();'), '按页面层的真实矩形测量');
+check(src.includes('const page = pageRef.current;'), '比例以页面层为基准');
 const pdfBody = src.slice(src.indexOf('function PdfDoc(props) {'), src.indexOf('// ---------------- design files ----------------'));
 check(!pdfBody.includes('pageBox') && !pdfBody.includes('setBox('), 'PdfDoc 不再做一次性测量');
 check(has("left: hoverRegion[0] * 100 + '%',"), '高亮用百分比（随容器一起缩放）');
