@@ -44,7 +44,7 @@ check(has('.dshcv-pdfregion{position:absolute'), '标注高亮样式');
 
 // —— 归一化坐标的文案与去重 ——
 check(has("mark.norm && Array.isArray(mark.rect)"), '标注栏按百分比描述');
-check(has("Math.round(mark.rect[2] * 100) +"), '显示区域宽度占比');
+check(src.includes('Math.round(w * 100)'), '显示区域宽度占比');
 check(has('const tolerance = left.norm ? 0.01 : 2;'), '归一化坐标用比例容差');
 check(has('if (left.norm && Number(left.page || 0) !== Number(right.page || 0)) return false;'), '不同页不算同一区域');
 

@@ -807,6 +807,30 @@ total = total * 60 + Number(part);
 }
 return total;
 };
+const regionWhere = (rect) => {
+const values = (rect || []).map((value) => Number(value) || 0);
+const x = values[0];
+const y = values[1];
+const w = values[2];
+const h = values[3];
+const centerX = x + w / 2;
+const centerY = y + h / 2;
+const column = centerX < 0.34 ? '左' : centerX > 0.66 ? '右' : '中';
+const row = centerY < 0.34 ? '上' : centerY > 0.66 ? '下' : '中';
+const anchor = row === '中' && column === '中' ? '中部' : row + column;
+return (
+anchor +
+' · 距左 ' +
+Math.round(x * 100) +
+'%、距上 ' +
+Math.round(y * 100) +
+'% · ' +
+Math.round(w * 100) +
+'% × ' +
+Math.round(h * 100) +
+'%'
+);
+};
 const markWhere = (mark) =>
 mark.kind === 'text'
 ? mark.lines && mark.lines[0] === mark.lines[1]
@@ -823,11 +847,7 @@ mark.kind === 'text'
 : mark.kind === 'video'
 ? timeLabel(mark) + (Array.isArray(mark.rect) ? ' · 画面区域' : '')
 : mark.norm && Array.isArray(mark.rect)
-? (mark.page ? '第 ' + mark.page + ' 页 · ' : '') +
-Math.round(mark.rect[2] * 100) +
-'% × ' +
-Math.round(mark.rect[3] * 100) +
-'%'
+? '第 ' + (mark.page || 1) + ' 页 · ' + regionWhere(mark.rect)
 : '区域 (' + (mark.rect || []).join(', ') + ')';
 const markToBlock = (mark) => {
 const lines = [mark.n + '. `' + mark.path + '` — ' + markWhere(mark)];
@@ -3922,6 +3942,8 @@ const [state, setState] = React.useState({ status: 'idle', url: '', size: 0, err
 const [page, setPage] = React.useState(1);
 const [markMode, setMarkMode] = React.useState(false);
 const [drag, setDrag] = React.useState(null);
+const [box, setBox] = React.useState(null);
+const pdfRef = React.useRef(null);
 const layerRef = React.useRef(null);
 const pressRef = React.useRef(null);
 const hovered = useHoverMark(doc.path);
@@ -3935,16 +3957,40 @@ hovered.page === page
 : null;
 const hoverPage =
 hovered && hovered.kind === 'region' && hovered.norm && hovered.page !== page ? hovered.page : 0;
+const pageBox = () => {
+const frame = pdfRef.current;
+const stage = layerRef.current;
+if (!frame || !stage) return null;
+const rect = frame.getBoundingClientRect();
+const outer = stage.getBoundingClientRect();
+if (!rect.width || !rect.height) return null;
+return {
+left: rect.left - outer.left,
+top: rect.top - outer.top,
+width: rect.width,
+height: rect.height,
+};
+};
 const ratioOf = (event) => {
-const box = layerRef.current;
-if (!box) return null;
-const rect = box.getBoundingClientRect();
+const frame = pdfRef.current;
+if (!frame) return null;
+const rect = frame.getBoundingClientRect();
 if (!rect.width || !rect.height) return null;
 return {
 x: Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)),
 y: Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height)),
 };
 };
+React.useEffect(() => {
+const measure = () => setBox(pageBox());
+measure();
+window.addEventListener("resize", measure);
+const timer = setTimeout(measure, 120);
+return () => {
+window.removeEventListener("resize", measure);
+clearTimeout(timer);
+};
+}, [markMode, state.status]);
 const onLayerDown = (event) => {
 if (event.button !== 0) return;
 const at = ratioOf(event);
@@ -4031,7 +4077,7 @@ h(
 h(
 'span',
 { className: 'dshcv-msg' },
-Math.round(state.size / 1024) + ' KB · ' + (state.pages ? '共 ' + state.pages + ' 页' : '页数未知（压缩流）') + ' · 内置阅读器在独立进程，点不到具体位置；用右侧按钮按页标注',
+Math.round(state.size / 1024) + ' KB · ' + (state.pages ? '共 ' + state.pages + ' 页' : '页数未知（压缩流）'),
 ),
 h('input', {
 type: 'number',
@@ -4089,6 +4135,7 @@ h(
 FitStage,
 { enabled: props.fit, designWidth: 900 },
 h('iframe', {
+ref: pdfRef,
 title: 'canvas pdf preview',
 src: state.url,
 style: { flex: '1 1 auto', width: '100%', height: '100%', border: '0', background: '#fff' },
@@ -4098,10 +4145,10 @@ hoverRegion
 ? h('div', {
 className: 'dshcv-pdfregion',
 style: {
-left: hoverRegion[0] * 100 + '%',
-top: hoverRegion[1] * 100 + '%',
-width: hoverRegion[2] * 100 + '%',
-height: hoverRegion[3] * 100 + '%',
+left: box ? box.left + hoverRegion[0] * box.width + 'px' : hoverRegion[0] * 100 + '%',
+top: box ? box.top + hoverRegion[1] * box.height + 'px' : hoverRegion[1] * 100 + '%',
+width: box ? hoverRegion[2] * box.width + 'px' : hoverRegion[2] * 100 + '%',
+height: box ? hoverRegion[3] * box.height + 'px' : hoverRegion[3] * 100 + '%',
 },
 })
 : null,
@@ -4109,10 +4156,10 @@ drag
 ? h('div', {
 className: 'dshcv-pdfmarquee',
 style: {
-left: Math.min(drag.from.x, drag.to.x) * 100 + '%',
-top: Math.min(drag.from.y, drag.to.y) * 100 + '%',
-width: Math.abs(drag.to.x - drag.from.x) * 100 + '%',
-height: Math.abs(drag.to.y - drag.from.y) * 100 + '%',
+left: box ? box.left + Math.min(drag.from.x, drag.to.x) * box.width + 'px' : Math.min(drag.from.x, drag.to.x) * 100 + '%',
+top: box ? box.top + Math.min(drag.from.y, drag.to.y) * box.height + 'px' : Math.min(drag.from.y, drag.to.y) * 100 + '%',
+width: box ? Math.abs(drag.to.x - drag.from.x) * box.width + 'px' : Math.abs(drag.to.x - drag.from.x) * 100 + '%',
+height: box ? Math.abs(drag.to.y - drag.from.y) * box.height + 'px' : Math.abs(drag.to.y - drag.from.y) * 100 + '%',
 },
 })
 : null,

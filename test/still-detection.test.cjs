@@ -35,7 +35,8 @@ check(firstReturn > 0 && hookAt > 0 && hookAt < firstReturn, '握手 hook 在 ea
 
 // —— PDF 提示改写 ——
 check(!has('阅读器在进程外，点击位置无法拦截'), '去掉费解的"进程外"原话');
-check(has('内置阅读器在独立进程，点不到具体位置；用右侧按钮按页标注'), '改为可照做的说法');
+check(!has('阅读器在进程外') && !has('内置阅读器在独立进程'), '工具栏不再出现进程说明');
+check(has('在页面上拖出一块区域并标注'), '能力由框选按钮自己说明');
 
 if (failures) {
   console.log('失败 ' + failures + ' 项');
