@@ -11,16 +11,18 @@ const has = (text) => src.includes(text);
 
 // —— 坐标基准 ——
 check(has('const pdfRef = React.useRef(null);'), 'iframe 有 ref');
-check(has('const pageBox = () => {'), '能算出页面框');
+check(has("h(\n            FitStage,") || has('FitStage,'), '舞台仍在');
+check(/FitStage,[\s\S]{0,120}position: 'relative', width: '100%', height: '100%'/.test(src), '捕获层与页面同处一个缩放容器');
 check(has('const rect = frame.getBoundingClientRect();'), '按 iframe 的真实矩形测量');
 check(
   /const ratioOf = \(event\) => \{[\s\S]{0,300}const frame = pdfRef\.current;/.test(src),
   '比例也以 iframe 为基准',
 );
-check(has('setBox(pageBox())'), '尺寸变化时重新测量');
-check(has("left: box ? box.left + hoverRegion[0] * box.width + 'px'"), '高亮用像素定位');
-check(has("left: box ? box.left + Math.min(drag.from.x, drag.to.x) * box.width + 'px'"), '拖拽框用像素定位');
-check(!has("left: hoverRegion[0] * 100 + '%',\n"), '不再有重复的百分比行');
+const pdfBody = src.slice(src.indexOf('function PdfDoc(props) {'), src.indexOf('// ---------------- design files ----------------'));
+check(!pdfBody.includes('pageBox') && !pdfBody.includes('setBox('), 'PdfDoc 不再做一次性测量');
+check(has("left: hoverRegion[0] * 100 + '%',"), '高亮用百分比（随容器一起缩放）');
+check(has("left: Math.min(drag.from.x, drag.to.x) * 100 + '%',"), '拖拽框用百分比');
+check(has("inset: 0, width: '100%', height: '100%'"), 'iframe 铺满同一容器，坐标天然对齐');
 
 // —— 文案 ——
 check(has('const regionWhere = (rect) => {'), '有位置描述函数');

@@ -3942,7 +3942,6 @@ const [state, setState] = React.useState({ status: 'idle', url: '', size: 0, err
 const [page, setPage] = React.useState(1);
 const [markMode, setMarkMode] = React.useState(false);
 const [drag, setDrag] = React.useState(null);
-const [box, setBox] = React.useState(null);
 const pdfRef = React.useRef(null);
 const layerRef = React.useRef(null);
 const pressRef = React.useRef(null);
@@ -3957,20 +3956,6 @@ hovered.page === page
 : null;
 const hoverPage =
 hovered && hovered.kind === 'region' && hovered.norm && hovered.page !== page ? hovered.page : 0;
-const pageBox = () => {
-const frame = pdfRef.current;
-const stage = layerRef.current;
-if (!frame || !stage) return null;
-const rect = frame.getBoundingClientRect();
-const outer = stage.getBoundingClientRect();
-if (!rect.width || !rect.height) return null;
-return {
-left: rect.left - outer.left,
-top: rect.top - outer.top,
-width: rect.width,
-height: rect.height,
-};
-};
 const ratioOf = (event) => {
 const frame = pdfRef.current;
 if (!frame) return null;
@@ -3981,16 +3966,6 @@ x: Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)),
 y: Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height)),
 };
 };
-React.useEffect(() => {
-const measure = () => setBox(pageBox());
-measure();
-window.addEventListener("resize", measure);
-const timer = setTimeout(measure, 120);
-return () => {
-window.removeEventListener("resize", measure);
-clearTimeout(timer);
-};
-}, [markMode, state.status]);
 const onLayerDown = (event) => {
 if (event.button !== 0) return;
 const at = ratioOf(event);
@@ -4134,21 +4109,23 @@ style: { position: 'relative', flex: '1 1 auto', minHeight: 0, display: 'flex' }
 h(
 FitStage,
 { enabled: props.fit, designWidth: 900 },
+h(
+'div',
+{ style: { position: 'relative', width: '100%', height: '100%' } },
 h('iframe', {
 ref: pdfRef,
 title: 'canvas pdf preview',
 src: state.url,
-style: { flex: '1 1 auto', width: '100%', height: '100%', border: '0', background: '#fff' },
+style: { position: 'absolute', inset: 0, width: '100%', height: '100%', border: '0', background: '#fff' },
 }),
-),
 hoverRegion
 ? h('div', {
 className: 'dshcv-pdfregion',
 style: {
-left: box ? box.left + hoverRegion[0] * box.width + 'px' : hoverRegion[0] * 100 + '%',
-top: box ? box.top + hoverRegion[1] * box.height + 'px' : hoverRegion[1] * 100 + '%',
-width: box ? hoverRegion[2] * box.width + 'px' : hoverRegion[2] * 100 + '%',
-height: box ? hoverRegion[3] * box.height + 'px' : hoverRegion[3] * 100 + '%',
+left: hoverRegion[0] * 100 + '%',
+top: hoverRegion[1] * 100 + '%',
+width: hoverRegion[2] * 100 + '%',
+height: hoverRegion[3] * 100 + '%',
 },
 })
 : null,
@@ -4156,10 +4133,10 @@ drag
 ? h('div', {
 className: 'dshcv-pdfmarquee',
 style: {
-left: box ? box.left + Math.min(drag.from.x, drag.to.x) * box.width + 'px' : Math.min(drag.from.x, drag.to.x) * 100 + '%',
-top: box ? box.top + Math.min(drag.from.y, drag.to.y) * box.height + 'px' : Math.min(drag.from.y, drag.to.y) * 100 + '%',
-width: box ? Math.abs(drag.to.x - drag.from.x) * box.width + 'px' : Math.abs(drag.to.x - drag.from.x) * 100 + '%',
-height: box ? Math.abs(drag.to.y - drag.from.y) * box.height + 'px' : Math.abs(drag.to.y - drag.from.y) * 100 + '%',
+left: Math.min(drag.from.x, drag.to.x) * 100 + '%',
+top: Math.min(drag.from.y, drag.to.y) * 100 + '%',
+width: Math.abs(drag.to.x - drag.from.x) * 100 + '%',
+height: Math.abs(drag.to.y - drag.from.y) * 100 + '%',
 },
 })
 : null,
@@ -4172,6 +4149,8 @@ onPointerMove: onLayerMove,
 onPointerUp: onLayerUp,
 onPointerCancel: onLayerUp,
 }),
+),
+),
 markMode
 ? h(
 'div',
