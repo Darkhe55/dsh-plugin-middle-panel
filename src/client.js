@@ -4691,12 +4691,6 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
             bucket = new Map();
             inkWidthCache.set(pdf, bucket);
           }
-          const keyOf = (index) => pageNumber + ":" + index;
-          const needsInk = rawItems.some((entry, index) =>
-            entry && typeof entry.str === "string" && entry.str.trim() && !bucket.has(keyOf(index)),
-          );
-          // Reading a full page costs a few milliseconds, so it happens once per page.
-          const ink = needsInk && buffer.width ? bufferCtx.getImageData(0, 0, buffer.width, buffer.height) : null;
           for (let index = 0; index < rawItems.length; index += 1) {
             const item = rawItems[index];
             if (!item || typeof item.str !== "string" || !item.str.trim()) continue;
@@ -4704,44 +4698,73 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
             const fontHeight = Math.hypot(transform[2], transform[3]);
             if (!fontHeight) continue;
             const declared = Math.max(0, Number(item.width) || 0) * viewport.scale;
-            let spanWidth = declared;
-            const cached = bucket.get(keyOf(index));
-            if (cached !== undefined) {
-              spanWidth = cached * viewport.scale;
-            } else if (ink && declared > 0) {
-              const x0 = Math.max(0, Math.floor(transform[4] * ratio));
-              const x1 = Math.min(ink.width, Math.ceil((transform[4] + declared * 1.6) * ratio));
-              const y0 = Math.max(0, Math.floor((transform[5] - fontHeight) * ratio));
-              const y1 = Math.min(ink.height, Math.ceil((transform[5] + 2) * ratio));
-              let measured = declared;
-              if (x1 > x0 && y1 > y0) {
-                const right = measureInkRight(ink.data, ink.width, x0, x1, y0, y1);
-                if (right >= 0) {
-                  const inkCss = right / ratio - transform[4];
-                  // Widen only: a shorter reading means a neighbour bled into the box.
-                  if (inkCss > declared) measured = inkCss;
-                }
-              }
-              bucket.set(keyOf(index), measured / viewport.scale);
-              spanWidth = measured;
-            }
-            let scaleX = 1;
-            if (measure && spanWidth > 0) {
-              measure.font = fontHeight + "px sans-serif";
-              const natural = measure.measureText(item.str).width;
-              if (natural > 0) scaleX = spanWidth / natural;
-            }
             spans.push({
               str: item.str,
               left: transform[4],
               top: transform[5] - fontHeight,
+              baseline: transform[5],
               fontHeight,
-              width: spanWidth,
-              scaleX,
-              // A selection reports the transformed rect, so the layout width is divided
-              // by scaleX: layoutWidth * scaleX equals spanWidth exactly.
-              layoutWidth: scaleX ? spanWidth / scaleX : spanWidth,
+              width: declared,
             });
+          }
+          
+          // A run is as wide as the PDF says, and those widths are sometimes a few percent
+          // short of the glyphs actually drawn, which accumulates along the line. Each
+          // line is therefore measured against its own ink once, and every run on it is
+          // scaled by that ratio: one correction instead of one per glyph.
+          if (spans.length && buffer.width) {
+            const ratio = Math.min(3, window.devicePixelRatio || 1);
+            const groups = new Map();
+            for (const span of spans) {
+              const key = Math.round(span.baseline) + ":" + Math.round(span.fontHeight);
+              if (!groups.has(key)) groups.set(key, []);
+              groups.get(key).push(span);
+            }
+            let pixels = null;
+            for (const [key, group] of groups) {
+              let factor = bucket.get(key);
+              if (factor === undefined) {
+                const first = group.reduce((a, b) => (b.left < a.left ? b : a));
+                const last = group.reduce((a, b) => (b.left + b.width > a.left + a.width ? b : a));
+                const declaredSpan = last.left + last.width - first.left;
+                let inkRight = 0;
+                if (declaredSpan > 0.5) {
+                  if (!pixels) pixels = bufferCtx.getImageData(0, 0, buffer.width, buffer.height);
+                  const x0 = Math.max(0, Math.floor(first.left * ratio));
+                  const x1 = Math.min(pixels.width, Math.ceil((first.left + declaredSpan * 1.5) * ratio));
+                  const y0 = Math.max(0, Math.floor((first.top - first.fontHeight * 0.4) * ratio));
+                  const y1 = Math.min(pixels.height, Math.ceil((first.top + first.fontHeight * 1.4) * ratio));
+                  if (x1 > x0 && y1 > y0) {
+                    const right = measureInkRight(pixels.data, pixels.width, x0, x1, y0, y1);
+                    if (right >= 0) inkRight = right / ratio;
+                  }
+                }
+                // Never shrink a line: a loose scan (or a neighbour) may read too far,
+                // but a short reading would hide real glyphs. Clamp to a sane range.
+                factor = 1;
+                if (inkRight > 0) {
+                  const measured = (inkRight - first.left) / declaredSpan;
+                  if (measured > 1) factor = Math.min(1.25, measured);
+                }
+                bucket.set(key, factor);
+              }
+              if (factor !== 1) {
+                for (const span of group) span.width *= factor;
+              }
+            }
+          }
+          
+          for (const span of spans) {
+            let scaleX = 1;
+            if (measure && span.width > 0) {
+              measure.font = span.fontHeight + "px sans-serif";
+              const natural = measure.measureText(span.str).width;
+              if (natural > 0) scaleX = span.width / natural;
+            }
+            span.scaleX = scaleX;
+            // A selection reports the transformed rect, so the layout width is divided by
+            // scaleX: layoutWidth * scaleX equals the run width exactly.
+            span.layoutWidth = scaleX ? span.width / scaleX : span.width;
           }
           setItems(spans);
         })().catch(() => setItems([]));
