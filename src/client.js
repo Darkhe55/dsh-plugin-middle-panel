@@ -1345,7 +1345,7 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
     // A text mark is a set of line bands that sit exactly on the glyphs: no outline,
     // so it reads as highlighted text rather than a selected box.
     '.dshcv-pdftexthit{position:absolute;background:rgba(79,140,255,.10);border-radius:2px;pointer-events:none}',
-    '.dshcv-pdftexthit-hot{background:rgba(79,140,255,.12);box-shadow:inset 0 -2px 0 rgba(79,140,255,.65)}',
+    '.dshcv-pdftexthit-hot{background:rgba(79,140,255,.12);box-shadow:inset 0 -1px 0 rgba(79,140,255,.65)}',
     '.dshcv-pdfregion{position:absolute;border:1.5px dashed rgba(79,140,255,.9);background:rgba(79,140,255,.10);box-shadow:0 0 12px rgba(79,140,255,.5);pointer-events:none;border-radius:2px}',
       '.dshcv-hoverhead{position:absolute;top:-2px;bottom:-2px;width:0;margin-left:-0.5px;border-left:1px dashed rgba(79,140,255,.85);pointer-events:none}',
       '.dshcv-trackband{position:absolute;top:0;bottom:0;background:rgba(79,140,255,.35);border-left:1px solid rgba(79,140,255,.8);border-right:1px solid rgba(79,140,255,.8)}',
@@ -4618,17 +4618,30 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
             return;
           }
           const spans = [];
+          // The glyphs are invisible, but their box decides the selection and the band.
+          // Measuring once and scaling keeps that box equal to item.width at every zoom,
+          // instead of letting the fallback font grow faster than the page.
+          const measureCanvas = document.createElement("canvas");
+          const measureCtx = measureCanvas.getContext("2d");
           for (const item of content.items || []) {
             if (!item || typeof item.str !== "string" || !item.str.trim()) continue;
             const transform = Util.transform(viewport.transform, item.transform);
             const fontHeight = Math.hypot(transform[2], transform[3]);
             if (!fontHeight) continue;
+            const width = Math.max(0, Number(item.width) || 0) * viewport.scale;
+            let scaleX = 1;
+            if (measureCtx && width > 0) {
+              measureCtx.font = fontHeight + "px sans-serif";
+              const measured = measureCtx.measureText(item.str).width;
+              if (measured > 0) scaleX = width / measured;
+            }
             spans.push({
               str: item.str,
               left: transform[4],
               top: transform[5] - fontHeight,
               fontHeight,
-              width: Math.max(0, Number(item.width) || 0) * viewport.scale,
+              width,
+              scaleX,
             });
           }
           setItems(spans);
@@ -4742,6 +4755,8 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
                   top: item.top + 'px',
                   fontSize: item.fontHeight + 'px',
                   width: item.width ? item.width + 'px' : undefined,
+                  transform: item.scaleX && item.scaleX !== 1 ? 'scaleX(' + item.scaleX + ')' : undefined,
+                  transformOrigin: '0 0',
                   display: 'block',
                   overflow: 'hidden',
                 },
@@ -4751,17 +4766,20 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
           ),
         ),
         pageHits.map((hit, index) =>
-          h('div', {
-            key: 'hit' + index,
-            className: 'dshcv-pdfhit',
-            'data-active': activeHit && activeHit.page === pageNumber && activeHit.index === hit.index ? '1' : '0',
-            style: {
-              left: hit.rect[0] * 100 + '%',
-              top: hit.rect[1] * 100 + '%',
-              width: hit.rect[2] * 100 + '%',
-              height: hit.rect[3] * 100 + '%',
-            },
-          }),
+          (hit.rects || [hit.rect]).map((rect, rectIndex) =>
+            h("div", {
+              key: "hit" + index + "-" + rectIndex,
+              className: "dshcv-pdfhit",
+              "data-active":
+                activeHit && activeHit.page === pageNumber && activeHit.index === hit.index ? "1" : "0",
+              style: {
+                left: rect[0] * 100 + "%",
+                top: rect[1] * 100 + "%",
+                width: rect[2] * 100 + "%",
+                height: rect[3] * 100 + "%",
+              },
+            }),
+          ),
         ),
         // Text marks stay invisible until the rail row is hovered: a permanent tint
         // reads as "this text is selected". Dragged regions keep their outline.
@@ -5020,41 +5038,64 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         setSearching(true);
         const needle = term.toLowerCase();
         const found = [];
-        const total = pdf.numPages;
         try {
-          for (let pageNumber = 1; pageNumber <= total; pageNumber += 1) {
+          for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
             const content = await textContentOf(pdf, pageNumber);
             const page = await pdf.getPage(pageNumber);
             const viewport = page.getViewport({ scale: 1 });
             const Util = pdfjsRef.current && pdfjsRef.current.Util;
             if (!Util) break;
+            // CJK documents often emit one item per glyph, so a multi-character query
+            // can never match inside a single item. Build the page string first.
+            let joined = "";
+            let previousRight = null;
+            let previousTop = null;
+            const pieces = [];
             for (const item of content.items || []) {
               if (!item || typeof item.str !== "string") continue;
-              const haystack = item.str.toLowerCase();
-              let at = haystack.indexOf(needle);
-              if (at < 0) continue;
               const transform = Util.transform(viewport.transform, item.transform);
               const height = Math.hypot(transform[2], transform[3]);
               if (!height) continue;
-              const itemWidth = Math.max(1, (Number(item.width) || 0) * viewport.scale);
-              const characters = Math.max(1, item.str.length);
-              // Only the matched run is boxed: character offsets map onto the item width.
-              while (at >= 0) {
-                const startRatio = at / characters;
-                const endRatio = (at + term.length) / characters;
+              const width = Math.max(1, (Number(item.width) || 0) * viewport.scale);
+              const left = transform[4];
+              const top = transform[5] - height;
+              if (previousRight !== null && Math.abs(top - previousTop) < height * 0.6 && left - previousRight > 1) {
+                joined += " ";
+              }
+              pieces.push({ start: joined.length, end: joined.length + item.str.length, left, top, width, height, length: item.str.length });
+              joined += item.str;
+              previousRight = left + width;
+              previousTop = top;
+            }
+            if (!joined) continue;
+            const haystack = joined.toLowerCase();
+            let at = haystack.indexOf(needle);
+            while (at >= 0) {
+              const to = at + term.length;
+              const rects = [];
+              for (const piece of pieces) {
+                if (piece.end <= at || piece.start >= to) continue;
+                const from = Math.max(at, piece.start) - piece.start;
+                const tail = Math.min(to, piece.end) - piece.start;
+                const a = from / Math.max(1, piece.length);
+                const b = tail / Math.max(1, piece.length);
+                rects.push([
+                  (piece.left + piece.width * a) / viewport.width,
+                  piece.top / viewport.height,
+                  Math.max(piece.width * (b - a), 2) / viewport.width,
+                  piece.height / viewport.height,
+                ]);
+              }
+              if (rects.length) {
                 found.push({
                   page: pageNumber,
                   index: found.length,
-                  text: item.str.slice(at, at + term.length),
-                  rect: [
-                    (transform[4] + itemWidth * startRatio) / viewport.width,
-                    (transform[5] - height) / viewport.height,
-                    Math.max(itemWidth * (endRatio - startRatio), 2) / viewport.width,
-                    height / viewport.height,
-                  ],
+                  text: joined.slice(at, to),
+                  rects,
+                  rect: rects[0],
                 });
-                at = haystack.indexOf(needle, at + term.length);
               }
+              at = haystack.indexOf(needle, to);
             }
           }
           setHits(found);

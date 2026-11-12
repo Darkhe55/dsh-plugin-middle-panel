@@ -37,12 +37,12 @@ check(has("'.dshcv-pdfthumb-on canvas{box-shadow:0 0 0 2px rgba(79,140,255,.95)"
 // —— 全文搜索 ——
 check(view.includes('const search = async () => {'), '有搜索实现');
 check(view.includes('await textContentOf(pdf, pageNumber)'), '按页读取文本（带缓存）');
-check(view.includes('const haystack = item.str.toLowerCase();'), '匹配前统一小写');
+check(view.includes('const haystack = joined.toLowerCase();'), '整页文本统一小写后匹配');
 check(view.includes('let at = haystack.indexOf(needle);'), '按子串查找');
 check(view.includes('const gotoHit = (next) => {'), '可跳转命中');
 check(view.includes("'上一个'") && view.includes("'下一个'"), '有前后切换按钮');
 check(view.includes('hits.length + \' 处 · 第 \''), '显示命中数');
-check(page.includes("className: 'dshcv-pdfhit'"), '页面高亮命中');
+check(page.includes('dshcv-pdfhit'), '页面高亮命中');
 check(has("'.dshcv-pdfhit[data-active=\"1\"]"), '当前命中更醒目');
 check(src.includes('const textContentOf = async (pdf, pageNumber) => {'), '文本内容有缓存');
 

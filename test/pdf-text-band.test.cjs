@@ -34,7 +34,7 @@ check(css.includes('background:rgba(79,140,255,.10)'), '带子为极淡蓝底');
 const hotIdx = src.indexOf("'.dshcv-pdftexthit-hot{");
 const hotRule = src.slice(hotIdx, hotIdx + 200).split('}')[0];
 check(hotRule.includes('rgba(79,140,255,.12)'), '悬停底色同样很淡', hotRule);
-check(hotRule.includes('inset 0 -2px 0'), '用底部细线表示标注', hotRule);
+check(hotRule.includes('inset 0 -1px 0'), '用 1px 底部细线表示标注', hotRule);
 check(!hotRule.includes('0 0 8px'), '去掉外发光，避免盖住文字');
 check(src.includes("'.dshcv-pdfregion{"), '区域框样式保留');
 
