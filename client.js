@@ -3940,14 +3940,21 @@ column,
 }),
 );
 }
+const VENDOR_PREFIX = '/dsh-canvas/vendor/pdfjs/';
+const VENDOR_EXACT = '/dsh-canvas/vendor?f=';
+let vendorShape = 'prefix';
 let pdfjsPromise = null;
+const vendorUrl = (name, shape) =>
+shape === 'exact' ? VENDOR_EXACT + encodeURIComponent(name) : VENDOR_PREFIX + name;
 const loadPdfJs = () => {
-if (!pdfjsPromise) {
-pdfjsPromise = import('/dsh-canvas/vendor/pdfjs/pdf.min.mjs').then((mod) => {
-mod.GlobalWorkerOptions.workerSrc = '/dsh-canvas/vendor/pdfjs/pdf.worker.min.mjs';
+if (pdfjsPromise) return pdfjsPromise;
+const attempt = (shape) =>
+import(vendorUrl('pdf.min.mjs', shape)).then((mod) => {
+vendorShape = shape;
+mod.GlobalWorkerOptions.workerSrc = vendorUrl('pdf.worker.min.mjs', shape);
 return mod;
 });
-}
+pdfjsPromise = attempt('prefix').catch(() => attempt('exact'));
 return pdfjsPromise;
 };
 function PdfCanvasDoc(props) {
@@ -3980,9 +3987,9 @@ Promise.all([loadPdfJs(), readBytesFile(sessionId, doc.path, controller.signal)]
 if (cancelled || !bytes) return;
 loaded = await pdfjs.getDocument({
 data: bytes,
-cMapUrl: '/dsh-canvas/vendor/pdfjs/cmaps/',
-cMapPacked: true,
-standardFontDataUrl: '/dsh-canvas/vendor/pdfjs/standard_fonts/',
+cMapUrl: vendorShape === 'prefix' ? VENDOR_PREFIX + 'cmaps/' : undefined,
+cMapPacked: vendorShape === 'prefix',
+standardFontDataUrl: vendorShape === 'prefix' ? VENDOR_PREFIX + 'standard_fonts/' : undefined,
 }).promise;
 if (cancelled) return;
 docRef.current = loaded;

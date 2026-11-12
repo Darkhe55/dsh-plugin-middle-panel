@@ -23,7 +23,7 @@ check(size('pdf.min.mjs') < 2, '主模块体积可控', size('pdf.min.mjs').toFi
 
 // —— 宿主路由 ——
 const route = fs.readFileSync(path.join(__dirname, '..', 'vendor-route.js'), 'utf8');
-check(route.includes("path: '/dsh-canvas/vendor/pdfjs/*'"), '注册了只读路由');
+check(route.includes("VENDOR_PATHS = ['/dsh-canvas/vendor/pdfjs/*', '/dsh-canvas/vendor']"), '注册了前缀与精确两条路由');
 check(route.includes('path.relative(VENDOR_ROOT, absolute)'), '限制在插件目录内');
 check(route.includes("relative.startsWith('..')"), '拒绝目录穿越');
 check(route.includes('immutable'), '允许强缓存');
@@ -32,8 +32,9 @@ const host = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
 check(host.includes('registerVendorRoute(ctx, corsFor)'), '宿主已挂载路由');
 
 // —— 客户端加载器 ——
-check(has("import('/dsh-canvas/vendor/pdfjs/pdf.min.mjs')"), '按需动态加载，不进主包');
-check(has("mod.GlobalWorkerOptions.workerSrc = '/dsh-canvas/vendor/pdfjs/pdf.worker.min.mjs'"), 'worker 指向插件树');
+check(has('VENDOR_PREFIX = ') && has('VENDOR_EXACT = '), '支持前缀与精确两种路由');
+check(has("attempt('prefix').catch(() => attempt('exact'))"), '前缀失败自动回退精确路由');
+check(has("vendorUrl('pdf.worker.min.mjs', shape)"), 'worker 跟随同一路由形态');
 check(has('let pdfjsPromise = null;'), '只加载一次');
 
 // —— 渲染 ——

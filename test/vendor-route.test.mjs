@@ -8,17 +8,22 @@ const check = (ok, label, detail) => {
 };
 
 let handler = null;
+const registered = [];
 const ctx = {
   effect: (fn) => fn(),
   webServer: {
     register: (route) => {
-      if (route.path === '/dsh-canvas/vendor/pdfjs/*') handler = route.handler;
+      registered.push(route.path);
+      if (String(route.path).includes('/dsh-canvas/vendor')) handler = route.handler;
+      return () => {};
     },
   },
 };
 const corsFor = () => ({ 'access-control-allow-origin': '*', vary: 'origin' });
 registerVendorRoute(ctx, corsFor);
 check(typeof handler === 'function', '路由已注册');
+check(registered.includes('/dsh-canvas/vendor/pdfjs/*'), '注册了通配路由', registered.join(', '));
+check(registered.includes('/dsh-canvas/vendor'), '注册了精确兜底路由', registered.join(', '));
 
 const call = (url, headers = {}) =>
   new Promise((resolve) => {
