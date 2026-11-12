@@ -4331,6 +4331,7 @@ const pdfjsRef = React.useRef(null);
 const scrollRef = React.useRef(null);
 const boxRef = React.useRef(null);
 const pageEls = React.useRef(new Map());
+const zoomAnchor = React.useRef(null);
 const hovered = useHoverMark(doc.path);
 const marks = store.marks || [];
 const pageMarksFor = (pageNumber) =>
@@ -4409,6 +4410,30 @@ return;
 const scroller = scrollRef.current;
 if (scroller) scroller.scrollTop = (pageNumber - 1) * 400;
 };
+React.useEffect(() => {
+const node = scrollRef.current;
+if (!node) return undefined;
+const onWheel = (event) => {
+if (!event.ctrlKey && !event.metaKey) return;
+event.preventDefault();
+const rect = node.getBoundingClientRect();
+zoomAnchor.current = {
+ratio: (event.clientY - rect.top + node.scrollTop) / Math.max(1, node.scrollHeight),
+offset: event.clientY - rect.top,
+};
+const factor = event.deltaY < 0 ? 1.1 : 1 / 1.1;
+setZoom((z) => Math.min(4, Math.max(0.4, Math.round(z * factor * 100) / 100)));
+};
+node.addEventListener("wheel", onWheel, { passive: false });
+return () => node.removeEventListener("wheel", onWheel);
+}, []);
+React.useEffect(() => {
+const node = scrollRef.current;
+const anchor = zoomAnchor.current;
+if (!node || !anchor) return;
+zoomAnchor.current = null;
+node.scrollTop = Math.max(0, anchor.ratio * node.scrollHeight - anchor.offset);
+}, [zoom]);
 const onVisible = (pageNumber, ratio) => {
 if (ratio > 0.35) setCurrent((now) => (now === pageNumber ? now : pageNumber));
 };
@@ -4517,8 +4542,8 @@ h(
 'div',
 { className: 'dshcv-tools' },
 h('span', { className: 'dshcv-msg' }, '第 ' + current + ' / ' + (pages || '…') + ' 页'),
-h('button', { type: 'button', className: 'dshcv-btn', title: '缩小', onClick: () => setZoom((z) => Math.max(0.4, Math.round((z - 0.1) * 100) / 100)) }, '−'),
-h('button', { type: 'button', className: 'dshcv-btn', title: '放大', onClick: () => setZoom((z) => Math.min(4, Math.round((z + 0.1) * 100) / 100)) }, '+'),
+h('button', { type: 'button', className: 'dshcv-btn', title: '缩小（Ctrl+滚轮）', onClick: () => setZoom((z) => Math.max(0.4, Math.round((z - 0.1) * 100) / 100)) }, '−'),
+h('button', { type: 'button', className: 'dshcv-btn', title: '放大（Ctrl+滚轮）', onClick: () => setZoom((z) => Math.min(4, Math.round((z + 0.1) * 100) / 100)) }, '+'),
 h('input', {
 type: 'search',
 className: 'dshcv-searchinput',
