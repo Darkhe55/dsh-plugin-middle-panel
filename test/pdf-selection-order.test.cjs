@@ -26,7 +26,7 @@ const read = src.slice(readStart, readEnd > 0 ? readEnd : readStart + 2000);
 check(read.includes('const range = active.getRangeAt(0);'), '只取一次 range');
 check(read.includes('selectedTextInVisualOrder(wrap, range)'), '引用原文来自视觉顺序结果');
 check(!read.includes('String(active.toString()'), '不再直接用 DOM 顺序文本');
-check(read.includes('Array.from(range.getClientRects())'), '高亮矩形仍取区间片段');
+check(read.includes('glyph.left + glyph.width * (from / total)'), '高亮矩形取自字形模型');
 
 if (failures) {
   console.log('失败 ' + failures + ' 项');

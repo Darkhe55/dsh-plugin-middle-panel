@@ -31,7 +31,7 @@ check(!page.includes('onMouseUp: readSelection'), '不再依赖 mouseup 一次�
 
 // 合并同行的相邻片段
 check(page.includes('const merged = [];'), '合并相邻片段');
-check(page.includes('rect.left <= last.right + 0.6'), '同一行且相接才合并');
+check(page.includes('rect.left <= last.left + last.width + 0.75'), '同一行且相接才合并');
 check(page.includes('const bands = merged.map((item) => ['), '合并后转成百分比');
 
 // 缩放后重算

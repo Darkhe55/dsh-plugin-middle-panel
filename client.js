@@ -4270,12 +4270,33 @@ if (onClear) onClear(pageNumber);
 }
 return;
 }
+const spans = wrap.querySelectorAll(".dshcv-pdftext span");
 const box = wrap.getBoundingClientRect();
 if (!box.width || !box.height) return;
-const rects = Array.from(range.getClientRects()).filter(
-(item) => item.width > 1 && item.height > 1,
-);
-if (!rects.length) {
+const raw = [];
+const parts = [];
+for (let index = 0; index < spans.length && index < items.length; index += 1) {
+const node = spans[index].firstChild;
+if (!node || node.nodeType !== 3) continue;
+let from = -1;
+let to = -1;
+for (let offset = 0; offset < node.length; offset += 1) {
+if (range.comparePoint(node, offset) !== 0) continue;
+if (from < 0) from = offset;
+to = offset + 1;
+}
+if (from < 0) continue;
+const glyph = items[index];
+const total = Math.max(1, node.length);
+raw.push({
+left: glyph.left + glyph.width * (from / total),
+top: glyph.top,
+width: Math.max(glyph.width * ((to - from) / total), 1),
+height: Math.max(glyph.fontHeight, 1),
+});
+parts.push({ text: node.nodeValue.slice(from, to), top: glyph.top, left: glyph.left });
+}
+if (!raw.length) {
 if (!keepIfLost) {
 setLive([]);
 if (onClear) onClear(pageNumber);
@@ -4283,29 +4304,33 @@ if (onClear) onClear(pageNumber);
 return;
 }
 const merged = [];
-for (const rect of rects.slice().sort((a, b) => a.top - b.top || a.left - b.left)) {
+for (const rect of raw.slice().sort((a, b) => a.top - b.top || a.left - b.left)) {
 const last = merged[merged.length - 1];
-if (last && Math.abs(rect.top - last.top) < Math.max(2, rect.height * 0.4) && rect.left <= last.right + 0.6) {
-last.right = Math.max(last.right, rect.right);
-last.bottom = Math.max(last.bottom, rect.bottom);
-last.top = Math.min(last.top, rect.top);
+const sameLine = last && Math.abs(rect.top - last.top) < Math.max(2, rect.height * 0.4);
+if (sameLine && rect.left <= last.left + last.width + 0.75) {
+const right = Math.max(last.left + last.width, rect.left + rect.width);
+last.width = right - last.left;
+last.height = Math.max(last.height, rect.height);
 continue;
 }
-merged.push({ left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom });
+merged.push({ left: rect.left, top: rect.top, width: rect.width, height: rect.height });
 }
 const bands = merged.map((item) => [
-(item.left - box.left) / box.width,
-(item.top - box.top) / box.height,
-(item.right - item.left) / box.width,
-(item.bottom - item.top) / box.height,
+item.left / box.width,
+item.top / box.height,
+item.width / box.width,
+item.height / box.height,
 ]);
 setLive(bands);
 if (!onSelect) return;
-let text = "";
+parts.sort((a, b) => (Math.abs(a.top - b.top) > 4 ? a.top - b.top : a.left - b.left));
+let text = parts.map((part) => part.text).join("").replace(/\s+$/g, "");
+if (!text.trim()) {
 try {
 text = selectedTextInVisualOrder(wrap, range).replace(/\s+$/g, "");
 } catch (error) {
 text = "";
+}
 }
 if (!text.trim()) text = String(range.toString() || "").replace(/\s+$/g, "");
 const left = Math.min(...bands.map((item) => item[0]));

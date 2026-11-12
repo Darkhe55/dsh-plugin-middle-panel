@@ -13,8 +13,8 @@ const start = src.indexOf('const readSelection = (keepIfLost) => {');
 const end = src.indexOf('const toFraction = (event) => {', start);
 const read = src.slice(start, end);
 
-check(read.includes('let text = "";'), '文本默认空串');
-check(read.includes('try {'), '取词有异常保护');
+check(read.includes('parts.map((part) => part.text).join("")'), '文本来自字形遍历');
+check(read.includes('try {'), '取词有保护');
 check(read.includes('} catch (error) {'), '异常被捕获');
 check(read.includes('text = String(range.toString() || "").replace(/\\s+$/g, "");'), '中文回退到原生文本');
 check(!read.includes('if (!text.trim()) return;'), '空文本不再阻止上报');
