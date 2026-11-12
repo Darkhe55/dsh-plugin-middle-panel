@@ -100,6 +100,7 @@
           const measure = document.createElement("canvas").getContext("2d");
           const spans = [];
           const rawItems = content.items || [];
+      const itemStyles = content.styles || {};
 
 for (let index = 0; index < rawItems.length; index += 1) {
             const item = rawItems[index];
@@ -110,6 +111,7 @@ for (let index = 0; index < rawItems.length; index += 1) {
             const declared = Math.max(0, Number(item.width) || 0) * viewport.scale;
             spans.push({
               str: item.str,
+              family: (itemStyles[item.fontName] && itemStyles[item.fontName].fontFamily) || "",
               left: transform[4],
               top: transform[5] - fontHeight,
               baseline: transform[5],
@@ -127,7 +129,7 @@ for (let index = 0; index < rawItems.length; index += 1) {
           const glyphs = [];
           for (const span of spans) {
             const chars = Array.from(span.str);
-            const table = chars.length > 1 ? advanceTable(span.str, span.fontHeight) : null;
+            const table = chars.length > 1 ? advanceTable(span.str, span.fontHeight, span.family) : null;
             const shares = table ? table.cumulative : null;
             const total = table ? table.total : 0;
             if (!shares || !(total > 0)) {

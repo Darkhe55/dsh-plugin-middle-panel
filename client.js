@@ -4034,10 +4034,10 @@ parts.sort((a, b) => (Math.abs(a.top - b.top) > 4 ? a.top - b.top : a.left - b.l
 };
 const MEASURE_FONT = "Arial, Helvetica, sans-serif";
 let measureCtx = null;
-const advanceTable = (text, fontSize) => {
+const advanceTable = (text, fontSize, family) => {
 if (!measureCtx) measureCtx = document.createElement("canvas").getContext("2d");
 if (!measureCtx || !text) return null;
-measureCtx.font = fontSize + "px " + MEASURE_FONT;
+measureCtx.font = fontSize + "px " + (family || MEASURE_FONT);
 const chars = Array.from(text);
 const cumulative = [0];
 let running = 0;
@@ -4139,6 +4139,7 @@ return;
 const measure = document.createElement("canvas").getContext("2d");
 const spans = [];
 const rawItems = content.items || [];
+const itemStyles = content.styles || {};
 for (let index = 0; index < rawItems.length; index += 1) {
 const item = rawItems[index];
 if (!item || typeof item.str !== "string" || !item.str.trim()) continue;
@@ -4148,6 +4149,7 @@ if (!fontHeight) continue;
 const declared = Math.max(0, Number(item.width) || 0) * viewport.scale;
 spans.push({
 str: item.str,
+family: (itemStyles[item.fontName] && itemStyles[item.fontName].fontFamily) || "",
 left: transform[4],
 top: transform[5] - fontHeight,
 baseline: transform[5],
@@ -4158,7 +4160,7 @@ width: declared,
 const glyphs = [];
 for (const span of spans) {
 const chars = Array.from(span.str);
-const table = chars.length > 1 ? advanceTable(span.str, span.fontHeight) : null;
+const table = chars.length > 1 ? advanceTable(span.str, span.fontHeight, span.family) : null;
 const shares = table ? table.cumulative : null;
 const total = table ? table.total : 0;
 if (!shares || !(total > 0)) {
@@ -4714,6 +4716,7 @@ if (previousRight !== null && Math.abs(top - previousTop) < height * 0.6 && left
 joined += " ";
 }
 pieces.push({ start: joined.length, end: joined.length + item.str.length, left, top, width, height, length: item.str.length });
+family: (content.styles && content.styles[item.fontName] && content.styles[item.fontName].fontFamily) || "",
 joined += item.str;
 previousRight = left + width;
 previousTop = top;
@@ -4723,7 +4726,7 @@ const measureCtx2 = document.createElement("canvas").getContext("2d");
 for (const piece of pieces) {
 const cumulative = [0];
 let running = 0;
-if (measureCtx2) measureCtx2.font = Math.max(4, piece.height) + "px " + MEASURE_FONT;
+if (measureCtx2) measureCtx2.font = Math.max(4, piece.height) + "px " + (piece.family || MEASURE_FONT);
 for (const ch of piece.str) {
 running += measureCtx2 ? measureCtx2.measureText(ch).width : 1;
 cumulative.push(running);

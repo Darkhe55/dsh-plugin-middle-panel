@@ -15,8 +15,8 @@ const page = src.slice(start, end);
 
 // 度量：显式 Helvetica 兼容族 + 累积表
 check(src.includes('const MEASURE_FONT = "Arial, Helvetica, sans-serif";'), '测量字体为 Helvetica 兼容族');
-check(src.includes('const advanceTable = (text, fontSize) => {'), '有累积宽度表');
-check(page.includes('const table = chars.length > 1 ? advanceTable(span.str, span.fontHeight) : null;'), 'run 用累积表拆分');
+check(src.includes('const advanceTable = (text, fontSize, family) => {'), '有累积宽度表（带字体族）');
+check(page.includes('advanceTable(span.str, span.fontHeight, span.family)'), '用真实字体族测量');
 
 // 逐字切片
 check(page.includes('const from = shares[index] / total;'), '切片起点按宽度比例');

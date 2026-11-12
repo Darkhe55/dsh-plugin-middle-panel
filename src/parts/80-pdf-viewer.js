@@ -273,6 +273,7 @@
                 joined += " ";
               }
               pieces.push({ start: joined.length, end: joined.length + item.str.length, left, top, width, height, length: item.str.length });
+                family: (content.styles && content.styles[item.fontName] && content.styles[item.fontName].fontFamily) || "",
               joined += item.str;
               previousRight = left + width;
               previousTop = top;
@@ -284,7 +285,7 @@
             for (const piece of pieces) {
               const cumulative = [0];
               let running = 0;
-              if (measureCtx2) measureCtx2.font = Math.max(4, piece.height) + "px " + MEASURE_FONT;
+              if (measureCtx2) measureCtx2.font = Math.max(4, piece.height) + "px " + (piece.family || MEASURE_FONT);
               for (const ch of piece.str) {
                 running += measureCtx2 ? measureCtx2.measureText(ch).width : 1;
                 cumulative.push(running);
