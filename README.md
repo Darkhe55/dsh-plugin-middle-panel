@@ -39,7 +39,7 @@
   ```
 - **本地开发**：`install_bundle` 指向本目录。
 
-兼容 `engines.dsh: >=0.2.2-rc.1 <0.3.0`，无运行时依赖、无 `postinstall`。
+兼容 `engines.dsh: >=0.2.2-rc.1 <0.3.0`，无运行时依赖、无 `postinstall`。已在 **0.2.2-rc.3** 上实测：宿主路由、`main` slot 占用、`canvas` 工具注册与保存接口冒烟均通过。
 
 ## 用法
 

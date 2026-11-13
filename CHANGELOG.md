@@ -11,6 +11,11 @@
 - **发布脚本**：token 只进临时 `.npmrc`（`_authToken=${NPM_TOKEN}`）+ `npm_config_userconfig`，`finally` 中删除；Windows 优先用当前 node 执行 npm 的 cli.js，不再拼接 `cmd /c` 命令行；发布前 `npm pack --dry-run`；索引更新独立成步，失败时给出 `--index-only` 恢复命令。
 - **会话工作区查找**：同时尝试 `ctx.sessions` 与 `ctx.get('sessions')`，并兼容 session / record / agent 三种包装形态（防御性改进；实际阻塞点是会话 id 必须带 `session-` 前缀）。
 
+### 兼容性
+
+- 在 **DeepSeek Harness 0.2.2-rc.3** 上实测通过：宿主路由（`/dsh-canvas/vendor*`、`/dsh-canvas/file`）返回预期状态，`main` slot 的 `canvas` 占位处于 active，`canvas` 工具正常注册，保存接口冒烟 10 项全通过。
+- 逐条核对了 `upgrade-guide/v0.2.2-alpha.2`、`v0.2.2-alpha.3`、`v0.2.2-rc.1` 三个版本目录共 46 条升级说明，**没有一条要求本插件改动**：我们用的是 keyed `main` slot、`webServer.register`、`ctx.fs.writeText`、`ctx.sessions.get` 与 `systemPrompt.section`，均未出现在这些破坏性变更里。
+- `engines.dsh` 保持 `>=0.2.2-rc.1 <0.3.0`，rc.3 在范围内。
 ### 验证
 
 - **冒烟脚本** `scripts/smoke-save.cjs`（`npm run smoke:save`）：对运行中的实例验证正常保存、4 MiB 边界值、UTF-8 字节上限、6 MiB 请求体在中途中断、409 冲突、junction 越界，并清理自己创建的文件。
