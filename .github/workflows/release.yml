@@ -88,9 +88,21 @@ jobs:
 
       # 可信发布：npm 用 OIDC 现签一张短票，因此这里不设置 NODE_AUTH_TOKEN。
       # 若将来改用长期 token，再补回 `NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}`。
+      - name: Check that this run can mint an OIDC token
+        if: steps.guard.outputs.skip != 'true' && (github.event_name == 'push' || inputs.mode == 'publish')
+        run: |
+          url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npm:registry.npmjs.org"
+          code=$(curl -s -o /tmp/oidc.json -w '%{http_code}' -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "$url")
+          echo "OIDC 端点返回 $code"
+          if [ "$code" != "200" ]; then
+            echo "::error::拿不到 OIDC token（检查 job 是否声明 id-token: write）"
+            exit 1
+          fi
+          echo "::notice::OIDC token 获取成功；若发布仍失败，问题在 npm 侧的可信发布绑定（仓库名/工作流文件名/环境）"
+
       - name: Publish
         if: steps.guard.outputs.skip != 'true' && (github.event_name == 'push' || inputs.mode == 'publish')
-        run: npm publish --access public --provenance
+        run: npm publish --access public --provenance --loglevel verbose
 
       - name: Stage
         if: steps.guard.outputs.skip != 'true' && github.event_name == 'workflow_dispatch' && inputs.mode == 'stage'
