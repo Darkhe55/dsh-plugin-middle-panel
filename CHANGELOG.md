@@ -6,17 +6,15 @@
 
 ### 安全
 
-- **保存接口**：请求体改为读取时累计字节、超 6 MiB 立即中断（原来读完才判，且用 \	ext.length\ 计 UTF-16 单元，400 万中文字符的 12 MB 会被当成 4 MB 放行）；文本按 \Buffer.byteLength\ 校验；base64 解码后按实际字节复查；请求体上限与文件上限分离（6 MiB / 4 MiB）。逻辑抽到 \save-guard.js\，由 \	est/save-guard.test.mjs\ 覆盖。
-- **越界写入**：写之前对最近已存在祖先做 \ealpath\、拼接缺失尾段后用 \path.relative\ 判断是否仍在真实工作区内；最终组件是链接时跟随后再判；二进制改用文件句柄写入解析后的真实路径。字符串前缀不再是最终判据。
-- **发布脚本**：token 只进临时 \.npmrc\（\_authToken=\\）+ \
-pm_config_userconfig\，\inally\ 中删除；Windows 优先用当前 node 执行 npm 的 cli.js，不再拼接 \cmd /c\ 命令行；发布前 \
-pm pack --dry-run\；索引更新独立成步，失败时给出 \--index-only\ 恢复命令。
+- **保存接口**：请求体改为读取时累计字节、超 6 MiB 立即中断（原来读完才判，且用 `text.length` 计 UTF-16 单元，400 万中文字符的 12 MB 会被当成 4 MB 放行）；文本按 `Buffer.byteLength` 校验；base64 解码后按实际字节复查；请求体上限与文件上限分离（6 MiB / 4 MiB）。逻辑抽到 `save-guard.js`，由 `test/save-guard.test.mjs` 覆盖。
+- **越界写入**：写之前对最近已存在祖先做 `realpath`、拼接缺失尾段后用 `path.relative` 判断是否仍在真实工作区内；最终组件是链接时跟随后再判；二进制改用文件句柄写入解析后的真实路径。字符串前缀不再是最终判据。
+- **发布脚本**：token 只进临时 `.npmrc`（`_authToken=${NPM_TOKEN}`）+ `npm_config_userconfig`，`finally` 中删除；Windows 优先用当前 node 执行 npm 的 cli.js，不再拼接 `cmd /c` 命令行；发布前 `npm pack --dry-run`；索引更新独立成步，失败时给出 `--index-only` 恢复命令。
+- **会话工作区查找**：同时尝试 `ctx.sessions` 与 `ctx.get('sessions')`，并兼容 session / record / agent 三种包装形态（防御性改进；实际阻塞点是会话 id 必须带 `session-` 前缀）。
 
+### 验证
 
-### 清理
-
-- 发布包不再包含 src/：src/parts 是拼接片段，单独解析必然报错，且运行时不使用；仓库中保留。
-- 桌面 profile 中指向同一目录的重复别名 \@local/dsh-canvas-panel\ 已移除，只保留 \dsh-plugin-middle-panel\。
+- **冒烟脚本** `scripts/smoke-save.cjs`（`npm run smoke:save`）：对运行中的实例验证正常保存、4 MiB 边界值、UTF-8 字节上限、6 MiB 请求体在中途中断、409 冲突、junction 越界，并清理自己创建的文件。
+- 已对本地实例实测通过 10 项。
 
 ## 0.5.3（未发布）
 

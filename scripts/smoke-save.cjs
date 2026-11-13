@@ -27,6 +27,25 @@ const WORK_NAME = 'dsh-smoke-' + stamp + '.txt';
 const LINK_NAME = 'dsh-smoke-link-' + stamp;
 
 let failures = 0;
+
+/** Paths to remove on any exit, including an unexpected throw. */
+const cleanupPaths = [];
+const removeAll = () => {
+  for (const item of cleanupPaths.splice(0)) {
+    try {
+      const stat = fs.lstatSync(item);
+      if (stat.isSymbolicLink()) fs.unlinkSync(item);
+      else fs.rmSync(item, { force: true });
+    } catch {
+      /* already gone */
+    }
+  }
+};
+process.on('exit', removeAll);
+process.on('SIGINT', () => {
+  removeAll();
+  process.exit(130);
+});
 const check = (ok, label, detail) => {
   console.log((ok ? 'PASS ' : 'FAIL ') + label + (ok || !detail ? '' : ' → ' + detail));
   if (!ok) failures += 1;
@@ -35,9 +54,14 @@ const check = (ok, label, detail) => {
 /** The session folder name encodes its cwd: --C-Users-me-proj-- with ~XXXX~ escapes. */
 const decodeSessionDir = (name) => {
   const body = name.replace(/^--/, '').replace(/--$/, '');
-  return body
-    .replace(/~([0-9A-Fa-f]{4})~/g, (match, hex) => String.fromCharCode(parseInt(hex, 16)))
-    .replace(/-/g, '\\');
+  const text = body.replace(/~([0-9A-Fa-f]{4})~/g, (match, hex) => String.fromCharCode(parseInt(hex, 16)));
+  // A Windows path loses its colon in the encoding: "C-Users-..." is C:\Users\...
+  const drive = /^([A-Za-z])-(.*)$/.exec(text);
+  const windows = drive ? drive[1] + ':\\' + drive[2].replace(/-/g, '\\') : text.replace(/-/g, '\\');
+  const posix = '/' + text.replace(/-/g, '/');
+  if (fs.existsSync(windows)) return windows;
+  if (fs.existsSync(posix)) return posix;
+  return windows;
 };
 
 const candidates = () => {
@@ -54,8 +78,18 @@ const candidates = () => {
     }
     for (const entry of entries) {
       if (!entry.isDirectory() || !entry.name.startsWith('session-')) continue;
-      const mtime = fs.statSync(path.join(workspacePath, entry.name)).mtimeMs;
-      out.push({ id: entry.name.slice('session-'.length), root: decodeSessionDir(workspaceDir), mtime });
+      const full = path.join(workspacePath, entry.name);
+      // The id the route expects is the directory name, prefix included; the
+      // session log's own mtime is what identifies the live session.
+      let mtime = 0;
+      for (const file of fs.readdirSync(full)) {
+        try {
+          mtime = Math.max(mtime, fs.statSync(path.join(full, file)).mtimeMs);
+        } catch {
+          /* skip */
+        }
+      }
+      out.push({ id: entry.name, root: decodeSessionDir(workspaceDir), mtime });
     }
   }
   return out.sort((a, b) => b.mtime - a.mtime);
@@ -125,6 +159,7 @@ const main = async () => {
   for (const candidate of picked) {
     if (!fs.existsSync(candidate.root)) continue;
     const attempted = path.join(candidate.root, WORK_NAME);
+    cleanupPaths.push(attempted);
     const probe = await save(candidate.id, attempted, 'probe');
     if (probe.status === 200) {
       sessionId = candidate.id;
@@ -145,10 +180,10 @@ const main = async () => {
     process.exit(1);
   }
   console.log('会话 ' + sessionId.slice(0, 8) + '… 工作区 ' + root);
+  const target = target0 || path.join(root, WORK_NAME);
   console.log('目标文件 ' + target);
 
-  const target = target0 || path.join(root, WORK_NAME);
-  const cleanup = [target];
+  cleanupPaths.push(target);
 
   try {
     // 1) 正常保存
@@ -187,7 +222,7 @@ const main = async () => {
       let linked = true;
       try {
         await fsp.symlink(outside, link, 'junction');
-        cleanup.push(link);
+        cleanupPaths.push(link);
       } catch (error) {
         linked = false;
         console.log('SKIP junction 创建失败：' + (error && error.code));
@@ -200,15 +235,7 @@ const main = async () => {
       await fsp.rm(outside, { recursive: true, force: true });
     }
   } finally {
-    for (const item of cleanup) {
-      try {
-        const stat = fs.lstatSync(item);
-        if (stat.isSymbolicLink()) fs.unlinkSync(item);
-        else fs.rmSync(item, { force: true });
-      } catch {
-        /* already gone */
-      }
-    }
+    removeAll();
   }
 
   console.log(failures ? '\n失败 ' + failures + ' 项' : '\n全部通过');
