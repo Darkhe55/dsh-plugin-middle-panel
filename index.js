@@ -8,6 +8,15 @@
 export const inject = ['tools', 'systemPrompt', 'webServer', 'fs', 'workingDirectory', 'sessions']
 
 import { registerVendorRoute } from './vendor-route.js'
+import {
+  BodyTooLarge,
+  OutsideWorkspace,
+  decodeCappedBase64,
+  readCappedBody,
+  resolveWriteTarget,
+  textTooLarge,
+  utf8Bytes,
+} from './save-guard.js'
 
 const writeIsStale = (before, expectedMtime, expectedSize, force) => {
   if (!before) return false
@@ -27,7 +36,6 @@ const writeIsStale = (before, expectedMtime, expectedSize, force) => {
 export { writeIsStale }
 
 const VIEWS = ['auto', 'text', 'markdown', 'html', 'image']
-const MAX_SAVE_BYTES = 4 * 1024 * 1024
 
 const PROMPT = [
   '## Canvas panel',
@@ -228,14 +236,9 @@ export function apply(ctx) {
           }
           return new Response(JSON.stringify(body), { status, headers })
         }
-        const readBody = async () => {
-          if (nodeStyle) {
-            let text = ''
-            for await (const chunk of request) text += chunk
-            return text
-          }
-          return await request.text()
-        }
+        // Read with a byte budget: the stream is abandoned the moment it exceeds
+        // MAX_BODY_BYTES, instead of being buffered whole and measured afterwards.
+        const readBody = async () => readCappedBody(request, nodeStyle)
 
         if (method === 'OPTIONS') {
           if (!cors) return reply(403, { error: 'origin not allowed', origin })
@@ -253,9 +256,10 @@ export function apply(ctx) {
         try {
           text = String((await readBody()) || '')
         } catch (error) {
+          if (error instanceof BodyTooLarge) return reply(413, { error: 'request body is too large' })
           return reply(400, { error: 'unreadable body: ' + (error && error.message ? error.message : String(error)) })
         }
-        if (text.length > MAX_SAVE_BYTES) return reply(413, { error: 'file is too large' })
+    
 
         let body
         try {
@@ -272,6 +276,9 @@ export function apply(ctx) {
         const binary = body.encoding === 'base64'
         if (!requested) return reply(400, { error: 'path is required' })
         if (content === undefined) return reply(400, { error: 'content is required' })
+    // The envelope limit is not the file limit: four million CJK characters are
+    // four million UTF-16 units but twelve megabytes of UTF-8.
+    if (!binary && textTooLarge(content)) return reply(413, { error: 'file is too large' })
 
         // A write is authorised by a live Session's own workspace, never by a
         // guessed path: an opaque origin must still name a real session.
@@ -283,17 +290,29 @@ export function apply(ctx) {
           return reply(403, { error: 'refusing to write outside the session workspace: ' + root })
         }
 
+      try {
+        // `resolve` hands back a sandbox handle, not a path; stat the confined
+        // absolute path instead. Statting the handle threw, which silently
+        // disabled both the conflict check and the metadata route.
+        let fs
         try {
-          const target = await ctx.fs.resolve(absolute)
-          // `resolve` hands back a sandbox handle, not a path; stat the confined
-          // absolute path instead. Statting the handle threw, which silently
-          // disabled both the conflict check and the metadata route.
-          let fs
-          try {
-            fs = await import('node:fs/promises')
-          } catch {
-            fs = null
+          fs = await import('node:fs/promises')
+        } catch {
+          fs = null
+        }
+        if (!fs) return reply(500, { error: 'filesystem unavailable' })
+        // A prefix test cannot see through a symlink or a Windows junction, so the
+        // real destination is resolved and re-checked before anything writes.
+        let place
+        try {
+          place = await resolveWriteTarget(fs, root, absolute)
+        } catch (error) {
+          if (error instanceof OutsideWorkspace) {
+            return reply(403, { error: 'refusing to write outside the session workspace: ' + root })
           }
+          throw error
+        }
+        const target = await ctx.fs.resolve(place.realTarget)
           // Optimistic concurrency: the client sends the mtime it edited against.
           // A mismatch means someone else touched the file, so the write is
           // refused instead of silently discarding one of the two versions.
@@ -315,13 +334,26 @@ export function apply(ctx) {
               size: Number(before.size) || 0,
             })
           }
+          let written = 0
           if (binary) {
-            const bytes = Buffer.from(content, 'base64')
-            if (bytes.length > MAX_SAVE_BYTES) return reply(413, { error: 'file is too large' })
-            // The path is already confined above; binary has no text channel, so it
-            // goes straight through node's fs instead of the text-only sandbox API.
-            await fs.writeFile(absolute, bytes)
+            let bytes
+            try {
+              bytes = decodeCappedBase64(content)
+            } catch (error) {
+              if (error instanceof BodyTooLarge) return reply(413, { error: 'file is too large' })
+              throw error
+            }
+            written = bytes.length
+            // Write through a handle to the resolved path: the check and the write then
+            // refer to the same real location, not a name that could be swapped between.
+            const handle = await fs.open(place.realTarget, 'w')
+            try {
+              await handle.writeFile(bytes)
+            } finally {
+              await handle.close()
+            }
           } else {
+            written = utf8Bytes(content)
             // The composed filesystem fences writes by an explicit policy; without
             // one the default mode denies a path this route has already confined.
             await ctx.fs.writeText(target, content, undefined, undefined, {
@@ -340,10 +372,10 @@ export function apply(ctx) {
           }
           return reply(200, {
             ok: true,
-            path: absolute,
-            bytes: binary ? Buffer.from(content, 'base64').length : content.length,
+            path: place.realTarget,
+            bytes: written,
             mtimeMs: after ? Number(after.mtimeMs) || 0 : 0,
-            size: after ? Number(after.size) || 0 : binary ? Buffer.from(content, 'base64').length : content.length,
+            size: after ? Number(after.size) || 0 : written,
           })
         } catch (error) {
           return reply(500, { error: error && error.message ? error.message : String(error) })
