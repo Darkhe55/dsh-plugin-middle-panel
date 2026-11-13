@@ -86,8 +86,21 @@ jobs:
             exit 1
           fi
 
-      # 可信发布：npm 用 OIDC 现签一张短票，因此这里不设置 NODE_AUTH_TOKEN。
-      # 若将来改用长期 token，再补回 `NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}`。
+      # 两条认证路都留好：有 NPM_TOKEN secret 就用它，否则交给 OIDC 可信发布。
+      # 只有在 secret 存在时才写 .npmrc，避免空 token 让 npm 放弃 OIDC。
+      - name: Authenticate
+        if: steps.guard.outputs.skip != 'true' && (github.event_name == 'push' || inputs.mode == 'publish')
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -n "$NPM_TOKEN" ]; then
+            printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" >> "$HOME/.npmrc"
+            chmod 600 "$HOME/.npmrc"
+            echo "::notice::使用仓库 secret NPM_TOKEN 发布"
+          else
+            echo "::notice::未配置 NPM_TOKEN，走 npm 可信发布（OIDC）"
+          fi
+
       - name: Check that this run can mint an OIDC token
         if: steps.guard.outputs.skip != 'true' && (github.event_name == 'push' || inputs.mode == 'publish')
         run: |
@@ -102,7 +115,7 @@ jobs:
 
       - name: Publish
         if: steps.guard.outputs.skip != 'true' && (github.event_name == 'push' || inputs.mode == 'publish')
-        run: npm publish --access public --provenance --loglevel verbose
+        run: npm publish --access public --provenance
 
       - name: Stage
         if: steps.guard.outputs.skip != 'true' && github.event_name == 'workflow_dispatch' && inputs.mode == 'stage'
