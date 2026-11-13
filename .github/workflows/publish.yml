@@ -1,4 +1,4 @@
-name: Release
+name: Publish
 
 # 只有「打标签」才会发布：推送分支永远只跑 CI，不动 registry。
 #   git tag v0.5.5 && git push origin v0.5.5

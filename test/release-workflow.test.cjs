@@ -35,7 +35,7 @@ const fromEnv = run(['--offline'], { GITHUB_REF_NAME: 'v' + pkg.version });
 check(fromEnv.status === 0, '没有 --tag 时用 GITHUB_REF_NAME', String(fromEnv.status));
 
 // workflow 侧的行为约定
-const workflow = fs.readFileSync(path.join(root, '.github', 'workflows', 'release.yml'), 'utf8');
+const workflow = fs.readFileSync(path.join(root, '.github', 'workflows', 'publish.yml'), 'utf8');
 check(/tags:\s*\n\s*- '?v\*'?/.test(workflow), '只在标签推送时触发');
 check(!/branches:\s*\n\s*- main/.test(workflow), '分支推送不触发发布');
 check(workflow.includes('id-token: write'), '声明 OIDC 权限');
