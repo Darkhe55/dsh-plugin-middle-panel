@@ -33,7 +33,7 @@ const writeIsStale = (before, expectedMtime, expectedSize, force) => {
   return false
 }
 
-export { writeIsStale }
+export { sessionCwdOf, sessionRootFromStore, writeIsStale }
 
 const VIEWS = ['auto', 'text', 'markdown', 'html', 'image']
 
@@ -57,17 +57,71 @@ const isInside = (root, target) => {
   return path === base || path.startsWith(base + '/')
 }
 
-/** The Session's own working directory, from the live session store. */
+/**
+ * The working directory of a session, read from whichever shape the store holds.
+ *
+ * Cordis services have moved between releases: a session value may be the session
+ * itself, a record wrapping one, or an agent owning one. Accept all of them instead
+ * of depending on a single layout.
+ */
+const sessionCwdOf = (value) => {
+  const layers = [
+    value,
+    value && value.session,
+    value && value.record,
+    value && value.record && value.record.session,
+    value && value.agent,
+    value && value.agent && value.agent.session,
+  ]
+  for (const layer of layers) {
+    const cwd = layer && layer.header && layer.header.cwd
+    if (typeof cwd === 'string' && cwd) return cwd
+  }
+  return undefined
+}
+
 const sessionRootFromStore = (ctx, sessionId) => {
   if (!sessionId) return undefined
+  const services = []
+  // `ctx.sessions` is the current accessor; `ctx.get(name)` is the older one. Both
+  // are tried, because a missing accessor used to make every save fall back to the
+  // in-memory workspace map and answer 403 after a restart.
   try {
-    const sessions = ctx.get('sessions')
-    const session = sessions && typeof sessions.get === 'function' ? sessions.get(sessionId) : undefined
-    const cwd = session && session.header && session.header.cwd
-    return typeof cwd === 'string' && cwd ? cwd : undefined
+    if (ctx && ctx.sessions) services.push(ctx.sessions)
   } catch {
-    return undefined
+    /* ignore */
   }
+  try {
+    const legacy = ctx && typeof ctx.get === 'function' ? ctx.get('sessions') : undefined
+    if (legacy && !services.includes(legacy)) services.push(legacy)
+  } catch {
+    /* ignore */
+  }
+  for (const service of services) {
+    try {
+      if (typeof service.get === 'function') {
+        const cwd = sessionCwdOf(service.get(sessionId))
+        if (cwd) return cwd
+      }
+      // A registry without `get` still exposes its entries.
+      if (typeof service.values === 'function') {
+        for (const value of service.values()) {
+          const id =
+            value &&
+            (value.id ||
+              (value.header && value.header.id) ||
+              (value.session && value.session.header && value.session.header.id))
+          if (id && String(id) === String(sessionId)) {
+            const cwd = sessionCwdOf(value)
+            if (cwd) return cwd
+          }
+        }
+      }
+    } catch {
+      /* try the next accessor */
+    }
+  }
+  return undefined
 }
 
 const corsFor = (request, hostHeader) => {
