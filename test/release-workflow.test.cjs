@@ -12,10 +12,13 @@ const check = (ok, label, detail) => {
   if (!ok) failures += 1;
 };
 
-const run = (args) => spawnSync(process.execPath, [path.join(root, 'scripts', 'version-guard.cjs'), ...args], {
-  cwd: root,
-  encoding: 'utf8',
-});
+// CI 会设置 GITHUB_REF_NAME；这里显式清空，保证「没有标签」的用例在任何环境都成立。
+const run = (args, extraEnv) =>
+  spawnSync(process.execPath, [path.join(root, 'scripts', 'version-guard.cjs'), ...args], {
+    cwd: root,
+    encoding: 'utf8',
+    env: { ...process.env, GITHUB_REF_NAME: '', ...(extraEnv || {}) },
+  });
 
 const mismatch = run(['--tag', 'v0.0.1', '--offline']);
 check(mismatch.status === 1, '标签与版本不一致时退出码 1', String(mismatch.status));
@@ -26,6 +29,10 @@ check(missing.status === 1, '缺少标签时退出码 1', String(missing.status)
 
 const okTag = run(['--tag', 'v' + pkg.version, '--offline']);
 check(okTag.status === 0, '一致时放行', String(okTag.status));
+
+// CI 里没有 --tag 时应当回落到 GITHUB_REF_NAME
+const fromEnv = run(['--offline'], { GITHUB_REF_NAME: 'v' + pkg.version });
+check(fromEnv.status === 0, '没有 --tag 时用 GITHUB_REF_NAME', String(fromEnv.status));
 
 // workflow 侧的行为约定
 const workflow = fs.readFileSync(path.join(root, '.github', 'workflows', 'release.yml'), 'utf8');
