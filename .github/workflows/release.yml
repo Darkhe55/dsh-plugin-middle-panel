@@ -36,7 +36,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-          registry-url: 'https://registry.npmjs.org'
+
+      - name: Report the publishing identity
+        run: |
+          echo "npm $(npm --version) on node $(node --version)"
+          if [ -n "${{ secrets.NPM_TOKEN }}" ]; then
+            echo "::notice::使用仓库 secret NPM_TOKEN 发布"
+          else
+            echo "::notice::未配置 NPM_TOKEN，走 npm 可信发布（OIDC）"
+          fi
 
       - name: Resolve the version to release
         id: version
@@ -78,17 +86,14 @@ jobs:
             exit 1
           fi
 
-      # NODE_AUTH_TOKEN 为空时 npm 走 OIDC 可信发布；设置 secret 时用该 token。
+      # 可信发布：npm 用 OIDC 现签一张短票，因此这里不设置 NODE_AUTH_TOKEN。
+      # 若将来改用长期 token，再补回 `NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}`。
       - name: Publish
         if: steps.guard.outputs.skip != 'true' && (github.event_name == 'push' || inputs.mode == 'publish')
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --access public --provenance
 
       - name: Stage
         if: steps.guard.outputs.skip != 'true' && github.event_name == 'workflow_dispatch' && inputs.mode == 'stage'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm stage publish --access public --provenance
 
       - name: Remind about staged approval
