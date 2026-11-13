@@ -55,11 +55,36 @@ const compare = (left, right) => {
   return left.pre < right.pre ? -1 : 1;
 };
 
+// node:https with `agent: false` instead of global fetch: undici keeps a keep-alive
+// socket open, and exiting while it closes trips a libuv assertion on Windows.
+const https = require('node:https');
+
 const fetchText = (url) =>
-  fetch(url, { headers: { accept: 'application/json', 'user-agent': 'dsh-plugin-middle-panel-guard' } }).then((response) => {
-    if (response.status === 404) return null;
-    if (!response.ok) throw new Error('registry ' + response.status);
-    return response.text();
+  new Promise((resolve, reject) => {
+    const request = https.get(
+      url,
+      { headers: { accept: 'application/json', 'user-agent': 'dsh-plugin-middle-panel-guard' }, agent: false, timeout: 15000 },
+      (response) => {
+        if (response.statusCode === 404) {
+          response.resume();
+          resolve(null);
+          return;
+        }
+        if (response.statusCode !== 200) {
+          response.resume();
+          reject(new Error('registry ' + response.statusCode));
+          return;
+        }
+        let body = '';
+        response.setEncoding('utf8');
+        response.on('data', (chunk) => {
+          body += chunk;
+        });
+        response.on('end', () => resolve(body));
+      },
+    );
+    request.on('timeout', () => request.destroy(new Error('registry 超时')));
+    request.on('error', reject);
   });
 
 const main = async () => {
@@ -76,7 +101,8 @@ const main = async () => {
   const versions = Object.keys(meta.versions || {});
   if (versions.includes(version)) {
     console.error('• ' + pkg.name + '@' + version + ' 已存在，跳过发布');
-    process.exit(2);
+    process.exitCode = 2;
+    return;
   }
   const latest = meta['dist-tags'] && meta['dist-tags'].latest;
   const mine = parse(version);
