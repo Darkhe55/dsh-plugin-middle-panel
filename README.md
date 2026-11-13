@@ -18,9 +18,34 @@
 
 包名 `dsh-plugin-middle-panel`，以 bundle 形式装在当前 profile（`desktop`）里。
 
+## 发布流程
+
+分支推送**只跑测试**，不动 registry；发布只由**打标签**触发。
+
+```bash
+# 1) 改版本 + 写 CHANGELOG，提交并推送
+git commit -am "release: 0.5.6" && git push
+
+# 2) 打标签并推送，这一步才会发布
+git tag v0.5.6 && git push origin v0.5.6
+```
+
+`.github/workflows/release.yml` 会依次：校验标签与 `package.json` 一致 → 若该版本已存在则跳过 → 跑全部测试 → 校验 `client.js` 与 `src/parts` 同源 → `npm publish --provenance`。
+
+两种凭据方式，二选一：
+
+| 方式 | 配置 | 是否需要 token |
+|---|---|---|
+| **可信发布（推荐）** | npm 包页面 → Trusted Publisher 绑定 `Darkhe55/dsh-plugin-middle-panel` + `release.yml` | 不需要，走 OIDC |
+| 仓库 secret | Settings → Secrets → `NPM_TOKEN`（Granular，**不要**开 bypass 2FA） | 需要 |
+
+手动触发也可以在 Actions → Release → Run workflow 里选 `stage`（只暂存，需人工 2FA 审批）或 `publish`。
+
+本地等价命令：`npm run guard -- --tag v0.5.6`（只检查是否该发）、`npm run release:stage`、`npm run release:approve -- <stage-id>`、`npm run release`（直接发布）。
+
 ## 安装
 
-已发布到 npm：**`dsh-plugin-middle-panel@0.4.0`**（`latest`）。
+已发布到 npm：**`dsh-plugin-middle-panel`**（以 `npm view dsh-plugin-middle-panel version` 为准）。
 
 - **按包名安装**（官方 npm 源，或任意镜像源，二者等价）：
   ```bash

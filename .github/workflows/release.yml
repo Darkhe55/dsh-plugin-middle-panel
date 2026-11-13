@@ -1,0 +1,96 @@
+name: Release
+
+# 只有「打标签」才会发布：推送分支永远只跑 CI，不动 registry。
+#   git tag v0.5.5 && git push origin v0.5.5
+# 也支持手动触发（可只暂存不发布）。
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: stage 只暂存（需人工审批），publish 直接发布
+        type: choice
+        options: [publish, stage]
+        default: stage
+
+permissions:
+  contents: read
+  id-token: write # npm 可信发布（OIDC）与 provenance 需要
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Resolve the version to release
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            tag="${{ github.ref_name }}"
+          else
+            tag="v$(node -p "require('./package.json').version")"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Guard (tag must match package.json, and must be newer than the registry)
+        id: guard
+        run: |
+          set +e
+          node scripts/version-guard.cjs --tag "${{ steps.version.outputs.tag }}"
+          code=$?
+          set -e
+          if [ "$code" -eq 2 ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::该版本已发布，跳过"
+            exit 0
+          fi
+          if [ "$code" -ne 0 ]; then
+            exit "$code"
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Test
+        if: steps.guard.outputs.skip != 'true'
+        run: npm test
+
+      - name: Verify the bundle matches src/parts
+        if: steps.guard.outputs.skip != 'true'
+        run: |
+          node scripts/build.cjs
+          if [ -n "$(git status --porcelain client.js)" ]; then
+            echo "::error::client.js 与 src/parts 不同步"
+            exit 1
+          fi
+
+      # NODE_AUTH_TOKEN 为空时 npm 走 OIDC 可信发布；设置 secret 时用该 token。
+      - name: Publish
+        if: steps.guard.outputs.skip != 'true' && (github.event_name == 'push' || inputs.mode == 'publish')
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public --provenance
+
+      - name: Stage
+        if: steps.guard.outputs.skip != 'true' && github.event_name == 'workflow_dispatch' && inputs.mode == 'stage'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm stage publish --access public --provenance
+
+      - name: Remind about staged approval
+        if: steps.guard.outputs.skip != 'true' && github.event_name == 'workflow_dispatch' && inputs.mode == 'stage'
+        run: echo "::notice::已暂存，需要人工审批：npm stage approve <stage-id>（要 2FA）"
