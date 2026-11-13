@@ -7,3 +7,27 @@ Thumbs.db
 # 我用的临时补丁脚���（不应进仓库）
 .[a-z0-9-]*.cjs
 .npmrc
+
+# 打包/发布产物：npm pack 会把 tgz 写到仓库根
+*.tgz
+
+# 凭据类文件（即使不小心创建，也不能进仓库）
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*token*.txt
+.npmrc.*
+
+# 冒烟/调试残留
+dsh-smoke-*
+npm-debug.log*
+*.bak
+*.orig
+*.rej
+
+# 编辑器与系统
+.vscode/
+.idea/

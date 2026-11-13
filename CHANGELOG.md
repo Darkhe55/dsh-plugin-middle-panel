@@ -13,6 +13,8 @@
 
 - 发布脚本新增 `--check-token`：只验证 token 是否仍然有效（`npm whoami`），并提示过期后的处理方式。
 - 发布前先做一次凭据预检，失败信息按 npm 错误码分类：401（token 过期/撤销）、403（无 publish 权限或策略禁止）、EOTP（需要 2FA，可用 `--otp`）、409（正在投递）、版本已发布。
+- 提交建议不再给 `git add -A`：改为列出当前工作树、只把发布相关文件（`package.json`、`client.js`、`CHANGELOG.md`、`market-index.json`）写进建议命令；若工作树里出现 `.npmrc`、`*.env*`、`*.pem`、`*token*.txt`、`*.tgz`、`dsh-smoke-*` 这类路径，直接拒绝给提交命令并提示先处理。
+- `.gitignore` 补充：`*.tgz`、`.env*`、`*.pem`/`*.key`/`*.p12`/`*.pfx`、`*token*.txt`、`.npmrc.*`、`dsh-smoke-*`、`*.bak`/`*.orig`/`*.rej`、`.vscode/`、`.idea/`。新增 `test/git-hygiene.test.cjs` 断言这些规则存在、对示例路径生效、且仓库里没有已跟踪的凭据文件。
 
 ## 0.5.4（未发布）
 

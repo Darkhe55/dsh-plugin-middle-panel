@@ -231,5 +231,59 @@ try {
   );
 }
 
+/** Files this script itself touches; the safe core of a release commit. */
+const RELEASE_FILES = ['package.json', 'client.js', 'CHANGELOG.md', 'market-index.json'];
+
+/** Names that should never be committed, whatever the ignore file says. */
+const RISKY = [
+  /\.npmrc/i,
+  /(^|\/)[^/]*token[^/]*\.txt$/i,
+  /\.env(\.|$)/i,
+  /\.(pem|key|p12|pfx)$/i,
+  /\.tgz$/i,
+  /^dsh-smoke-/,
+  /(^|\/)\.{1,2}$/,
+];
+
+/**
+ * Suggest the narrowest commit that still records the release.
+ *
+ * A blanket stage of the whole tree would sweep in whatever else it happens to
+ * hold, so the script lists the working tree, refuses to recommend anything when a
+ * risky path is present, and otherwise names the release files explicitly.
+ */
+const suggestCommit = () => {
+  const status = runCaptured(['status', '--porcelain=v1', '-z']);
+  const rows = String(status.output)
+    .split('\0')
+    .filter((row) => row.trim().length > 3)
+    .map((row) => ({ code: row.slice(0, 2).trim(), file: row.slice(3) }));
+
+  const risky = rows.filter((row) => RISKY.some((pattern) => pattern.test(row.file)));
+  const unrelated = rows.filter((row) => !RELEASE_FILES.includes(row.file));
+
+  console.log('\n  当前工作树：');
+  if (!rows.length) console.log('    （干净，无需提交）');
+  for (const row of rows) console.log('    ' + row.code + ' ' + row.file);
+
+  if (risky.length) {
+    console.error('\n⚠ 工作树里有不该提交的文件：');
+    for (const row of risky) console.error('    ' + row.file);
+    console.error('  先把它们移到仓库外或补进 .gitignore，再提交；不要整树暂存。');
+  }
+
+  if (unrelated.length && !risky.length) {
+    console.log('\n  注意：除发布相关文件外还有其它改动，提交前请逐项确认。');
+  }
+
+  if (!risky.length) {
+    const addable = rows.filter((row) => RELEASE_FILES.includes(row.file)).map((row) => row.file);
+    if (addable.length) {
+      console.log('\n  只提交发布相关文件：');
+      console.log('    git add ' + addable.join(' ') + ' && git commit -m "release: ' + version + '" && git push');
+    }
+  }
+};
+
 console.log('\n✓ 已发布 ' + version + '');
-console.log('  接下来：git add -A && git commit -m "release: ' + version + '" && git push');
+suggestCommit();
