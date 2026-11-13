@@ -2,6 +2,19 @@
 
 本项目的版本按 `主.次.修订` 递增；`npm` 上已发布的版本不可撤回，修正一律走新版本。
 
+## 0.5.6（未发布）
+
+### 工程
+
+- 新增 `.gitattributes`：仓库内统一 LF，二进制类型标记为 binary。之前的每次提交都会刷一堆 `LF will be replaced by CRLF` 警告，现在没有了。
+- `package.json` 补 `engines.node: ">=24.9.0"`，与 DSH 自身的要求一致。
+- 新增 `test/market-index.test.cjs`：市场清单的第一条必须等于 `package.json` 的版本，且带上 `engines.dsh`；按标签发布后清单不会再悄悄落后。
+- `market-index.json` 同步到 0.5.6。
+
+### 发布
+
+- 首次通过 **GitHub Actions + npm 可信发布（OIDC）**发布：`git push origin v0.5.6` 触发，不再依赖本地 token。
+
 ## 0.5.5（未发布）
 
 ### CI 与发布流程
