@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      # 仓库没有运行时/开发依赖，npm install 反而会引入不可控内容
+      - name: Test
+        run: npm test
+
+      - name: Verify client.js is in sync with src/parts
+        run: |
+          node scripts/build.cjs
+          if [ -n "$(git status --porcelain client.js)" ]; then
+            echo "::error::client.js 与 src/parts 不同步：本地运行 node scripts/build.cjs 后提交"
+            git --no-pager diff --stat client.js
+            exit 1
+          fi
+
+      - name: Refuse committed credentials
+        run: |
+          if git ls-files --error-unmatch .npmrc >/dev/null 2>&1; then
+            echo "::error::.npmrc 不应被提交"
+            exit 1
+          fi
+          if git ls-files | grep -E '(^|/)\.(env)|\.(pem|key|p12|pfx)$|token.*\.txt$|\.tgz$'; then
+            echo "::error::仓库里出现凭据类或打包产物文件"
+            exit 1
+          fi
+          if git grep -nE 'npm_[A-Za-z0-9]{20,}' -- . ':!vendor' ':!CHANGELOG.md'; then
+            echo "::error::疑似 npm token 出现在仓库里"
+            exit 1
+          fi
+
+      - name: Package dry run
+        run: npm pack --dry-run
