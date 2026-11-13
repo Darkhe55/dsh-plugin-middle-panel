@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      stage:
+        description: 暂存 package.json 里的版本到 npm（不会上线，需人工审批）
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -54,3 +59,41 @@ jobs:
 
       - name: Package dry run
         run: npm pack --dry-run
+
+  # 手动触发的暂存：CI 只把版本放进 registry 的暂存区，不发上线。
+  # 需要仓库 secret NPM_TOKEN（Granular，无 bypass-2FA）；审批必须由人完成。
+  stage:
+    if: github.event_name == 'workflow_dispatch' && inputs.stage
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: test
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Stage the version in package.json
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::error::缺少仓库 secret NPM_TOKEN"
+            exit 1
+          fi
+          npm stage publish --access public --provenance
+
+      - name: Show the pending staged version
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm stage list dsh-plugin-middle-panel --json
+
+      - name: Remind the approval step
+        run: |
+          echo "::notice::已暂存，需要人工审批：npm stage approve <stage-id>（要 2FA）"
+

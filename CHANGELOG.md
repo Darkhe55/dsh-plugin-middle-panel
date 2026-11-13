@@ -4,6 +4,13 @@
 
 ## 0.5.5（未发布）
 
+### CI 与发布流程
+
+- **CI 已落地**：`.github/workflows/ci.yml` 在每次 push / PR 上跑 65 个测试、重建 `client.js` 校验它与 `src/parts` 同步、拒绝已提交的凭据或打包产物、检查 tarball 内容。首次运行 `CI #1` 结论为 success。
+- **暂存发布**：`npm run release:stage` 用 `npm stage publish` 把版本放进 registry 暂存区（**不需要 2FA**，适合 CI），再由人用 `npm run release:approve -- <stage-id>` 或 `npm stage approve <stage-id>` 审批上线（**需要 2FA**）。审批前不更新 `market-index.json`。
+- CI 里另有一个手动触发的 `stage` job，用仓库 secret `NPM_TOKEN` 执行 `npm stage publish --provenance`；审批这一步不放进去，因为 npm 的短生命周期 token 不允许执行 `npm stage` 子命令。
+- 新增 `npm run release:check-token`：只验证 token 是否仍有效，并提示过期后的处理方式。
+
 ### 修复
 
 - **0.5.4 的包是坏的**：`save-guard.js` 写进了仓库却漏在 `files` 白名单里，安装后 `index.js` 的 `import` 找不到文件，宿主插件直接加载失败。0.5.5 把它加进白名单。

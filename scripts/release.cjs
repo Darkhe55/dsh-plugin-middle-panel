@@ -17,6 +17,9 @@ const root = path.resolve(__dirname, '..');
 const dryRun = process.argv.includes('--dry-run');
 const indexOnly = process.argv.includes('--index-only');
 const checkToken = process.argv.includes('--check-token');
+const stageOnly = process.argv.includes('--stage');
+const approveIndex = process.argv.indexOf('--approve');
+const approveId = approveIndex >= 0 ? String(process.argv[approveIndex + 1] || '') : '';
 const otpIndex = process.argv.indexOf('--otp');
 const otp = otpIndex >= 0 ? String(process.argv[otpIndex + 1] || '') : '';
 const registry = 'https://registry.npmjs.org';
@@ -168,6 +171,23 @@ const updateMarketIndex = () => {
   console.log('✓ market-index.json 指向 ' + version);
 };
 
+// 审批一个已暂存的版本：这一步是「证明你在场」，需要 2FA 或豁免 2FA 的凭据
+if (approveId) {
+  const approved = withNpmrc((env) => {
+    const args = ['stage', 'approve', approveId, '--registry', registry];
+    if (otp) args.push('--otp', otp);
+    return runCaptured(args, env);
+  });
+  if (approved.status !== 0) {
+    const reason = explain(approved.output);
+    fail(reason.message, reason.hint);
+  }
+  console.log('\n✓ 已审批 ' + approveId + '，' + pkg.name + '@' + version + ' 已上线');
+  updateMarketIndex();
+  console.log('  接下来：git add package.json market-index.json CHANGELOG.md && git commit -m "release: ' + version + '" && git push');
+  process.exit(0);
+}
+
 if (indexOnly) {
   updateMarketIndex();
   console.log('  接下来：git add market-index.json && git commit -m "release: ' + version + '" && git push');
@@ -206,7 +226,9 @@ const publishResult = withNpmrc((env) => {
     const reason = explain(who.output);
     return { status: 1, output: who.output, reason };
   }
-  const args = ['publish', '--registry', registry, '--access', 'public'];
+  const args = [stageOnly ? 'stage' : 'publish'];
+  if (stageOnly) args.push('publish');
+  args.push('--registry', registry, '--access', 'public');
   if (dryRun) args.push('--dry-run');
   if (otp) args.push('--otp', otp);
   return runCaptured(args, env);
@@ -218,6 +240,17 @@ if (publishResult.status !== 0) {
 
 if (dryRun) {
   console.log('\n dry run 结束，未写入 market-index.json');
+  process.exit(0);
+}
+
+// 暂存模式：包还没上线，索引不能动；审批由人（或带 2FA 豁免的 CI）完成
+if (stageOnly) {
+  console.log('\n✓ 已暂存 ' + pkg.name + '@' + version + '（尚未发布）');
+  console.log('  审批后才会真正上线，二选一：');
+  console.log('    1) 本人审批：npm stage approve <stage-id>（需要 2FA）');
+  console.log('    2) 本脚本审批：node scripts/release.cjs --approve <stage-id>');
+  console.log('  查看待审批列表：npm stage list ' + pkg.name + ' --json');
+  console.log('  审批通过后再更新索引：node scripts/release.cjs --index-only');
   process.exit(0);
 }
 
