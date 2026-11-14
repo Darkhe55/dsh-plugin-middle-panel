@@ -13,6 +13,7 @@ import {
   OutsideWorkspace,
   decodeCappedBase64,
   readCappedBody,
+  replyBodyTooLarge,
   resolveWriteTarget,
   textTooLarge,
   utf8Bytes,
@@ -290,8 +291,9 @@ export function apply(ctx) {
           }
           return new Response(JSON.stringify(body), { status, headers })
         }
-        // Read with a byte budget: the stream is abandoned the moment it exceeds
-        // MAX_BODY_BYTES, instead of being buffered whole and measured afterwards.
+        // Read with a byte budget: the body is drained past MAX_BODY_BYTES but never
+        // retained, so the refusal below still reaches the client instead of resetting
+        // its connection.
         const readBody = async () => readCappedBody(request, nodeStyle)
 
         if (method === 'OPTIONS') {
@@ -310,7 +312,11 @@ export function apply(ctx) {
         try {
           text = String((await readBody()) || '')
         } catch (error) {
-          if (error instanceof BodyTooLarge) return reply(413, { error: 'request body is too large' })
+          if (error instanceof BodyTooLarge) {
+            // The body was drained without being retained; the connection is spent, so
+            // it is closed after the reply rather than reused by a second request.
+            return replyBodyTooLarge({ reply, request, response, nodeStyle })
+          }
           return reply(400, { error: 'unreadable body: ' + (error && error.message ? error.message : String(error)) })
         }
     

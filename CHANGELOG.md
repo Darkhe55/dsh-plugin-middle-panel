@@ -2,6 +2,20 @@
 
 本项目的版本按 `主.次.修订` 递增；`npm` 上已发布的版本不可撤回，修正一律走新版本。
 
+## 0.5.7（未发布）
+
+### 修复
+
+- **超限请求体现在真的返回 413**：`readCappedBody` 在越过 6 MiB 时先调用 `request.destroy()` 再抛 `BodyTooLarge`，socket 已被销毁，外层写的 `413` 根本发不出去，客户端只看到 `ECONNRESET`。现在改成：一旦超限**立即停止累积**（多出的块计数后丢弃，不拼接、不保留），把剩余请求体读空丢弃（字节与时间双上限），再由 `replyBodyTooLarge()` 写出 `413` + `Connection: close`；全程不在响应之前销毁 socket。
+- 新增真实 HTTP 集成测试 `test/save-route-real.test.mjs`：用 `apply()` 注册出来的**真实保存路由**跑在真实 `http.createServer` 上，覆盖正常保存、超限 413、`Connection: close`、分块上传超限、超限后再保存；另有 `test/save-route-http.test.mjs` 覆盖边界值与分块场景。把实现换回「超限即 destroy」时这两个测试都会红。
+- `test/save-guard.test.mjs` 改用真实的请求替身（`on`/`once`/`removeListener`/`pause`/`destroy`），断言超限时连接未被销毁、不保留超限字节。
+
+### 连接关闭策略
+
+- 不完整消费的请求体不能复用连接：413 响应带 `Connection: close`，由 Node 在响应写完后关闭。
+- 抽干阶段有 32 MiB / 5 s 上限，对端持续灌数据时会中止读取，避免连接被长期占用。
+- 抽干期间挂上 `error` 监听，关闭时的 socket 错误不会变成未处理的 rejection。
+
 ## 0.5.6（未发布）
 
 ### 工程

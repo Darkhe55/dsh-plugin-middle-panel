@@ -30,31 +30,24 @@ export class OutsideWorkspace extends Error {
 }
 
 /**
+ * Bounds on the discard phase. The remainder of an over-limit body is read and
+ * thrown away so the reply can be delivered (closing while the peer still writes
+ * resets the connection and the 413 is lost); these limits keep a hostile upload
+ * from holding the connection open forever.
+ */
+export const MAX_DISCARD_BYTES = 32 * 1024 * 1024
+export const DISCARD_TIMEOUT_MS = 5000
+
+/**
  * Read a request body, counting bytes as they arrive.
  *
- * A body that crosses `cap` is abandoned mid-stream instead of being buffered
- * first: `text.length` counted UTF-16 units, so four million CJK characters
- * looked like four million "characters" while occupying twelve megabytes.
+ * Crossing `cap` stops all accumulation immediately: the offending chunk and
+ * everything after it are discarded, never concatenated and never retained. The
+ * remainder is still drained — measured, not stored — because a peer that is
+ * still writing when the socket closes sees ECONNRESET instead of the 413.
  */
 export const readCappedBody = async (request, nodeStyle, cap = MAX_BODY_BYTES) => {
-  if (nodeStyle) {
-    const parts = []
-    let total = 0
-    for await (const chunk of request) {
-      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
-      total += buffer.length
-      if (total > cap) {
-        try {
-          if (typeof request.destroy === 'function') request.destroy()
-        } catch {
-          /* the refusal below is what matters */
-        }
-        throw new BodyTooLarge()
-      }
-      parts.push(buffer)
-    }
-    return Buffer.concat(parts).toString('utf8')
-  }
+  if (nodeStyle) return readNodeBody(request, cap)
 
   const body = request.body
   if (body && typeof body.getReader === 'function') {
@@ -67,6 +60,8 @@ export const readCappedBody = async (request, nodeStyle, cap = MAX_BODY_BYTES) =
       const buffer = Buffer.from(value)
       total += buffer.length
       if (total > cap) {
+        // The web runtime owns the connection, so cancelling is safe here and stops
+        // the transfer without buffering the rest.
         try {
           await reader.cancel()
         } catch {
@@ -82,6 +77,101 @@ export const readCappedBody = async (request, nodeStyle, cap = MAX_BODY_BYTES) =
   const text = await request.text()
   if (utf8Bytes(text) > cap) throw new BodyTooLarge()
   return text
+}
+
+/**
+ * Node request bodies are read with explicit listeners rather than `for await`:
+ * breaking out of an async iterator destroys the stream, which is exactly the
+ * socket reset this guard must avoid.
+ */
+const readNodeBody = (request, cap) =>
+  new Promise((resolve, reject) => {
+    const parts = []
+    let total = 0
+    let excess = 0
+    let over = false
+    let settled = false
+    let timer = null
+
+    const cleanup = () => {
+      if (timer) clearTimeout(timer)
+      timer = null
+      request.removeListener('data', onData)
+      request.removeListener('end', onEnd)
+      request.removeListener('error', onError)
+      request.removeListener('aborted', onAborted)
+    }
+
+    const stop = () => {
+      if (settled) return
+      settled = true
+      cleanup()
+      // A teardown after the refusal can emit on the request; swallow it so it never
+      // becomes an unhandled 'error'.
+      request.on('error', () => {})
+      reject(new BodyTooLarge())
+    }
+
+    const onData = (chunk) => {
+      if (settled) return
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+      if (over) {
+        // Discarded: counted, never stored.
+        excess += buffer.length
+        if (excess > MAX_DISCARD_BYTES) stop()
+        return
+      }
+      total += buffer.length
+      if (total > cap) {
+        over = true
+        // Bound the drain in time as well, in case the peer trickles bytes forever.
+        timer = setTimeout(stop, DISCARD_TIMEOUT_MS)
+        if (typeof timer.unref === 'function') timer.unref()
+        return
+      }
+      parts.push(buffer)
+    }
+
+    const onEnd = () => {
+      if (settled) return
+      if (over) {
+        // The whole body is gone, so the reply can be written on a healthy socket.
+        stop()
+        return
+      }
+      settled = true
+      cleanup()
+      resolve(Buffer.concat(parts).toString('utf8'))
+    }
+
+    const onError = (error) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      reject(error)
+    }
+
+    const onAborted = () => onError(new Error('request aborted'))
+
+    request.on('data', onData)
+    request.once('end', onEnd)
+    request.once('error', onError)
+    request.once('aborted', onAborted)
+  })
+
+/**
+ * Answer an over-limit request.
+ *
+ * Shared by the route and the HTTP test so both exercise the same shape: the body
+ * has already been drained by `readCappedBody`, so this only has to mark the
+ * connection as spent and let it close once the reply is flushed.
+ */
+export const replyBodyTooLarge = ({ reply, request, response, nodeStyle, message = 'request body is too large' }) => {
+  const sent = reply(413, { error: message }, { connection: 'close' })
+  if (!nodeStyle) return sent
+  // Never destroy here: the client still has to read this response.
+  request.on('error', () => {})
+  return sent
 }
 
 /** Byte length of a string as UTF-8, not as UTF-16 code units. */

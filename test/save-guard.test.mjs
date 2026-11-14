@@ -11,6 +11,7 @@ const guardUrl = pathToFileURL(path.join(here, '..', 'save-guard.js')).href;
 const guard = await import(guardUrl);
 const {
   MAX_BODY_BYTES,
+  MAX_DISCARD_BYTES,
   MAX_SAVE_BYTES,
   BodyTooLarge,
   OutsideWorkspace,
@@ -29,41 +30,92 @@ const check = (ok, label, detail) => {
 
 const miB = 1024 * 1024;
 
-// ---------- 请求体：读取过程中截断 ----------
+// ---------- 请求体：超限后停止累积、抽干但不保留 ----------
 
-const chunkStream = (size, chunkSize) => {
-  let sent = 0;
-  return {
-    sent: () => sent,
-    async *[Symbol.asyncIterator]() {
-      while (sent < size) {
-        sent += chunkSize;
-        yield Buffer.alloc(chunkSize);
-      }
+/** 最小的 Node 请求替身：能按需推送 data 事件，并记录是否被销毁/暂停。 */
+const fakeRequest = (chunks) => {
+  const listeners = { data: [], end: [], error: [], aborted: [] };
+  const request = {
+    paused: false,
+    destroyed: false,
+    pause() {
+      request.paused = true;
+    },
+    destroy() {
+      request.destroyed = true;
+    },
+    on(name, handler) {
+      (listeners[name] || (listeners[name] = [])).push(handler);
+      return request;
+    },
+    once(name, handler) {
+      const wrapped = (...args) => {
+        request.removeListener(name, wrapped);
+        handler(...args);
+      };
+      return request.on(name, wrapped);
+    },
+    removeListener(name, handler) {
+      listeners[name] = (listeners[name] || []).filter((item) => item !== handler);
+      return request;
+    },
+    emit(name, ...args) {
+      for (const handler of [...(listeners[name] || [])]) handler(...args);
+      return request;
+    },
+    push(chunks_) {
+      for (const chunk of chunks_) request.emit('data', chunk);
+    },
+    finish() {
+      request.emit('end');
     },
   };
+  // 构造时立即把数据排进队列，由 readNodeBody 订阅之后再冲刷
+  setImmediate(() => {
+    request.push(chunks);
+    request.finish();
+  });
+  return request;
 };
 
+const block = (bytes) => Buffer.alloc(bytes, 0x61);
+
 {
-  // 上限 6 MiB，喂 1 KiB 块：必须在读满上限时停下，而不是读完 20 MiB。
-  const stream = chunkStream(20 * miB, 1024);
+  // 上限 6 MiB，喂 20 MiB：必须拒绝，且连接不能被销毁（否则 413 传不出去）。
+  const request = fakeRequest(Array.from({ length: 20 }, () => block(miB)));
   let threw = null;
   try {
-    await readCappedBody(stream, true);
+    await readCappedBody(request, true);
   } catch (error) {
     threw = error;
   }
   check(threw instanceof BodyTooLarge, '超大请求体被拒绝', threw && threw.name);
-  check(
-    stream.sent() <= MAX_BODY_BYTES + 2 * 1024,
-    '读取过程中就中止（未读完整个流）',
-    '已读 ' + stream.sent() + ' 字节',
-  );
+  check(request.destroyed === false, '没有销毁连接（客户端还能收到 413）');
 }
 
 {
-  const ok = await readCappedBody(chunkStream(1000, 100), true);
+  // 超过丢弃预算：抽干到预算后停止，避免对端无限发送把连接钉死。
+  const chunks = Array.from({ length: 40 }, () => block(miB)); // 40 MiB > 6 + 32
+  const request = fakeRequest(chunks);
+  let threw = null;
+  try {
+    await readCappedBody(request, true);
+  } catch (error) {
+    threw = error;
+  }
+  check(threw instanceof BodyTooLarge, '超过丢弃预算仍然拒绝');
+}
+
+{
+  const request = fakeRequest([block(1000)]);
+  const ok = await readCappedBody(request, true);
   check(ok.length === 1000, '正常大小的请求体可读完');
+}
+
+{
+  const request = fakeRequest([block(MAX_BODY_BYTES)]);
+  const ok = await readCappedBody(request, true);
+  check(ok.length === MAX_BODY_BYTES, '正好等于上限可读完');
 }
 
 // ---------- 文本：UTF-8 字节数 ----------
