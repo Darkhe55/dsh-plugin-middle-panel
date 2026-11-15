@@ -26,6 +26,11 @@
           if (!context) return;
           context.setTransform(ratio, 0, 0, ratio, 0, 0);
           renderTask = page.render({ canvasContext: context, viewport });
+          count('pdfTasks', 1);
+          renderTask.promise.then(
+            () => count('pdfTasks', -1),
+            () => count('pdfTasks', -1),
+          );
           await renderTask.promise;
           if (!cancelled) setDrawn(true);
         })().catch(() => {});

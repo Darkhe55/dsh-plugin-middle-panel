@@ -47,8 +47,55 @@ const PROMPT = [
   'After opening, the user can select text, pick HTML elements or mark image regions; those become numbered annotations they send back as one chat message. Read such a message as a numbered change list.',
 ].join('\n')
 
-/** Session workspaces seen so far, so a save stays inside the folder the user is working in. */
+/**
+ * Session workspaces seen so far, so a save stays inside the folder the user is working in.
+ * The live Session store is the primary source; this map is only a short-lived fallback, so
+ * it is bounded in both size and age instead of growing for the lifetime of the host.
+ */
+const SESSION_ROOT_LIMIT = 256;
+const SESSION_ROOT_TTL_MS = 45 * 60 * 1000;
 const sessionRoots = new Map()
+
+const pruneSessionRoots = (now) => {
+  const at = Number(now) || Date.now()
+  for (const [key, entry] of sessionRoots) {
+    if (at - entry.at > SESSION_ROOT_TTL_MS) sessionRoots.delete(key)
+  }
+  while (sessionRoots.size > SESSION_ROOT_LIMIT) {
+    // Map iteration order is insertion order, and a hit re-inserts, so this drops the
+    // least recently used entry.
+    const oldest = sessionRoots.keys().next().value
+    if (oldest === undefined) break
+    sessionRoots.delete(oldest)
+  }
+}
+
+const rememberSessionRoot = (sessionId, directory) => {
+  const key = String(sessionId || '')
+  if (!key || !directory) return false
+  sessionRoots.delete(key)
+  sessionRoots.set(key, { root: directory, at: Date.now() })
+  pruneSessionRoots()
+  return true
+}
+
+const recallSessionRoot = (sessionId) => {
+  const key = String(sessionId || '')
+  if (!key) return undefined
+  const entry = sessionRoots.get(key)
+  if (!entry) return undefined
+  if (Date.now() - entry.at > SESSION_ROOT_TTL_MS) {
+    sessionRoots.delete(key)
+    return undefined
+  }
+  // Re-insert so the entry counts as recently used.
+  sessionRoots.delete(key)
+  sessionRoots.set(key, entry)
+  pruneSessionRoots()
+  return entry.root
+}
+
+const clearSessionRoots = () => sessionRoots.clear()
 
 const normalize = (value) => String(value || '').replace(/\\/g, '/').replace(/\/{2,}/g, '/')
 
@@ -239,7 +286,7 @@ export function apply(ctx) {
       if (agent) {
         try {
           const directory = await ctx.workingDirectory.ensure(agent, exec && exec.signal)
-          if (directory) sessionRoots.set(String(agent.id), directory)
+          if (directory) rememberSessionRoot(agent.id, directory)
         } catch {
           /* the save route falls back to the default working directory */
         }
@@ -342,7 +389,7 @@ export function apply(ctx) {
 
         // A write is authorised by a live Session's own workspace, never by a
         // guessed path: an opaque origin must still name a real session.
-        const root = sessionRootFromStore(ctx, sessionId) || sessionRoots.get(sessionId)
+        const root = sessionRootFromStore(ctx, sessionId) || recallSessionRoot(sessionId)
         if (!root) return reply(403, { error: 'unknown session workspace: ' + (sessionId || '(missing sessionId)') })
 
         const absolute = /^[a-z]:\//i.test(requested) || requested.startsWith('/') ? requested : normalize(root + '/' + requested)
@@ -497,7 +544,7 @@ export function apply(ctx) {
         const sessionId = String(query.get('sessionId') || '')
         const requested = normalize(String(query.get('path') || ''))
         if (!requested) return reply(400, { error: 'path is required' })
-        const root = sessionRootFromStore(ctx, sessionId) || sessionRoots.get(sessionId)
+        const root = sessionRootFromStore(ctx, sessionId) || recallSessionRoot(sessionId)
         if (!root) return reply(403, { error: 'unknown session workspace: ' + (sessionId || '(missing sessionId)') })
         const absolute = /^[a-z]:\//i.test(requested) || requested.startsWith('/') ? requested : normalize(root + '/' + requested)
         if (!isInside(root, absolute)) return reply(403, { error: 'refusing to read outside the session workspace' })
@@ -532,4 +579,8 @@ export function apply(ctx) {
       },
     }),
   )
+
+  // The fallback map is process-scoped, so it is released with the plugin rather than
+  // outliving whichever session happened to touch it last.
+  ctx.effect(() => () => clearSessionRoots())
 }

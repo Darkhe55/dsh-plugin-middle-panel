@@ -87,6 +87,7 @@
           if (!bufferCtx) return;
           bufferCtx.setTransform(ratio, 0, 0, ratio, 0, 0);
           renderTask = page.render({ canvasContext: bufferCtx, viewport });
+          count('pdfTasks', 1);
           try {
             await renderTask.promise;
           } catch (error) {
@@ -184,6 +185,7 @@ for (let index = 0; index < rawItems.length; index += 1) {
         })().catch(() => setItems([]));
         return () => {
           cancelled = true;
+          if (renderTask) count('pdfTasks', -1);
           if (renderTask && typeof renderTask.cancel === 'function') {
             try {
               renderTask.cancel();

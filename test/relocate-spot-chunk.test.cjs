@@ -14,6 +14,7 @@ const body = src.slice(start, end);
 
 const build = (store) => {
   const factory = new Function(
+    'count',
     'store',
     'mutate',
     'persist',
@@ -24,6 +25,7 @@ const build = (store) => {
     body + '\nreturn { relocateSpotMarks, relocationMetrics, relocationGenerationOf: () => relocationGeneration };',
   );
   return factory(
+    () => 0,
     store,
     (patch) => Object.assign(store, patch),
     () => {},
@@ -197,6 +199,33 @@ const run = async () => {
     const api = build(store);
     const summary = await api.relocateSpotMarks('demo/model.glb', mesh, 1, { yieldTo: (fn) => fn() });
     check(summary.scannedTriangles === 0, '无标注时不扫描');
+  }
+
+  // 5) AbortSignal：关闭模型时立刻取消，且不提交任何标注改动
+  {
+    const mesh = makeMesh(400000);
+    const stale = spotMark(0, -999999);
+    stale.centroid = [-999999, 0, 0];
+    const store = { marks: [{ ...stale }] };
+    const api = build(store);
+    const controller = new AbortController();
+    const pending = [];
+    const task = api.relocateSpotMarks('demo/model.glb', mesh, 1, {
+      signal: controller.signal,
+      yieldTo: (fn) => pending.push(fn),
+      sliceTriangles: 5000,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    controller.abort();
+    const startedAt = Date.now();
+    while (pending.length) {
+      pending.shift()();
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    const result = await task;
+    check(result && result.cancelled === true, 'abort 后任务被取消', JSON.stringify(result));
+    check(Date.now() - startedAt < 2000, 'abort 后 Promise 及时结束');
+    check(store.marks[0].spotStale === undefined || store.marks[0].spotStale === false, '取消的任务没有写入标注');
   }
 
   if (failures) {

@@ -88,6 +88,104 @@ const notify = () => {
 version += 1;
 for (const listener of Array.from(listeners)) listener();
 };
+const SLICE_BUDGET_MS = 8;
+const SLICE_HARD_CAP_MS = 16;
+const sliceNow = () =>
+typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
+const runSliced = (total, each, options) => {
+const opts = options || {};
+const signal = opts.signal;
+const budgetMs = Math.min(SLICE_HARD_CAP_MS, Math.max(1, opts.budgetMs || SLICE_BUDGET_MS));
+const chunk = Math.max(1, opts.chunk || 4096);
+const yieldTo = opts.yieldTo || ((run) => setTimeout(run, 0));
+return new Promise((resolve) => {
+let index = 0;
+let slices = 0;
+let maxSliceMs = 0;
+const finish = (cancelled) => resolve({ cancelled, processed: index, slices, maxSliceMs });
+const step = () => {
+if (signal && signal.aborted) {
+finish(true);
+return;
+}
+const started = sliceNow();
+while (index < total) {
+const end = Math.min(total, index + chunk);
+each(index, end);
+index = end;
+if (sliceNow() - started >= budgetMs) break;
+}
+const spent = sliceNow() - started;
+if (spent > maxSliceMs) maxSliceMs = spent;
+slices += 1;
+if (index < total) {
+if (signal && signal.aborted) {
+finish(true);
+return;
+}
+yieldTo(step);
+return;
+}
+finish(false);
+};
+step();
+});
+};
+const counters = {
+objectUrls: 0,
+pdfTasks: 0,
+observers: 0,
+rafs: 0,
+webglContexts: 0,
+canvasPixels: 0,
+modelTasks: 0,
+relocationTasks: 0,
+};
+const count = (key, delta) => {
+counters[key] = Math.max(0, (counters[key] || 0) + delta);
+return counters[key];
+};
+const createObjectUrl = (blob) => {
+const url = URL.createObjectURL(blob);
+count('objectUrls', 1);
+return url;
+};
+const revokeObjectUrl = (url) => {
+if (!url) return;
+try {
+URL.revokeObjectURL(url);
+} finally {
+count('objectUrls', -1);
+}
+};
+const makeObserver = (Observer, handler) => {
+const observer = new Observer(handler);
+count('observers', 1);
+let closed = false;
+return {
+observe: (...args) => observer.observe(...args),
+disconnect: () => {
+if (closed) return;
+closed = true;
+count('observers', -1);
+observer.disconnect();
+},
+raw: observer,
+};
+};
+const requestFrameTracked = (fn) => {
+const id = requestAnimationFrame((time) => {
+count('rafs', -1);
+fn(time);
+});
+count('rafs', 1);
+return id;
+};
+const cancelFrameTracked = (id) => {
+if (!id) return;
+count('rafs', -1);
+cancelAnimationFrame(id);
+};
 const perFrame = (run, label) => {
 let frame = 0;
 let calls = 0;
@@ -257,6 +355,14 @@ let persistQueuedAt = 0;
 let persistDigest = '';
 let persistErrorAt = 0;
 const clock = () => (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now());
+const digestOf = (text) => {
+let hash = 0x811c9dc5;
+for (let index = 0; index < text.length; index += 1) {
+hash ^= text.charCodeAt(index);
+hash = Math.imul(hash, 0x01000193) >>> 0;
+}
+return hash.toString(36) + ':' + text.length;
+};
 const persistSnapshot = () => ({
 docs: store.docs,
 activeId: store.activeId,
@@ -277,14 +383,15 @@ devlog('persist-failed', [persistMetrics.lastError]);
 return;
 }
 persistMetrics.stringifyDurationMs = Math.round(clock() - stringifyAt);
-if (text === persistDigest) {
+const digest = digestOf(text);
+if (digest === persistDigest) {
 persistMetrics.skipped += 1;
 return;
 }
 const writeAt = clock();
 try {
 localStorage.setItem(storageKey(), text);
-persistDigest = text;
+persistDigest = digest;
 persistMetrics.revision += 1;
 persistMetrics.writes += 1;
 persistMetrics.serializedBytes = text.length;
@@ -335,14 +442,40 @@ persistQueuedAt = 0;
 writePersisted();
 }, delay);
 };
-if (typeof window !== 'undefined' && window.addEventListener) {
-window.addEventListener('pagehide', flushPersist);
-if (typeof document !== 'undefined' && document.addEventListener) {
-document.addEventListener('visibilitychange', () => {
+const lifecycle = { installed: false, target: null, onPageHide: null, onVisibility: null };
+const installLifecycle = () => {
+if (lifecycle.installed) return false;
+if (typeof window === 'undefined' || !window.addEventListener) return false;
+lifecycle.onPageHide = () => {
+flushPersist();
+meshCacheClear('pagehide');
+};
+lifecycle.onVisibility = () => {
+if (typeof document === 'undefined') return;
 if (document.visibilityState === 'hidden') flushPersist();
-});
+};
+window.addEventListener('pagehide', lifecycle.onPageHide);
+if (typeof document !== 'undefined' && document.addEventListener) {
+document.addEventListener('visibilitychange', lifecycle.onVisibility);
 }
+lifecycle.target = window;
+lifecycle.installed = true;
+return true;
+};
+const uninstallLifecycle = () => {
+if (!lifecycle.installed) return false;
+try {
+window.removeEventListener('pagehide', lifecycle.onPageHide);
+if (typeof document !== 'undefined' && document.removeEventListener) {
+document.removeEventListener('visibilitychange', lifecycle.onVisibility);
 }
+} catch {
+}
+lifecycle.installed = false;
+lifecycle.target = null;
+return true;
+};
+installLifecycle();
 const restoreBounds = { docs: 200, marks: markLimit.max, quote: 4000, path: 1024, note: 20000 };
 const resourceReport = () => ({
 docs: store.docs.length,
@@ -371,6 +504,17 @@ matched: relocationMetrics.matched,
 lastSliceMs: relocationMetrics.lastSliceMs,
 },
 storageIssue: Boolean(store.storageIssue),
+meshCache: meshCacheReport(),
+active: {
+modelTasks: counters.modelTasks,
+relocationTasks: counters.relocationTasks,
+objectUrls: counters.objectUrls,
+pdfTasks: counters.pdfTasks,
+observers: counters.observers,
+raf: counters.rafs,
+webglContexts: counters.webglContexts,
+canvasBackingPixels: counters.canvasPixels,
+},
 });
 const pressure = { docsWarn: 12, docsHard: 24, marksWarn: 1500, marksHard: markLimit.max, once: new Set() };
 const noteOnce = (key, message) => {
@@ -752,7 +896,17 @@ const sliceTriangles = opts.sliceTriangles || RELOCATE_SLICE_TRIANGLES;
 const tolerance = Math.max(1e-9, Number(radius || 1) * 0.01);
 const limit = tolerance * tolerance;
 const generation = ++relocationGeneration;
+const signal = opts.signal;
 relocationMetrics.runs += 1;
+count('relocationTasks', 1);
+const cancelledResult = (scanned) => ({
+cancelled: true,
+scannedTriangles: scanned,
+totalTriangles: total,
+elapsedMs: Math.round((opts.now || clock)() - startedAt),
+matched: 0,
+});
+const startedAt = (opts.now || clock)();
 const next = store.marks.slice();
 const targets = [];
 let changed = 0;
@@ -779,6 +933,9 @@ return;
 targets.push({ index, centerX, centerY, centerZ, best: -1, bestDistance: Infinity });
 });
 const commit = (summary) => {
+if ((signal && signal.aborted) || generation !== relocationGeneration) {
+return Object.assign({}, summary, { cancelled: true, matched: 0 });
+}
 if (changed) {
 mutate({ marks: next });
 persist();
@@ -787,6 +944,8 @@ devlog('spot-marks-relocated', ['changed=' + changed, 'scanned=' + summary.scann
 return summary;
 };
 if (!targets.length) {
+count('relocationTasks', -1);
+if (signal && signal.aborted) return Promise.resolve(cancelledResult(0));
 return Promise.resolve(commit({ scannedTriangles: 0, totalTriangles: total, elapsedMs: 0, cancelled: false, matched: 0 }));
 }
 const started = nowAt();
@@ -816,7 +975,14 @@ relocationMetrics.elapsedMs = elapsedMs;
 resolve(commit({ scannedTriangles: scanned, totalTriangles: total, elapsedMs, cancelled: false, matched: relocationMetrics.matched }));
 };
 const step = () => {
+if (signal && signal.aborted) {
+count('relocationTasks', -1);
+relocationMetrics.cancelled += 1;
+resolve(cancelledResult(scanned));
+return;
+}
 if (generation !== relocationGeneration) {
+count('relocationTasks', -1);
 relocationMetrics.cancelled += 1;
 resolve({ scannedTriangles: scanned, totalTriangles: total, elapsedMs: Math.round(nowAt() - started), cancelled: true, matched: 0 });
 return;
@@ -1399,14 +1565,14 @@ const text = JSON.stringify(payload, null, 2);
 const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 16);
 try {
 const blob = new Blob([text], { type: 'application/json' });
-const url = URL.createObjectURL(blob);
+const url = createObjectUrl(blob);
 const anchor = document.createElement('a');
 anchor.href = url;
 anchor.download = 'canvas-marks-' + stamp + '.json';
 document.body.appendChild(anchor);
 anchor.click();
 document.body.removeChild(anchor);
-setTimeout(() => URL.revokeObjectURL(url), 1000);
+setTimeout(() => revokeObjectUrl(url), 1000);
 return 'ok';
 } catch {
 return 'failed';
@@ -1812,6 +1978,7 @@ store.activeId = undefined;
 store.marks = [];
 store.seq = 0;
 store.restored = false;
+meshCacheClear('session-switch');
 restore();
 if (Array.isArray(store.pendingList) && store.pendingList.length) {
 const queue = store.pendingList;
@@ -2303,29 +2470,74 @@ const readFileSize = async (sessionId, path, signal) => {
 const info = await readFileInfo(sessionId, path, signal);
 return info ? info.size : null;
 };
-const MESH_CACHE_BYTES = 256 * MB;
+const MESH_CACHE_LIMIT = 96 * MB;
+const MESH_CACHE_HARD_LIMIT = 128 * MB;
+const MESH_CACHE_ITEM_LIMIT = 32 * MB;
 const meshCache = new Map();
-let meshCacheBytes = 0;
-const meshCacheKey = (sessionId, path, info) => sessionId + '|' + path + '|' + (info ? info.mtimeMs + ':' + info.size : '0');
-const meshCacheGet = (key) => meshCache.get(key) || null;
-const meshCacheSet = (key, value) => {
-const size = value.positions.byteLength + (value.colors ? value.colors.byteLength : 0);
-if (size > MESH_CACHE_BYTES) return;
-while (meshCacheBytes + size > MESH_CACHE_BYTES && meshCache.size) {
-const oldestKey = meshCache.keys().next().value;
-const oldest = meshCache.get(oldestKey);
-meshCacheBytes -= oldest.size || 0;
-meshCache.delete(oldestKey);
-}
-meshCache.set(key, Object.assign({ size }, value));
-meshCacheBytes += size;
-};
-const releaseMesh = (key) => {
-const cached = meshCache.get(key);
-if (!cached) return;
-meshCacheBytes -= cached.size || 0;
+const meshCacheStats = { bytes: 0, entries: 0, hits: 0, misses: 0, evictions: 0, skipped: 0 };
+const meshCacheBytesOf = (entry) =>
+(entry.positions ? entry.positions.byteLength : 0) + (entry.colors ? entry.colors.byteLength : 0);
+const meshCacheTouch = (key, entry) => {
 meshCache.delete(key);
+meshCache.set(key, entry);
 };
+const meshCacheEvict = (key) => {
+const entry = meshCache.get(key);
+if (!entry) return;
+meshCacheStats.bytes -= entry.size || 0;
+meshCacheStats.entries = meshCache.size - 1;
+meshCache.delete(key);
+meshCacheStats.evictions += 1;
+};
+const meshCacheClear = (reason) => {
+if (!meshCache.size) return 0;
+const released = meshCacheStats.bytes;
+meshCache.clear();
+meshCacheStats.bytes = 0;
+meshCacheStats.entries = 0;
+devlog('mesh-cache-clear', [reason || 'manual', 'bytes=' + released]);
+return released;
+};
+const meshCacheGet = (key) => {
+const entry = meshCache.get(key);
+if (!entry) {
+meshCacheStats.misses += 1;
+return null;
+}
+meshCacheStats.hits += 1;
+entry.lastUsed = Date.now();
+meshCacheTouch(key, entry);
+return entry;
+};
+const meshCacheSet = (key, value) => {
+const size = (value.positions ? value.positions.byteLength : 0) + (value.colors ? value.colors.byteLength : 0);
+if (!size || size > MESH_CACHE_ITEM_LIMIT) {
+meshCacheStats.skipped += 1;
+return false;
+}
+if (meshCache.has(key)) meshCacheEvict(key);
+while (meshCache.size && meshCacheStats.bytes + size > MESH_CACHE_LIMIT) {
+const oldest = meshCache.keys().next().value;
+meshCacheEvict(oldest);
+}
+const entry = { key, size, positions: value.positions, colors: value.colors || null, lastUsed: Date.now() };
+meshCache.set(key, entry);
+meshCacheStats.bytes += size;
+meshCacheStats.entries = meshCache.size;
+return true;
+};
+const meshCacheReport = () => ({
+entries: meshCache.size,
+bytes: meshCacheStats.bytes,
+limit: MESH_CACHE_LIMIT,
+hardLimit: MESH_CACHE_HARD_LIMIT,
+itemLimit: MESH_CACHE_ITEM_LIMIT,
+hits: meshCacheStats.hits,
+misses: meshCacheStats.misses,
+evictions: meshCacheStats.evictions,
+skipped: meshCacheStats.skipped,
+});
+const releaseMesh = (key) => meshCacheEvict(key);
 const assertFits = async (sessionId, path, kind, signal) => {
 const limit = (LIMITS[kind] || 32) * MB;
 const size = await readFileSize(sessionId, path, signal);
@@ -3870,7 +4082,7 @@ const bytes = await readBytesFile(sessionId, doc.path, controller.signal);
 if (bytes) html = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
 }
 if (cancelled) return;
-objectUrl = URL.createObjectURL(
+objectUrl = createObjectUrl(
 new Blob([injectScriptAllowed() ? injectPicker(html) : html], { type: 'text/html' }),
 );
 setState({ status: 'ready', url: objectUrl, error: '' });
@@ -3882,7 +4094,7 @@ setState({ status: 'failed', url: '', error: errText(error) });
 return () => {
 cancelled = true;
 controller.abort();
-if (objectUrl) URL.revokeObjectURL(objectUrl);
+if (objectUrl) revokeObjectUrl(objectUrl);
 };
 }, [doc.path, sessionId]);
 React.useEffect(() => {
@@ -4056,7 +4268,7 @@ setState({ status: 'failed', url: '', error: '无法解析 SVG' });
 return;
 }
 const html = buildSvgDocument(markup);
-objectUrl = URL.createObjectURL(
+objectUrl = createObjectUrl(
 new Blob([injectScriptAllowed() ? injectPicker(html) : html], { type: 'text/html' }),
 );
 setState({ status: 'ready', url: objectUrl, error: '' });
@@ -4068,7 +4280,7 @@ setState({ status: 'failed', url: '', error: errText(error) });
 return () => {
 cancelled = true;
 controller.abort();
-if (objectUrl) URL.revokeObjectURL(objectUrl);
+if (objectUrl) revokeObjectUrl(objectUrl);
 };
 }, [doc.path, sessionId]);
 React.useEffect(() => {
@@ -4707,6 +4919,7 @@ const bufferCtx = buffer.getContext('2d');
 if (!bufferCtx) return;
 bufferCtx.setTransform(ratio, 0, 0, ratio, 0, 0);
 renderTask = page.render({ canvasContext: bufferCtx, viewport });
+count('pdfTasks', 1);
 try {
 await renderTask.promise;
 } catch (error) {
@@ -4791,6 +5004,7 @@ setItems(glyphs);
 })().catch(() => setItems([]));
 return () => {
 cancelled = true;
+if (renderTask) count('pdfTasks', -1);
 if (renderTask && typeof renderTask.cancel === 'function') {
 try {
 renderTask.cancel();
@@ -5106,6 +5320,11 @@ const context = canvas.getContext('2d');
 if (!context) return;
 context.setTransform(ratio, 0, 0, ratio, 0, 0);
 renderTask = page.render({ canvasContext: context, viewport });
+count('pdfTasks', 1);
+renderTask.promise.then(
+() => count('pdfTasks', -1),
+() => count('pdfTasks', -1),
+);
 await renderTask.promise;
 if (!cancelled) setDrawn(true);
 })().catch(() => {});
@@ -5246,7 +5465,7 @@ const measure = () => setWidth(Math.max(280, (node.clientWidth || 760) - 48));
 measure();
 let observer = null;
 if (typeof ResizeObserver === 'function') {
-observer = new ResizeObserver(measure);
+observer = makeObserver(ResizeObserver, measure);
 observer.observe(node);
 } else {
 window.addEventListener('resize', measure);
@@ -5771,7 +5990,7 @@ let objectUrl = '';
 readBytesFile(sessionId, doc.path, controller.signal)
 .then((bytes) => {
 if (cancelled || !bytes) return;
-objectUrl = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+objectUrl = createObjectUrl(new Blob([bytes], { type: 'application/pdf' }));
 const raw = new TextDecoder('latin1').decode(bytes.slice(0, Math.min(bytes.length, 8 * 1024 * 1024)));
 const found = (raw.match(/\/Type\s*\/Page[^s]/g) || []).length;
 const mediaBox = /\/MediaBox\s*\[\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s*\]/.exec(raw);
@@ -5790,7 +6009,7 @@ if (!cancelled) setState({ status: 'failed', url: '', size: 0, error: errText(er
 return () => {
 cancelled = true;
 controller.abort();
-if (objectUrl) URL.revokeObjectURL(objectUrl);
+if (objectUrl) revokeObjectUrl(objectUrl);
 };
 }, [doc.path, sessionId]);
 if (state.status === 'failed') return h('div', { className: 'dshcv-empty' }, h('div', null, '无法读取 PDF'), h('div', null, state.error));
@@ -6082,9 +6301,9 @@ const head = new TextDecoder('utf-8', { fatal: false }).decode(bytes.subarray(0,
 if (head !== '%PDF-') {
 throw new Error('该 .ai 不含 PDF 兼容数据（可能是纯 EPS），请另存为 PDF 后再预览');
 }
-const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+const url = createObjectUrl(new Blob([bytes], { type: 'application/pdf' }));
 if (cancelled) {
-URL.revokeObjectURL(url);
+revokeObjectUrl(url);
 return;
 }
 aiUrl = url;
@@ -6108,7 +6327,7 @@ return () => {
 cancelled = true;
 controller.abort();
 if (aiUrl) {
-URL.revokeObjectURL(aiUrl);
+revokeObjectUrl(aiUrl);
 aiUrl = '';
 }
 };
@@ -6895,120 +7114,99 @@ setState({ status: 'loading', error: '', info: '', stats: null });
 setProgress(0);
 const match = /\.([a-z0-9]+)$/i.exec(doc.path);
 const extension = match ? match[1].toLowerCase() : '';
-const apply = (rawPositions, mesh) => {
-if (!rawPositions || rawPositions.length < 9) {
-throw new Error(mesh && mesh.points ? '这是点云数据，三维面片查看器暂不显示' : '没有解析到三角形，可能格式不受支持或模型为空');
-}
-const reduced = decimateMesh(rawPositions, MAX_PREVIEW_TRIANGLES);
-const positions = reduced.positions;
+const commit = (built, rawPositions, fromCache) => {
+const positions = built.positions;
 meshRef.current = positions;
-let minX = Infinity;
-let minY = Infinity;
-let minZ = Infinity;
-let maxX = -Infinity;
-let maxY = -Infinity;
-let maxZ = -Infinity;
-for (let index = 0; index < positions.length; index += 3) {
-const x = positions[index];
-const y = positions[index + 1];
-const z = positions[index + 2];
-if (x < minX) minX = x;
-if (x > maxX) maxX = x;
-if (y < minY) minY = y;
-if (y > maxY) maxY = y;
-if (z < minZ) minZ = z;
-if (z > maxZ) maxZ = z;
-}
-const size = [maxX - minX, maxY - minY, maxZ - minZ];
-const radius = Math.max(size[0], size[1], size[2], 1e-6) / 2;
-let area = 0;
-let volume = 0;
-for (let index = 0; index + 8 < positions.length; index += 9) {
-const ax = positions[index];
-const ay = positions[index + 1];
-const az = positions[index + 2];
-const bx = positions[index + 3];
-const by = positions[index + 4];
-const bz = positions[index + 5];
-const cx = positions[index + 6];
-const cy = positions[index + 7];
-const cz = positions[index + 8];
-const ux = bx - ax;
-const uy = by - ay;
-const uz = bz - az;
-const vx = cx - ax;
-const vy = cy - ay;
-const vz = cz - az;
-area += 0.5 * Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx);
-volume += (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)) / 6;
-}
-let watertight = null;
-if (positions.length / 9 <= 200000) {
-const edges = new Map();
-const keyOf = (x, y, z) => x.toFixed(4) + ',' + y.toFixed(4) + ',' + z.toFixed(4);
-for (let index = 0; index + 8 < positions.length; index += 9) {
-const keys = [0, 1, 2].map((corner) =>
-keyOf(positions[index + corner * 3], positions[index + corner * 3 + 1], positions[index + corner * 3 + 2]),
-);
-for (const [left, right] of [[0, 1], [1, 2], [2, 0]]) {
-const edge = keys[left] < keys[right] ? keys[left] + '|' + keys[right] : keys[right] + '|' + keys[left];
-edges.set(edge, (edges.get(edge) || 0) + 1);
-}
-}
-watertight = true;
-for (const count of edges.values()) {
-if (count !== 2) {
-watertight = false;
-break;
-}
-}
-}
-viewRef.current.center = [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2];
-viewRef.current.radius = radius;
-viewRef.current.distance = radius / Math.tan(Math.PI / 8) + radius;
-if (cancelled) return;
-relocateSpotMarks(doc.path, positions, radius);
+const bounds = built.bounds;
+viewRef.current.center = [
+(bounds.minX + bounds.maxX) / 2,
+(bounds.minY + bounds.maxY) / 2,
+(bounds.minZ + bounds.maxZ) / 2,
+];
+viewRef.current.radius = bounds.radius;
+viewRef.current.distance = bounds.radius / Math.tan(Math.PI / 8) + bounds.radius;
+const relocate = relocateSpotMarks(doc.path, positions, bounds.radius, {
+signal: controller.signal,
+yieldTo: (run) => setTimeout(run, 0),
+});
+if (relocate && typeof relocate.catch === 'function') relocate.catch(() => {});
 setState({
 status: 'ready',
 error: '',
 info:
-(positions.length / 9).toLocaleString() +
+built.triangles.toLocaleString() +
 ' 个三角形' +
-(reduced.reduced ? '（已抽稀，原 ' + (rawPositions.length / 9).toLocaleString() + '）' : ''),
+(built.reduced ? '（已抽稀，原 ' + Math.floor(rawPositions.length / 9).toLocaleString() + (built.truncated ? '，已截断' : '') + '）' : '') +
+(fromCache ? '（缓存）' : ''),
 stats: {
-triangles: positions.length / 9,
+triangles: built.triangles,
 vertices: positions.length / 3,
-size,
-area,
-volume: Math.abs(volume),
-watertight,
+size: bounds.size,
+area: built.stats.area,
+volume: built.stats.volume,
+watertight: built.stats.watertight,
+watertightSkipped: built.stats.watertightSkipped,
 },
 });
 };
 const run = async () => {
+count('modelTasks', 1);
+try {
 const info = await readFileInfo(sessionId, doc.path, controller.signal);
 const key = meshCacheKey(sessionId, doc.path, info);
 const cached = meshCacheGet(key);
+let rawPositions = null;
+let mesh = null;
 if (cached) {
-apply(cached.positions, null);
-return;
+rawPositions = cached.positions;
+} else {
+if (info && info.size > MAX_PREVIEW_BYTES) {
+throw new Error(
+'模型约 ' +
+Math.round(info.size / (1024 * 1024)) +
+' MB，超过预览上限（' +
+Math.round(MAX_PREVIEW_BYTES / (1024 * 1024)) +
+' MB）。请先用建模工具简化或分块导出。',
+);
 }
-const bytes = await readBytesFile(sessionId, doc.path, controller.signal);
+let bytes = await readBytesFile(sessionId, doc.path, controller.signal);
 if (cancelled || !bytes) return;
-const mesh = await loadMesh(bytes, extension, {
+mesh = await loadMesh(bytes, extension, {
 signal: controller.signal,
-onProgress: (fraction) => setProgress(fraction),
+onProgress: (fraction) => {
+if (!cancelled) setProgress(fraction);
+},
 });
-if (cancelled) return;
-meshCacheSet(key, { positions: mesh.positions, colors: mesh.colors });
-apply(mesh.positions, mesh);
+bytes = null;
+if (cancelled || controller.signal.aborted) return;
+rawPositions = mesh.positions;
+}
+if (!rawPositions || rawPositions.length < 9) {
+throw new Error(
+mesh && mesh.points ? '这是点云数据，三维面片查看器暂不显示' : '没有解析到三角形，可能格式不受支持或模型为空',
+);
+}
+const built = await buildModelPreview(rawPositions, {
+signal: controller.signal,
+onStage: (stage) => {
+if (!cancelled) setProgress(stage === 'decimate' ? 0.5 : 0.8);
+},
+});
+if (!built || built.cancelled || cancelled || controller.signal.aborted) return;
+meshCacheSet(key, { positions: built.positions, colors: mesh ? mesh.colors : null });
+commit(built, rawPositions, Boolean(cached));
+} finally {
+count('modelTasks', -1);
+}
 };
 run().catch((error) => {
-if (!cancelled) setState({ status: 'failed', error: errText(error), info: '', stats: null });
+if (cancelled || controller.signal.aborted) return;
+setState({ status: 'failed', error: errText(error), info: '', stats: null });
 });
 return () => {
 cancelled = true;
 controller.abort();
+setProgress(0);
 };
 }, [doc.path, sessionId]);
 React.useEffect(() => {
@@ -7017,6 +7215,7 @@ const canvas = canvasRef.current;
 const positions = meshRef.current;
 if (!canvas || !positions) return undefined;
 const gl = canvas.getContext('webgl', { antialias: true, alpha: true });
+if (gl) count('webglContexts', 1);
 if (!gl) {
 setState((previous) => Object.assign({}, previous, { status: 'failed', error: '当前环境不支持 WebGL' }));
 return undefined;
@@ -7126,6 +7325,7 @@ const ratio = Math.max(0.5, Math.min(2, dpr, budget));
 if (canvas.width !== Math.round(width * ratio) || canvas.height !== Math.round(height * ratio)) {
 canvas.width = Math.round(width * ratio);
 canvas.height = Math.round(height * ratio);
+count('canvasPixels', canvas.width * canvas.height - (counters.canvasPixels || 0));
 }
 gl.viewport(0, 0, canvas.width, canvas.height);
 gl.clearColor(0, 0, 0, 0);
@@ -7428,7 +7628,7 @@ canvas.addEventListener('pointercancel', onUp);
 canvas.addEventListener('wheel', onWheel, { passive: false });
 canvas.addEventListener('dblclick', onDoubleClick);
 canvas.addEventListener('contextmenu', onContext);
-const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(() => render()) : null;
+const observer = typeof ResizeObserver === 'function' ? makeObserver(ResizeObserver, () => render()) : null;
 if (observer) observer.observe(canvas);
 render();
 return () => {
@@ -7517,7 +7717,7 @@ stats
 '尺寸 ' + stats.size.map((value) => value.toFixed(2)).join(' × ') +
 ' · 面积 ' + stats.area.toFixed(2) +
 ' · 体积 ' + stats.volume.toFixed(2) +
-(stats.watertight === null ? '' : stats.watertight ? ' · 封闭' : ' · 有破面') +
+(stats.watertight === null ? (stats.watertightSkipped ? ' · 封闭性未分析' : '') : stats.watertight ? ' · 封闭' : ' · 有破面') +
 ' · 顶点 ' + stats.vertices.toLocaleString(),
 )
 : null,
@@ -7713,46 +7913,291 @@ h('div', { className: 'dshcv-tools' }, h('span', { className: 'dshcv-msg' }, '�
 );
 }
 const MAX_PREVIEW_TRIANGLES = 800000;
-const decimateMesh = (positions, target) => {
-const triangles = positions.length / 9;
-if (triangles <= target) return { positions, reduced: false, triangles };
+const MAX_PREVIEW_BYTES = 192 * 1024 * 1024;
+const WATERTIGHT_BUDGET = { maxTriangles: 120000, maxVertices: 200000, maxEdges: 400000 };
+const makeFloatChunks = (chunkFloats) => {
+const size = Math.max(3, chunkFloats || 12288);
+const chunks = [];
+let length = 0;
+return {
+push3(x, y, z) {
+const tail = chunks[chunks.length - 1];
+if (!tail || tail.used + 3 > tail.data.length) {
+chunks.push({ data: new Float32Array(size), used: 0 });
+}
+const current = chunks[chunks.length - 1];
+current.data[current.used] = x;
+current.data[current.used + 1] = y;
+current.data[current.used + 2] = z;
+current.used += 3;
+length += 3;
+},
+get length() {
+return length;
+},
+bytes() {
+return chunks.length * size * 4;
+},
+copyInto(target) {
+let offset = 0;
+for (const chunk of chunks) {
+target.set(chunk.data.subarray(0, chunk.used), offset);
+offset += chunk.used;
+}
+return offset;
+},
+release() {
+chunks.length = 0;
+length = 0;
+},
+};
+};
+const meshBoundsSliced = (positions, options) => {
+const vertexCount = Math.floor(positions.length / 3);
 let minX = Infinity;
 let minY = Infinity;
 let minZ = Infinity;
 let maxX = -Infinity;
 let maxY = -Infinity;
 let maxZ = -Infinity;
-for (let index = 0; index < positions.length; index += 3) {
-if (positions[index] < minX) minX = positions[index];
-if (positions[index] > maxX) maxX = positions[index];
-if (positions[index + 1] < minY) minY = positions[index + 1];
-if (positions[index + 1] > maxY) maxY = positions[index + 1];
-if (positions[index + 2] < minZ) minZ = positions[index + 2];
-if (positions[index + 2] > maxZ) maxZ = positions[index + 2];
+return runSliced(
+vertexCount,
+(from, to) => {
+for (let index = from; index < to; index += 1) {
+const base = index * 3;
+const x = positions[base];
+const y = positions[base + 1];
+const z = positions[base + 2];
+if (x < minX) minX = x;
+if (x > maxX) maxX = x;
+if (y < minY) minY = y;
+if (y > maxY) maxY = y;
+if (z < minZ) minZ = z;
+if (z > maxZ) maxZ = z;
 }
-const span = Math.max(maxX - minX, maxY - minY, maxZ - minZ, 1e-6);
+},
+Object.assign({ chunk: 24000 }, options),
+).then((run) => {
+if (run.cancelled) return null;
+return {
+minX,
+minY,
+minZ,
+maxX,
+maxY,
+maxZ,
+size: [maxX - minX, maxY - minY, maxZ - minZ],
+radius: Math.max(maxX - minX, maxY - minY, maxZ - minZ, 1e-6) / 2,
+run,
+};
+});
+};
+const decimateMeshSliced = (positions, target, bounds, options) => {
+const triangles = Math.floor(positions.length / 9);
+if (triangles <= target) return Promise.resolve({ positions, reduced: false, triangles, truncated: false });
+const span = Math.max(bounds.size[0], bounds.size[1], bounds.size[2], 1e-6);
 const resolution = Math.max(8, Math.min(512, Math.round(Math.sqrt(target / 2))));
 const cell = span / resolution;
-const representatives = new Map();
-const remap = (x, y, z) => {
-const key =
-Math.floor((x - minX) / cell) + ',' + Math.floor((y - minY) / cell) + ',' + Math.floor((z - minZ) / cell);
-const seen = representatives.get(key);
-if (seen) return seen;
-const entry = { key, x, y, z };
-representatives.set(key, entry);
-return entry;
+const cellOf = (x, y, z) =>
+Math.floor((x - bounds.minX) / cell) +
+',' +
+Math.floor((y - bounds.minY) / cell) +
+',' +
+Math.floor((z - bounds.minZ) / cell);
+const reps = new Map();
+const repCoords = makeFloatChunks();
+const repIndex = (x, y, z) => {
+const key = cellOf(x, y, z);
+const seen = reps.get(key);
+if (seen !== undefined) return seen;
+const index = repCoords.length / 3;
+reps.set(key, index);
+repCoords.push3(x, y, z);
+return index;
 };
-const out = [];
-for (let index = 0; index < positions.length; index += 9) {
-const a = remap(positions[index], positions[index + 1], positions[index + 2]);
-const b = remap(positions[index + 3], positions[index + 4], positions[index + 5]);
-const c = remap(positions[index + 6], positions[index + 7], positions[index + 8]);
-if (a.key === b.key || b.key === c.key || a.key === c.key) continue;
-out.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
+let survivors = 0;
+return runSliced(
+triangles,
+(from, to) => {
+for (let triangle = from; triangle < to; triangle += 1) {
+const base = triangle * 9;
+const a = repIndex(positions[base], positions[base + 1], positions[base + 2]);
+const b = repIndex(positions[base + 3], positions[base + 4], positions[base + 5]);
+const c = repIndex(positions[base + 6], positions[base + 7], positions[base + 8]);
+if (a === b || b === c || a === c) continue;
+if (survivors < target) survivors += 1;
 }
-if (!out.length) return { positions, reduced: false, triangles };
-return { positions: new Float32Array(out), reduced: true, triangles: out.length / 9 };
+},
+Object.assign({ chunk: 2048 }, options),
+).then((first) => {
+if (first.cancelled) {
+reps.clear();
+repCoords.release();
+return { cancelled: true };
+}
+if (!survivors) {
+reps.clear();
+repCoords.release();
+return { positions, reduced: false, triangles, truncated: false };
+}
+const out = new Float32Array(survivors * 9);
+let written = 0;
+const flat = new Float32Array(repCoords.length);
+repCoords.copyInto(flat);
+repCoords.release();
+return runSliced(
+triangles,
+(from, to) => {
+for (let triangle = from; triangle < to && written < survivors; triangle += 1) {
+const base = triangle * 9;
+const a = reps.get(cellOf(positions[base], positions[base + 1], positions[base + 2]));
+const b = reps.get(cellOf(positions[base + 3], positions[base + 4], positions[base + 5]));
+const c = reps.get(cellOf(positions[base + 6], positions[base + 7], positions[base + 8]));
+if (a === b || b === c || a === c) continue;
+const offset = written * 9;
+out[offset] = flat[a * 3];
+out[offset + 1] = flat[a * 3 + 1];
+out[offset + 2] = flat[a * 3 + 2];
+out[offset + 3] = flat[b * 3];
+out[offset + 4] = flat[b * 3 + 1];
+out[offset + 5] = flat[b * 3 + 2];
+out[offset + 6] = flat[c * 3];
+out[offset + 7] = flat[c * 3 + 1];
+out[offset + 8] = flat[c * 3 + 2];
+written += 1;
+}
+},
+Object.assign({ chunk: 2048 }, options),
+).then((second) => {
+reps.clear();
+if (second.cancelled) return { cancelled: true };
+const kept = Math.min(written, target);
+const result = kept === out.length / 9 ? out : out.subarray(0, kept * 9);
+return { positions: result, reduced: true, triangles: kept, truncated: triangles > kept };
+});
+});
+};
+const meshStatsSliced = (positions, options) => {
+const triangles = Math.floor(positions.length / 9);
+let area = 0;
+let volume = 0;
+return runSliced(
+triangles,
+(from, to) => {
+for (let triangle = from; triangle < to; triangle += 1) {
+const index = triangle * 9;
+const ax = positions[index];
+const ay = positions[index + 1];
+const az = positions[index + 2];
+const bx = positions[index + 3];
+const by = positions[index + 4];
+const bz = positions[index + 5];
+const cx = positions[index + 6];
+const cy = positions[index + 7];
+const cz = positions[index + 8];
+const ux = bx - ax;
+const uy = by - ay;
+const uz = bz - az;
+const vx = cx - ax;
+const vy = cy - ay;
+const vz = cz - az;
+area += 0.5 * Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx);
+volume += (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)) / 6;
+}
+},
+Object.assign({ chunk: 4096 }, options),
+).then((run) => (run.cancelled ? null : { area, volume: Math.abs(volume), run }));
+};
+const watertightSliced = (positions, options) => {
+const triangles = Math.floor(positions.length / 9);
+if (triangles > WATERTIGHT_BUDGET.maxTriangles) {
+return Promise.resolve({ watertight: null, skipped: true, reason: 'triangles' });
+}
+const edges = new Map();
+const vertexIds = new Map();
+const keyOf = (x, y, z) => x.toFixed(4) + ',' + y.toFixed(4) + ',' + z.toFixed(4);
+const vertexId = (x, y, z) => {
+const key = keyOf(x, y, z);
+const seen = vertexIds.get(key);
+if (seen !== undefined) return seen;
+if (vertexIds.size >= WATERTIGHT_BUDGET.maxVertices) return -1;
+const id = vertexIds.size;
+vertexIds.set(key, id);
+return id;
+};
+let overflow = false;
+return runSliced(
+triangles,
+(from, to) => {
+for (let triangle = from; triangle < to && !overflow; triangle += 1) {
+const base = triangle * 9;
+const ids = [
+vertexId(positions[base], positions[base + 1], positions[base + 2]),
+vertexId(positions[base + 3], positions[base + 4], positions[base + 5]),
+vertexId(positions[base + 6], positions[base + 7], positions[base + 8]),
+];
+if (ids.some((id) => id < 0)) {
+overflow = true;
+break;
+}
+for (const [left, right] of [[0, 1], [1, 2], [2, 0]]) {
+let a = ids[left];
+let b = ids[right];
+if (a > b) {
+const swap = a;
+a = b;
+b = swap;
+}
+const key = a * 2097152 + b;
+edges.set(key, (edges.get(key) || 0) + 1);
+if (edges.size > WATERTIGHT_BUDGET.maxEdges) {
+overflow = true;
+break;
+}
+}
+}
+},
+Object.assign({ chunk: 2048 }, options),
+).then((run) => {
+if (run.cancelled) return { watertight: null, skipped: true, reason: 'cancelled' };
+if (overflow) return { watertight: null, skipped: true, reason: 'edges' };
+for (const total of edges.values()) {
+if (total !== 2) return { watertight: false, skipped: false };
+}
+return { watertight: true, skipped: false };
+});
+};
+const buildModelPreview = async (positions, options) => {
+const opts = options || {};
+const bounds = await meshBoundsSliced(positions, opts);
+if (!bounds) return { cancelled: true };
+if (opts.onStage) opts.onStage('decimate');
+const reduced = await decimateMeshSliced(positions, MAX_PREVIEW_TRIANGLES, bounds, opts);
+if (!reduced || reduced.cancelled) return { cancelled: true };
+const finalPositions = reduced.positions;
+const finalBounds = reduced.reduced ? await meshBoundsSliced(finalPositions, opts) : bounds;
+if (!finalBounds) return { cancelled: true };
+if (opts.onStage) opts.onStage('stats');
+const stats = await meshStatsSliced(finalPositions, opts);
+if (!stats) return { cancelled: true };
+if (opts.onStage) opts.onStage('watertight');
+const closed = await watertightSliced(finalPositions, opts);
+if (opts.signal && opts.signal.aborted) return { cancelled: true };
+return {
+cancelled: false,
+positions: finalPositions,
+reduced: reduced.reduced,
+truncated: reduced.truncated,
+triangles: finalPositions.length / 9,
+bounds: finalBounds,
+stats: {
+area: stats.area,
+volume: stats.volume,
+watertight: closed.watertight,
+watertightSkipped: closed.skipped,
+watertightReason: closed.reason || '',
+},
+};
 };
 const parseDxf = (text) => {
 const lines = String(text || '').split(/\r\n|\r|\n/);
@@ -8206,7 +8651,7 @@ Math.round(MAX_IMAGE_PIXELS / 1e6) +
 devlog('image-too-large', ['pixels=' + oversized]);
 return;
 }
-objectUrl = URL.createObjectURL(new Blob([bytes], { type: mimeOf(doc.path) }));
+objectUrl = createObjectUrl(new Blob([bytes], { type: mimeOf(doc.path) }));
 setState({ status: 'ready', url: objectUrl, error: '' });
 devlog('image-ready', ['path=' + doc.path, 'bytes=' + (bytes.byteLength || bytes.length || 0)]);
 if (/\.svg$/i.test(doc.path)) {
@@ -8239,7 +8684,7 @@ devlog('image-failed', [errText(error)]);
 return () => {
 cancelled = true;
 controller.abort();
-if (objectUrl) URL.revokeObjectURL(objectUrl);
+if (objectUrl) revokeObjectUrl(objectUrl);
 };
 }, [doc.path, sessionId]);
 const naturalRect = () => {
@@ -8693,7 +9138,7 @@ Math.abs(current.width - width) < 1 && Math.abs(current.height - height) < 1 ? c
 );
 };
 measure();
-const observer = new ResizeObserver(measure);
+const observer = makeObserver(ResizeObserver, measure);
 observer.observe(node);
 return () => observer.disconnect();
 }, []);
@@ -8954,7 +9399,7 @@ readBytesFile(sessionId, doc.path, undefined)
 if (cancelled || !bytes) return;
 const detected = probeMp4FrameRate(bytes);
 if (detected) setInfo((current) => Object.assign({}, current, { fps: detected }));
-objectUrl = URL.createObjectURL(new Blob([bytes], { type: videoMimeOf(doc.path) }));
+objectUrl = createObjectUrl(new Blob([bytes], { type: videoMimeOf(doc.path) }));
 setState({ status: 'ready', url: objectUrl, error: '' });
 })
 .catch((error) => {
@@ -8963,7 +9408,7 @@ setState({ status: 'failed', url: '', error: errText(error) });
 });
 return () => {
 cancelled = true;
-if (objectUrl) URL.revokeObjectURL(objectUrl);
+if (objectUrl) revokeObjectUrl(objectUrl);
 };
 }, [doc.path, native]);
 React.useEffect(() => {
@@ -9762,7 +10207,7 @@ Math.abs(current.width - width) < 2 && Math.abs(current.height - height) < 2
 );
 };
 measure();
-const observer = new ResizeObserver(measure);
+const observer = makeObserver(ResizeObserver, measure);
 observer.observe(node);
 return () => observer.disconnect();
 }, []);
@@ -9801,7 +10246,7 @@ const width = element.clientWidth;
 if (height > 0 && width > 0) setConvBox({ height, width });
 };
 measure();
-const observer = new ResizeObserver(measure);
+const observer = makeObserver(ResizeObserver, measure);
 observer.observe(element);
 return () => observer.disconnect();
 }, []);
@@ -9895,7 +10340,7 @@ scroller.style.setProperty('--dsh-scrollbar-width', bar + 'px');
 next.style.setProperty('--dsh-scrollbar-width', bar + 'px');
 attach(next);
 if (!seatObserver && typeof ResizeObserver === 'function') {
-seatObserver = new ResizeObserver(() => {
+seatObserver = makeObserver(ResizeObserver, () => {
 const height = seat.offsetHeight;
 if (height > 0) {
 next.dataset.canvasPad = String(height);

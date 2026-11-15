@@ -94,7 +94,7 @@ function EmbeddedPdfDoc(props) {
         readBytesFile(sessionId, doc.path, controller.signal)
           .then((bytes) => {
             if (cancelled || !bytes) return;
-            objectUrl = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+            objectUrl = createObjectUrl(new Blob([bytes], { type: 'application/pdf' }));
             // Page objects are usually plain text in the file, which is enough to
             // offer page-numbered annotations without shipping a full renderer.
             const raw = new TextDecoder('latin1').decode(bytes.slice(0, Math.min(bytes.length, 8 * 1024 * 1024)));
@@ -118,7 +118,7 @@ function EmbeddedPdfDoc(props) {
         return () => {
           cancelled = true;
           controller.abort();
-          if (objectUrl) URL.revokeObjectURL(objectUrl);
+          if (objectUrl) revokeObjectUrl(objectUrl);
         };
       }, [doc.path, sessionId]);
       if (state.status === 'failed') return h('div', { className: 'dshcv-empty' }, h('div', null, '无法读取 PDF'), h('div', null, state.error));
@@ -424,10 +424,10 @@ function EmbeddedPdfDoc(props) {
               if (head !== '%PDF-') {
                 throw new Error('该 .ai 不含 PDF 兼容数据（可能是纯 EPS），请另存为 PDF 后再预览');
               }
-              const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+              const url = createObjectUrl(new Blob([bytes], { type: 'application/pdf' }));
               if (cancelled) {
                 // The effect already ran its cleanup; nobody else would free this URL.
-                URL.revokeObjectURL(url);
+                revokeObjectUrl(url);
                 return;
               }
               aiUrl = url;
@@ -451,7 +451,7 @@ function EmbeddedPdfDoc(props) {
           cancelled = true;
           controller.abort();
           if (aiUrl) {
-            URL.revokeObjectURL(aiUrl);
+            revokeObjectUrl(aiUrl);
             aiUrl = '';
           }
         };
@@ -1284,123 +1284,104 @@ function EmbeddedPdfDoc(props) {
         setProgress(0);
         const match = /\.([a-z0-9]+)$/i.exec(doc.path);
         const extension = match ? match[1].toLowerCase() : '';
-        const apply = (rawPositions, mesh) => {
-          if (!rawPositions || rawPositions.length < 9) {
-            throw new Error(mesh && mesh.points ? '这是点云数据，三维面片查看器暂不显示' : '没有解析到三角形，可能格式不受支持或模型为空');
-          }
-          const reduced = decimateMesh(rawPositions, MAX_PREVIEW_TRIANGLES);
-          const positions = reduced.positions;
+        const commit = (built, rawPositions, fromCache) => {
+          const positions = built.positions;
           meshRef.current = positions;
-          let minX = Infinity;
-            let minY = Infinity;
-            let minZ = Infinity;
-            let maxX = -Infinity;
-            let maxY = -Infinity;
-            let maxZ = -Infinity;
-            for (let index = 0; index < positions.length; index += 3) {
-              const x = positions[index];
-              const y = positions[index + 1];
-              const z = positions[index + 2];
-              if (x < minX) minX = x;
-              if (x > maxX) maxX = x;
-              if (y < minY) minY = y;
-              if (y > maxY) maxY = y;
-              if (z < minZ) minZ = z;
-              if (z > maxZ) maxZ = z;
-            }
-          const size = [maxX - minX, maxY - minY, maxZ - minZ];
-          const radius = Math.max(size[0], size[1], size[2], 1e-6) / 2;
-          // Area and signed volume are cheap one-pass integrals; the watertight
-          // check needs an edge census, which is skipped on very large meshes.
-          let area = 0;
-          let volume = 0;
-          for (let index = 0; index + 8 < positions.length; index += 9) {
-            const ax = positions[index];
-            const ay = positions[index + 1];
-            const az = positions[index + 2];
-            const bx = positions[index + 3];
-            const by = positions[index + 4];
-            const bz = positions[index + 5];
-            const cx = positions[index + 6];
-            const cy = positions[index + 7];
-            const cz = positions[index + 8];
-            const ux = bx - ax;
-            const uy = by - ay;
-            const uz = bz - az;
-            const vx = cx - ax;
-            const vy = cy - ay;
-            const vz = cz - az;
-            area += 0.5 * Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx);
-            volume += (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)) / 6;
-          }
-          let watertight = null;
-          if (positions.length / 9 <= 200000) {
-            const edges = new Map();
-            const keyOf = (x, y, z) => x.toFixed(4) + ',' + y.toFixed(4) + ',' + z.toFixed(4);
-            for (let index = 0; index + 8 < positions.length; index += 9) {
-              const keys = [0, 1, 2].map((corner) =>
-                keyOf(positions[index + corner * 3], positions[index + corner * 3 + 1], positions[index + corner * 3 + 2]),
-              );
-              for (const [left, right] of [[0, 1], [1, 2], [2, 0]]) {
-                const edge = keys[left] < keys[right] ? keys[left] + '|' + keys[right] : keys[right] + '|' + keys[left];
-                edges.set(edge, (edges.get(edge) || 0) + 1);
-              }
-            }
-            watertight = true;
-            for (const count of edges.values()) {
-              if (count !== 2) {
-                watertight = false;
-                break;
-              }
-            }
-          }
-          viewRef.current.center = [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2];
-          viewRef.current.radius = radius;
-          viewRef.current.distance = radius / Math.tan(Math.PI / 8) + radius;
-          if (cancelled) return;
-          relocateSpotMarks(doc.path, positions, radius);
+          const bounds = built.bounds;
+          viewRef.current.center = [
+            (bounds.minX + bounds.maxX) / 2,
+            (bounds.minY + bounds.maxY) / 2,
+            (bounds.minZ + bounds.maxZ) / 2,
+          ];
+          viewRef.current.radius = bounds.radius;
+          viewRef.current.distance = bounds.radius / Math.tan(Math.PI / 8) + bounds.radius;
+          const relocate = relocateSpotMarks(doc.path, positions, bounds.radius, {
+            signal: controller.signal,
+            yieldTo: (run) => setTimeout(run, 0),
+          });
+          if (relocate && typeof relocate.catch === 'function') relocate.catch(() => {});
           setState({
             status: 'ready',
             error: '',
             info:
-              (positions.length / 9).toLocaleString() +
+              built.triangles.toLocaleString() +
               ' 个三角形' +
-              (reduced.reduced ? '（已抽稀，原 ' + (rawPositions.length / 9).toLocaleString() + '）' : ''),
+              (built.reduced ? '（已抽稀，原 ' + Math.floor(rawPositions.length / 9).toLocaleString() + (built.truncated ? '，已截断' : '') + '）' : '') +
+              (fromCache ? '（缓存）' : ''),
             stats: {
-              triangles: positions.length / 9,
+              triangles: built.triangles,
               vertices: positions.length / 3,
-              size,
-              area,
-              volume: Math.abs(volume),
-              watertight,
+              size: bounds.size,
+              area: built.stats.area,
+              volume: built.stats.volume,
+              watertight: built.stats.watertight,
+              watertightSkipped: built.stats.watertightSkipped,
             },
           });
         };
 
         const run = async () => {
-          const info = await readFileInfo(sessionId, doc.path, controller.signal);
-          const key = meshCacheKey(sessionId, doc.path, info);
-          const cached = meshCacheGet(key);
-          if (cached) {
-            apply(cached.positions, null);
-            return;
+          count('modelTasks', 1);
+          try {
+            const info = await readFileInfo(sessionId, doc.path, controller.signal);
+            const key = meshCacheKey(sessionId, doc.path, info);
+            const cached = meshCacheGet(key);
+            let rawPositions = null;
+            let mesh = null;
+            if (cached) {
+              rawPositions = cached.positions;
+            } else {
+              if (info && info.size > MAX_PREVIEW_BYTES) {
+                throw new Error(
+                  '模型约 ' +
+                    Math.round(info.size / (1024 * 1024)) +
+                    ' MB，超过预览上限（' +
+                    Math.round(MAX_PREVIEW_BYTES / (1024 * 1024)) +
+                    ' MB）。请先用建模工具简化或分块导出。',
+                );
+              }
+              let bytes = await readBytesFile(sessionId, doc.path, controller.signal);
+              if (cancelled || !bytes) return;
+              mesh = await loadMesh(bytes, extension, {
+                signal: controller.signal,
+                onProgress: (fraction) => {
+                  if (!cancelled) setProgress(fraction);
+                },
+              });
+              // The raw bytes are dead once parsing finished; drop them before the sliced
+              // pipeline allocates its own arrays.
+              bytes = null;
+              if (cancelled || controller.signal.aborted) return;
+              rawPositions = mesh.positions;
+            }
+            if (!rawPositions || rawPositions.length < 9) {
+              throw new Error(
+                mesh && mesh.points ? '这是点云数据，三维面片查看器暂不显示' : '没有解析到三角形，可能格式不受支持或模型为空',
+              );
+            }
+            const built = await buildModelPreview(rawPositions, {
+              signal: controller.signal,
+              onStage: (stage) => {
+                if (!cancelled) setProgress(stage === 'decimate' ? 0.5 : 0.8);
+              },
+            });
+            // A cancelled or superseded run must not touch state, meshRef, the cache or marks.
+            if (!built || built.cancelled || cancelled || controller.signal.aborted) return;
+            meshCacheSet(key, { positions: built.positions, colors: mesh ? mesh.colors : null });
+            commit(built, rawPositions, Boolean(cached));
+          } finally {
+            count('modelTasks', -1);
           }
-          const bytes = await readBytesFile(sessionId, doc.path, controller.signal);
-          if (cancelled || !bytes) return;
-          const mesh = await loadMesh(bytes, extension, {
-            signal: controller.signal,
-            onProgress: (fraction) => setProgress(fraction),
-          });
-          if (cancelled) return;
-          meshCacheSet(key, { positions: mesh.positions, colors: mesh.colors });
-          apply(mesh.positions, mesh);
         };
+
         run().catch((error) => {
-          if (!cancelled) setState({ status: 'failed', error: errText(error), info: '', stats: null });
+          if (cancelled || controller.signal.aborted) return;
+          setState({ status: 'failed', error: errText(error), info: '', stats: null });
         });
         return () => {
           cancelled = true;
           controller.abort();
+          setProgress(0);
         };
       }, [doc.path, sessionId]);
 
@@ -1410,6 +1391,7 @@ function EmbeddedPdfDoc(props) {
         const positions = meshRef.current;
         if (!canvas || !positions) return undefined;
         const gl = canvas.getContext('webgl', { antialias: true, alpha: true });
+        if (gl) count('webglContexts', 1);
         if (!gl) {
           setState((previous) => Object.assign({}, previous, { status: 'failed', error: '当前环境不支持 WebGL' }));
           return undefined;
@@ -1543,6 +1525,8 @@ function EmbeddedPdfDoc(props) {
           if (canvas.width !== Math.round(width * ratio) || canvas.height !== Math.round(height * ratio)) {
             canvas.width = Math.round(width * ratio);
             canvas.height = Math.round(height * ratio);
+            // Backing-store pixels are the number that actually costs GPU memory.
+            count('canvasPixels', canvas.width * canvas.height - (counters.canvasPixels || 0));
           }
           gl.viewport(0, 0, canvas.width, canvas.height);
           gl.clearColor(0, 0, 0, 0);
@@ -1879,7 +1863,7 @@ function EmbeddedPdfDoc(props) {
         canvas.addEventListener('wheel', onWheel, { passive: false });
         canvas.addEventListener('dblclick', onDoubleClick);
         canvas.addEventListener('contextmenu', onContext);
-        const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(() => render()) : null;
+        const observer = typeof ResizeObserver === 'function' ? makeObserver(ResizeObserver, () => render()) : null;
         if (observer) observer.observe(canvas);
         render();
         return () => {
@@ -1982,7 +1966,7 @@ function EmbeddedPdfDoc(props) {
                 '尺寸 ' + stats.size.map((value) => value.toFixed(2)).join(' × ') +
                   ' · 面积 ' + stats.area.toFixed(2) +
                   ' · 体积 ' + stats.volume.toFixed(2) +
-                  (stats.watertight === null ? '' : stats.watertight ? ' · 封闭' : ' · 有破面') +
+                  (stats.watertight === null ? (stats.watertightSkipped ? ' · 封闭性未分析' : '') : stats.watertight ? ' · 封闭' : ' · 有破面') +
                   ' · 顶点 ' + stats.vertices.toLocaleString(),
               )
             : null,
@@ -2186,47 +2170,314 @@ h(
     // Vertex clustering: cheap decimation that keeps the silhouette when a mesh
     // is far too heavy for an interactive preview.
     const MAX_PREVIEW_TRIANGLES = 800000;
-    const decimateMesh = (positions, target) => {
-      const triangles = positions.length / 9;
-      if (triangles <= target) return { positions, reduced: false, triangles };
+    // A single preview must not allocate more than this; larger files are refused with an
+    // explanation instead of being parsed and then dying somewhere inside WebGL.
+    const MAX_PREVIEW_BYTES = 192 * 1024 * 1024;
+    // The edge census is the one pass whose memory grows with the mesh, so it gets its own
+    // budget: past it the answer is "not analysed" rather than a multi-hundred-MB Map.
+    const WATERTIGHT_BUDGET = { maxTriangles: 120000, maxVertices: 200000, maxEdges: 400000 };
+
+    /** Chunked float storage: avoids a plain array of millions of Numbers. */
+    const makeFloatChunks = (chunkFloats) => {
+      const size = Math.max(3, chunkFloats || 12288);
+      const chunks = [];
+      let length = 0;
+      return {
+        push3(x, y, z) {
+          const tail = chunks[chunks.length - 1];
+          if (!tail || tail.used + 3 > tail.data.length) {
+            chunks.push({ data: new Float32Array(size), used: 0 });
+          }
+          const current = chunks[chunks.length - 1];
+          current.data[current.used] = x;
+          current.data[current.used + 1] = y;
+          current.data[current.used + 2] = z;
+          current.used += 3;
+          length += 3;
+        },
+        get length() {
+          return length;
+        },
+        bytes() {
+          return chunks.length * size * 4;
+        },
+        copyInto(target) {
+          let offset = 0;
+          for (const chunk of chunks) {
+            target.set(chunk.data.subarray(0, chunk.used), offset);
+            offset += chunk.used;
+          }
+          return offset;
+        },
+        release() {
+          chunks.length = 0;
+          length = 0;
+        },
+      };
+    };
+
+    const meshBoundsSliced = (positions, options) => {
+      const vertexCount = Math.floor(positions.length / 3);
       let minX = Infinity;
       let minY = Infinity;
       let minZ = Infinity;
       let maxX = -Infinity;
       let maxY = -Infinity;
       let maxZ = -Infinity;
-      for (let index = 0; index < positions.length; index += 3) {
-        if (positions[index] < minX) minX = positions[index];
-        if (positions[index] > maxX) maxX = positions[index];
-        if (positions[index + 1] < minY) minY = positions[index + 1];
-        if (positions[index + 1] > maxY) maxY = positions[index + 1];
-        if (positions[index + 2] < minZ) minZ = positions[index + 2];
-        if (positions[index + 2] > maxZ) maxZ = positions[index + 2];
-      }
-      const span = Math.max(maxX - minX, maxY - minY, maxZ - minZ, 1e-6);
+      return runSliced(
+        vertexCount,
+        (from, to) => {
+          for (let index = from; index < to; index += 1) {
+            const base = index * 3;
+            const x = positions[base];
+            const y = positions[base + 1];
+            const z = positions[base + 2];
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+            if (z < minZ) minZ = z;
+            if (z > maxZ) maxZ = z;
+          }
+        },
+        Object.assign({ chunk: 24000 }, options),
+      ).then((run) => {
+        if (run.cancelled) return null;
+        return {
+          minX,
+          minY,
+          minZ,
+          maxX,
+          maxY,
+          maxZ,
+          size: [maxX - minX, maxY - minY, maxZ - minZ],
+          radius: Math.max(maxX - minX, maxY - minY, maxZ - minZ, 1e-6) / 2,
+          run,
+        };
+      });
+    };
+
+    // Two passes so the result is a single correctly sized Float32Array: the first counts
+    // surviving triangles, the second fills them. Both passes yield and honour the signal.
+    const decimateMeshSliced = (positions, target, bounds, options) => {
+      const triangles = Math.floor(positions.length / 9);
+      if (triangles <= target) return Promise.resolve({ positions, reduced: false, triangles, truncated: false });
+      const span = Math.max(bounds.size[0], bounds.size[1], bounds.size[2], 1e-6);
       const resolution = Math.max(8, Math.min(512, Math.round(Math.sqrt(target / 2))));
       const cell = span / resolution;
-      const representatives = new Map();
-      const remap = (x, y, z) => {
-        const key =
-          Math.floor((x - minX) / cell) + ',' + Math.floor((y - minY) / cell) + ',' + Math.floor((z - minZ) / cell);
-        const seen = representatives.get(key);
-        if (seen) return seen;
-        const entry = { key, x, y, z };
-        representatives.set(key, entry);
-        return entry;
+      const cellOf = (x, y, z) =>
+        Math.floor((x - bounds.minX) / cell) +
+        ',' +
+        Math.floor((y - bounds.minY) / cell) +
+        ',' +
+        Math.floor((z - bounds.minZ) / cell);
+      // Representative vertex per cell: first one seen, exactly like the old synchronous
+      // version, so previews look the same.
+      const reps = new Map();
+      const repCoords = makeFloatChunks();
+      const repIndex = (x, y, z) => {
+        const key = cellOf(x, y, z);
+        const seen = reps.get(key);
+        if (seen !== undefined) return seen;
+        const index = repCoords.length / 3;
+        reps.set(key, index);
+        repCoords.push3(x, y, z);
+        return index;
       };
-      const out = [];
-      for (let index = 0; index < positions.length; index += 9) {
-        const a = remap(positions[index], positions[index + 1], positions[index + 2]);
-        const b = remap(positions[index + 3], positions[index + 4], positions[index + 5]);
-        const c = remap(positions[index + 6], positions[index + 7], positions[index + 8]);
-        if (a.key === b.key || b.key === c.key || a.key === c.key) continue;
-        out.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
-      }
-      if (!out.length) return { positions, reduced: false, triangles };
-      return { positions: new Float32Array(out), reduced: true, triangles: out.length / 9 };
+      let survivors = 0;
+      return runSliced(
+        triangles,
+        (from, to) => {
+          for (let triangle = from; triangle < to; triangle += 1) {
+            const base = triangle * 9;
+            const a = repIndex(positions[base], positions[base + 1], positions[base + 2]);
+            const b = repIndex(positions[base + 3], positions[base + 4], positions[base + 5]);
+            const c = repIndex(positions[base + 6], positions[base + 7], positions[base + 8]);
+            if (a === b || b === c || a === c) continue;
+            if (survivors < target) survivors += 1;
+          }
+        },
+        Object.assign({ chunk: 2048 }, options),
+      ).then((first) => {
+        if (first.cancelled) {
+          reps.clear();
+          repCoords.release();
+          return { cancelled: true };
+        }
+        if (!survivors) {
+          reps.clear();
+          repCoords.release();
+          return { positions, reduced: false, triangles, truncated: false };
+        }
+        const out = new Float32Array(survivors * 9);
+        let written = 0;
+        // Rep coordinates are read back through a flat copy: the chunk list is released
+        // as soon as the copy exists, so only one representation is alive at a time.
+        const flat = new Float32Array(repCoords.length);
+        repCoords.copyInto(flat);
+        repCoords.release();
+        return runSliced(
+          triangles,
+          (from, to) => {
+            for (let triangle = from; triangle < to && written < survivors; triangle += 1) {
+              const base = triangle * 9;
+              const a = reps.get(cellOf(positions[base], positions[base + 1], positions[base + 2]));
+              const b = reps.get(cellOf(positions[base + 3], positions[base + 4], positions[base + 5]));
+              const c = reps.get(cellOf(positions[base + 6], positions[base + 7], positions[base + 8]));
+              if (a === b || b === c || a === c) continue;
+              const offset = written * 9;
+              out[offset] = flat[a * 3];
+              out[offset + 1] = flat[a * 3 + 1];
+              out[offset + 2] = flat[a * 3 + 2];
+              out[offset + 3] = flat[b * 3];
+              out[offset + 4] = flat[b * 3 + 1];
+              out[offset + 5] = flat[b * 3 + 2];
+              out[offset + 6] = flat[c * 3];
+              out[offset + 7] = flat[c * 3 + 1];
+              out[offset + 8] = flat[c * 3 + 2];
+              written += 1;
+            }
+          },
+          Object.assign({ chunk: 2048 }, options),
+        ).then((second) => {
+          reps.clear();
+          if (second.cancelled) return { cancelled: true };
+          // Deterministic ceiling: never hand more than `target` triangles to WebGL.
+          const kept = Math.min(written, target);
+          const result = kept === out.length / 9 ? out : out.subarray(0, kept * 9);
+          return { positions: result, reduced: true, triangles: kept, truncated: triangles > kept };
+        });
+      });
     };
+
+    const meshStatsSliced = (positions, options) => {
+      const triangles = Math.floor(positions.length / 9);
+      let area = 0;
+      let volume = 0;
+      return runSliced(
+        triangles,
+        (from, to) => {
+          for (let triangle = from; triangle < to; triangle += 1) {
+            const index = triangle * 9;
+            const ax = positions[index];
+            const ay = positions[index + 1];
+            const az = positions[index + 2];
+            const bx = positions[index + 3];
+            const by = positions[index + 4];
+            const bz = positions[index + 5];
+            const cx = positions[index + 6];
+            const cy = positions[index + 7];
+            const cz = positions[index + 8];
+            const ux = bx - ax;
+            const uy = by - ay;
+            const uz = bz - az;
+            const vx = cx - ax;
+            const vy = cy - ay;
+            const vz = cz - az;
+            area += 0.5 * Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx);
+            volume += (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)) / 6;
+          }
+        },
+        Object.assign({ chunk: 4096 }, options),
+      ).then((run) => (run.cancelled ? null : { area, volume: Math.abs(volume), run }));
+    };
+
+    // Edge census with an explicit budget. Over budget the answer is "unknown" (null), not
+    // a slow crawl that builds a huge Map and freezes the panel.
+    const watertightSliced = (positions, options) => {
+      const triangles = Math.floor(positions.length / 9);
+      if (triangles > WATERTIGHT_BUDGET.maxTriangles) {
+        return Promise.resolve({ watertight: null, skipped: true, reason: 'triangles' });
+      }
+      const edges = new Map();
+      const vertexIds = new Map();
+      const keyOf = (x, y, z) => x.toFixed(4) + ',' + y.toFixed(4) + ',' + z.toFixed(4);
+      const vertexId = (x, y, z) => {
+        const key = keyOf(x, y, z);
+        const seen = vertexIds.get(key);
+        if (seen !== undefined) return seen;
+        if (vertexIds.size >= WATERTIGHT_BUDGET.maxVertices) return -1;
+        const id = vertexIds.size;
+        vertexIds.set(key, id);
+        return id;
+      };
+      let overflow = false;
+      return runSliced(
+        triangles,
+        (from, to) => {
+          for (let triangle = from; triangle < to && !overflow; triangle += 1) {
+            const base = triangle * 9;
+            const ids = [
+              vertexId(positions[base], positions[base + 1], positions[base + 2]),
+              vertexId(positions[base + 3], positions[base + 4], positions[base + 5]),
+              vertexId(positions[base + 6], positions[base + 7], positions[base + 8]),
+            ];
+            if (ids.some((id) => id < 0)) {
+              overflow = true;
+              break;
+            }
+            for (const [left, right] of [[0, 1], [1, 2], [2, 0]]) {
+              let a = ids[left];
+              let b = ids[right];
+              if (a > b) {
+                const swap = a;
+                a = b;
+                b = swap;
+              }
+              const key = a * 2097152 + b;
+              edges.set(key, (edges.get(key) || 0) + 1);
+              if (edges.size > WATERTIGHT_BUDGET.maxEdges) {
+                overflow = true;
+                break;
+              }
+            }
+          }
+        },
+        Object.assign({ chunk: 2048 }, options),
+      ).then((run) => {
+        if (run.cancelled) return { watertight: null, skipped: true, reason: 'cancelled' };
+        if (overflow) return { watertight: null, skipped: true, reason: 'edges' };
+        for (const total of edges.values()) {
+          if (total !== 2) return { watertight: false, skipped: false };
+        }
+        return { watertight: true, skipped: false };
+      });
+    };
+
+    /** Full pipeline: bounds → decimation → statistics, all sliced and cancellable. */
+    const buildModelPreview = async (positions, options) => {
+      const opts = options || {};
+      const bounds = await meshBoundsSliced(positions, opts);
+      if (!bounds) return { cancelled: true };
+      if (opts.onStage) opts.onStage('decimate');
+      const reduced = await decimateMeshSliced(positions, MAX_PREVIEW_TRIANGLES, bounds, opts);
+      if (!reduced || reduced.cancelled) return { cancelled: true };
+      const finalPositions = reduced.positions;
+      const finalBounds = reduced.reduced ? await meshBoundsSliced(finalPositions, opts) : bounds;
+      if (!finalBounds) return { cancelled: true };
+      if (opts.onStage) opts.onStage('stats');
+      const stats = await meshStatsSliced(finalPositions, opts);
+      if (!stats) return { cancelled: true };
+      if (opts.onStage) opts.onStage('watertight');
+      const closed = await watertightSliced(finalPositions, opts);
+      if (opts.signal && opts.signal.aborted) return { cancelled: true };
+      return {
+        cancelled: false,
+        positions: finalPositions,
+        reduced: reduced.reduced,
+        truncated: reduced.truncated,
+        triangles: finalPositions.length / 9,
+        bounds: finalBounds,
+        stats: {
+          area: stats.area,
+          volume: stats.volume,
+          watertight: closed.watertight,
+          watertightSkipped: closed.skipped,
+          watertightReason: closed.reason || '',
+        },
+      };
+    };
+
 
     // ---------------- cad drawings: dxf entities in, svg out ----------------
     const parseDxf = (text) => {
@@ -2724,7 +2975,7 @@ h(
             devlog('image-too-large', ['pixels=' + oversized]);
             return;
           }
-          objectUrl = URL.createObjectURL(new Blob([bytes], { type: mimeOf(doc.path) }));
+          objectUrl = createObjectUrl(new Blob([bytes], { type: mimeOf(doc.path) }));
           setState({ status: 'ready', url: objectUrl, error: '' });
           devlog('image-ready', ['path=' + doc.path, 'bytes=' + (bytes.byteLength || bytes.length || 0)]);
           if (/\.svg$/i.test(doc.path)) {
@@ -2757,7 +3008,7 @@ h(
         return () => {
           cancelled = true;
           controller.abort();
-          if (objectUrl) URL.revokeObjectURL(objectUrl);
+          if (objectUrl) revokeObjectUrl(objectUrl);
         };
       }, [doc.path, sessionId]);
 
@@ -3245,7 +3496,7 @@ function FitStage(props) {
       );
     };
     measure();
-    const observer = new ResizeObserver(measure);
+    const observer = makeObserver(ResizeObserver, measure);
     observer.observe(node);
     return () => observer.disconnect();
   }, []);
@@ -3544,7 +3795,7 @@ function SplitDivider(props) {
             // The container knows the frame rate even though the element does not.
             const detected = probeMp4FrameRate(bytes);
             if (detected) setInfo((current) => Object.assign({}, current, { fps: detected }));
-            objectUrl = URL.createObjectURL(new Blob([bytes], { type: videoMimeOf(doc.path) }));
+            objectUrl = createObjectUrl(new Blob([bytes], { type: videoMimeOf(doc.path) }));
             setState({ status: 'ready', url: objectUrl, error: '' });
           })
           .catch((error) => {
@@ -3553,7 +3804,7 @@ function SplitDivider(props) {
           });
         return () => {
           cancelled = true;
-          if (objectUrl) URL.revokeObjectURL(objectUrl);
+          if (objectUrl) revokeObjectUrl(objectUrl);
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [doc.path, native]);
@@ -4450,7 +4701,7 @@ function CanvasPanel(props) {      useVersion();
         );
       };
       measure();
-      const observer = new ResizeObserver(measure);
+      const observer = makeObserver(ResizeObserver, measure);
       observer.observe(node);
       return () => observer.disconnect();
     }, []);
@@ -4504,7 +4755,7 @@ function CanvasPanel(props) {      useVersion();
           if (height > 0 && width > 0) setConvBox({ height, width });
         };
         measure();
-        const observer = new ResizeObserver(measure);
+        const observer = makeObserver(ResizeObserver, measure);
         observer.observe(element);
         return () => observer.disconnect();
       }, []);
@@ -4622,7 +4873,7 @@ function CanvasPanel(props) {      useVersion();
           next.style.setProperty('--dsh-scrollbar-width', bar + 'px');
           attach(next);
           if (!seatObserver && typeof ResizeObserver === 'function') {
-            seatObserver = new ResizeObserver(() => {
+            seatObserver = makeObserver(ResizeObserver, () => {
               const height = seat.offsetHeight;
               if (height > 0) {
                 next.dataset.canvasPad = String(height);

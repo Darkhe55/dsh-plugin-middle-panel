@@ -132,6 +132,23 @@ const flush = (state) => {
   check(first > 1, '首次缩放生效');
 }
 
+// 8) 100 轮挂载/卸载：监听器和待执行帧都回到零
+{
+  const node = makeNode();
+  const state = { zoom: 1, pending: null, frames: [] };
+  let maxListeners = 0;
+  for (let round = 0; round < 100; round += 1) {
+    const cleanup = factory(node, makeDeps(state));
+    maxListeners = Math.max(maxListeners, node.listeners.size);
+    node.fire({ ctrlKey: true, clientX: 10, clientY: 20, deltaY: -100 });
+    cleanup();
+  }
+  check(node.listeners.size === 0, '100 轮之后没有残留监听', String(node.listeners.size));
+  check(maxListeners === 1, '每轮只有一套监听器', String(maxListeners));
+  flush(state);
+  check(!state.frames.some(Boolean), '100 轮之后没有待执行帧');
+}
+
 if (failures) {
   console.log('失败 ' + failures + ' 项');
   process.exit(1);

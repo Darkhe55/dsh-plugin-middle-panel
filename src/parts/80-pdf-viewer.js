@@ -125,7 +125,7 @@
         measure();
         let observer = null;
         if (typeof ResizeObserver === 'function') {
-          observer = new ResizeObserver(measure);
+          observer = makeObserver(ResizeObserver, measure);
           observer.observe(node);
         } else {
           window.addEventListener('resize', measure);

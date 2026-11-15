@@ -128,6 +128,115 @@ window.__ModuleLoader__.load({
       for (const listener of Array.from(listeners)) listener();
     };
 
+    // ---- time-sliced work ----
+    // Parsing, decimating and measuring a large mesh used to run as one synchronous block.
+    // Every heavy pass now goes through this runner: it does real work inside a slice, then
+    // yields, and it stops between slices when the caller's AbortSignal fires.
+    const SLICE_BUDGET_MS = 8;
+    const SLICE_HARD_CAP_MS = 16;
+    const sliceNow = () =>
+      typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
+    const runSliced = (total, each, options) => {
+      const opts = options || {};
+      const signal = opts.signal;
+      const budgetMs = Math.min(SLICE_HARD_CAP_MS, Math.max(1, opts.budgetMs || SLICE_BUDGET_MS));
+      const chunk = Math.max(1, opts.chunk || 4096);
+      const yieldTo = opts.yieldTo || ((run) => setTimeout(run, 0));
+      return new Promise((resolve) => {
+        let index = 0;
+        let slices = 0;
+        let maxSliceMs = 0;
+        const finish = (cancelled) => resolve({ cancelled, processed: index, slices, maxSliceMs });
+        const step = () => {
+          if (signal && signal.aborted) {
+            finish(true);
+            return;
+          }
+          const started = sliceNow();
+          while (index < total) {
+            const end = Math.min(total, index + chunk);
+            each(index, end);
+            index = end;
+            if (sliceNow() - started >= budgetMs) break;
+          }
+          const spent = sliceNow() - started;
+          if (spent > maxSliceMs) maxSliceMs = spent;
+          slices += 1;
+          if (index < total) {
+            if (signal && signal.aborted) {
+              finish(true);
+              return;
+            }
+            yieldTo(step);
+            return;
+          }
+          finish(false);
+        };
+        step();
+      });
+    };
+
+    // Symmetric counters for resources this plugin creates, so resourceReport can show
+    // growth instead of guessing. Every increment has a matching decrement site.
+    const counters = {
+      objectUrls: 0,
+      pdfTasks: 0,
+      observers: 0,
+      rafs: 0,
+      webglContexts: 0,
+      canvasPixels: 0,
+      modelTasks: 0,
+      relocationTasks: 0,
+    };
+    const count = (key, delta) => {
+      counters[key] = Math.max(0, (counters[key] || 0) + delta);
+      return counters[key];
+    };
+    const createObjectUrl = (blob) => {
+      const url = URL.createObjectURL(blob);
+      count('objectUrls', 1);
+      return url;
+    };
+    const revokeObjectUrl = (url) => {
+      if (!url) return;
+      try {
+        URL.revokeObjectURL(url);
+      } finally {
+        count('objectUrls', -1);
+      }
+    };
+
+    // Observer and frame helpers: creation and tear-down both go through these, so the
+    // counters cannot drift from reality.
+    const makeObserver = (Observer, handler) => {
+      const observer = new Observer(handler);
+      count('observers', 1);
+      let closed = false;
+      return {
+        observe: (...args) => observer.observe(...args),
+        disconnect: () => {
+          if (closed) return;
+          closed = true;
+          count('observers', -1);
+          observer.disconnect();
+        },
+        raw: observer,
+      };
+    };
+    const requestFrameTracked = (fn) => {
+      const id = requestAnimationFrame((time) => {
+        count('rafs', -1);
+        fn(time);
+      });
+      count('rafs', 1);
+      return id;
+    };
+    const cancelFrameTracked = (id) => {
+      if (!id) return;
+      count('rafs', -1);
+      cancelAnimationFrame(id);
+    };
+
     // Coalesce DOM work to one pass per frame. Streaming output fires hundreds of
     // mutations per frame; without this each one ran its own querySelector pass.
     // The call rate is sampled so a runaway observer shows up in the log.
@@ -334,6 +443,16 @@ window.__ModuleLoader__.load({
     let persistDigest = '';
     let persistErrorAt = 0;
     const clock = () => (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now());
+    // FNV-1a over the serialized text plus its length: two numbers instead of holding a
+    // second multi-megabyte copy of the state just to compare it.
+    const digestOf = (text) => {
+      let hash = 0x811c9dc5;
+      for (let index = 0; index < text.length; index += 1) {
+        hash ^= text.charCodeAt(index);
+        hash = Math.imul(hash, 0x01000193) >>> 0;
+      }
+      return hash.toString(36) + ':' + text.length;
+    };
 
     const persistSnapshot = () => ({
       docs: store.docs,
@@ -357,7 +476,8 @@ window.__ModuleLoader__.load({
         return;
       }
       persistMetrics.stringifyDurationMs = Math.round(clock() - stringifyAt);
-      if (text === persistDigest) {
+      const digest = digestOf(text);
+      if (digest === persistDigest) {
         // Nothing observable changed; do not touch storage.
         persistMetrics.skipped += 1;
         return;
@@ -365,7 +485,9 @@ window.__ModuleLoader__.load({
       const writeAt = clock();
       try {
         localStorage.setItem(storageKey(), text);
-        persistDigest = text;
+        // Only a small digest is retained; keeping the serialized copy around doubled the
+        // memory of every save for nothing.
+        persistDigest = digest;
         persistMetrics.revision += 1;
         persistMetrics.writes += 1;
         persistMetrics.serializedBytes = text.length;
@@ -423,15 +545,44 @@ window.__ModuleLoader__.load({
       }, delay);
     };
 
-    // A tab that is being hidden or closed must not lose the last edit.
-    if (typeof window !== 'undefined' && window.addEventListener) {
-      window.addEventListener('pagehide', flushPersist);
+    // A tab that is being hidden or closed must not lose the last edit. The handlers are
+    // installed once per window: a hot reload or a second injection would otherwise stack
+    // another pair on top and flush several times per event.
+    const lifecycle = { installed: false, target: null, onPageHide: null, onVisibility: null };
+    const installLifecycle = () => {
+      if (lifecycle.installed) return false;
+      if (typeof window === 'undefined' || !window.addEventListener) return false;
+      lifecycle.onPageHide = () => {
+        flushPersist();
+        meshCacheClear('pagehide');
+      };
+      lifecycle.onVisibility = () => {
+        if (typeof document === 'undefined') return;
+        if (document.visibilityState === 'hidden') flushPersist();
+      };
+      window.addEventListener('pagehide', lifecycle.onPageHide);
       if (typeof document !== 'undefined' && document.addEventListener) {
-        document.addEventListener('visibilitychange', () => {
-          if (document.visibilityState === 'hidden') flushPersist();
-        });
+        document.addEventListener('visibilitychange', lifecycle.onVisibility);
       }
-    }
+      lifecycle.target = window;
+      lifecycle.installed = true;
+      return true;
+    };
+    const uninstallLifecycle = () => {
+      if (!lifecycle.installed) return false;
+      try {
+        window.removeEventListener('pagehide', lifecycle.onPageHide);
+        if (typeof document !== 'undefined' && document.removeEventListener) {
+          document.removeEventListener('visibilitychange', lifecycle.onVisibility);
+        }
+      } catch {
+        /* the page is going away */
+      }
+      lifecycle.installed = false;
+      lifecycle.target = null;
+      return true;
+    };
+    installLifecycle();
 
     // Bounded schema checks: a corrupted or hand-edited entry must not abort startup,
     // and an oversized one must be reported instead of parsed on the main thread.
@@ -466,6 +617,17 @@ window.__ModuleLoader__.load({
         lastSliceMs: relocationMetrics.lastSliceMs,
       },
       storageIssue: Boolean(store.storageIssue),
+      meshCache: meshCacheReport(),
+      active: {
+        modelTasks: counters.modelTasks,
+        relocationTasks: counters.relocationTasks,
+        objectUrls: counters.objectUrls,
+        pdfTasks: counters.pdfTasks,
+        observers: counters.observers,
+        raf: counters.rafs,
+        webglContexts: counters.webglContexts,
+        canvasBackingPixels: counters.canvasPixels,
+      },
     });
     // Soft ceilings: report once when crossed, and refuse new heavy work rather than
     // letting a long session degrade until something else breaks.
@@ -900,7 +1062,17 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
       const tolerance = Math.max(1e-9, Number(radius || 1) * 0.01);
       const limit = tolerance * tolerance;
       const generation = ++relocationGeneration;
+      const signal = opts.signal;
       relocationMetrics.runs += 1;
+      count('relocationTasks', 1);
+      const cancelledResult = (scanned) => ({
+        cancelled: true,
+        scannedTriangles: scanned,
+        totalTriangles: total,
+        elapsedMs: Math.round((opts.now || clock)() - startedAt),
+        matched: 0,
+      });
+      const startedAt = (opts.now || clock)();
 
       const next = store.marks.slice();
       const targets = [];
@@ -931,6 +1103,9 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
       });
 
       const commit = (summary) => {
+        if ((signal && signal.aborted) || generation !== relocationGeneration) {
+          return Object.assign({}, summary, { cancelled: true, matched: 0 });
+        }
         if (changed) {
           mutate({ marks: next });
           persist();
@@ -940,6 +1115,8 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
       };
 
       if (!targets.length) {
+        count('relocationTasks', -1);
+        if (signal && signal.aborted) return Promise.resolve(cancelledResult(0));
         return Promise.resolve(commit({ scannedTriangles: 0, totalTriangles: total, elapsedMs: 0, cancelled: false, matched: 0 }));
       }
 
@@ -972,7 +1149,14 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         };
 
         const step = () => {
+          if (signal && signal.aborted) {
+            count('relocationTasks', -1);
+            relocationMetrics.cancelled += 1;
+            resolve(cancelledResult(scanned));
+            return;
+          }
           if (generation !== relocationGeneration) {
+            count('relocationTasks', -1);
             relocationMetrics.cancelled += 1;
             resolve({ scannedTriangles: scanned, totalTriangles: total, elapsedMs: Math.round(nowAt() - started), cancelled: true, matched: 0 });
             return;
@@ -1632,14 +1816,14 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
       const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 16);
       try {
         const blob = new Blob([text], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
+        const url = createObjectUrl(blob);
         const anchor = document.createElement('a');
         anchor.href = url;
         anchor.download = 'canvas-marks-' + stamp + '.json';
         document.body.appendChild(anchor);
         anchor.click();
         document.body.removeChild(anchor);
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        setTimeout(() => revokeObjectUrl(url), 1000);
         return 'ok';
       } catch {
         return 'failed';
@@ -2105,6 +2289,8 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
           store.marks = [];
           store.seq = 0;
           store.restored = false;
+          // Meshes are keyed by session, so a switch makes every entry dead weight.
+          meshCacheClear('session-switch');
           restore();
           if (Array.isArray(store.pendingList) && store.pendingList.length) {
             const queue = store.pendingList;
@@ -2672,33 +2858,84 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
       return info ? info.size : null;
     };
 
-    // Parsed meshes are expensive and tab switching unmounts the viewer, so a
-    // byte-budgeted LRU keeps a few around instead of re-reading from disk.
-    const MESH_CACHE_BYTES = 256 * MB;
+        // Parsed meshes are expensive and tab switching unmounts the viewer, so a byte-budgeted
+    // LRU keeps a few around. The budget is deliberately below the old 256 MB: several
+    // previews plus a decimated copy used to overlap inside that number.
+    const MESH_CACHE_LIMIT = 96 * MB;
+    const MESH_CACHE_HARD_LIMIT = 128 * MB;
+    const MESH_CACHE_ITEM_LIMIT = 32 * MB;
     const meshCache = new Map();
-    let meshCacheBytes = 0;
-    const meshCacheKey = (sessionId, path, info) => sessionId + '|' + path + '|' + (info ? info.mtimeMs + ':' + info.size : '0');
-    const meshCacheGet = (key) => meshCache.get(key) || null;
-    const meshCacheSet = (key, value) => {
-      const size = value.positions.byteLength + (value.colors ? value.colors.byteLength : 0);
-      if (size > MESH_CACHE_BYTES) return;
-      while (meshCacheBytes + size > MESH_CACHE_BYTES && meshCache.size) {
-        const oldestKey = meshCache.keys().next().value;
-        const oldest = meshCache.get(oldestKey);
-        meshCacheBytes -= oldest.size || 0;
-        meshCache.delete(oldestKey);
-      }
-      meshCache.set(key, Object.assign({ size }, value));
-      meshCacheBytes += size;
-    };
-    const releaseMesh = (key) => {
-      const cached = meshCache.get(key);
-      if (!cached) return;
-      meshCacheBytes -= cached.size || 0;
+    const meshCacheStats = { bytes: 0, entries: 0, hits: 0, misses: 0, evictions: 0, skipped: 0 };
+    const meshCacheBytesOf = (entry) =>
+      (entry.positions ? entry.positions.byteLength : 0) + (entry.colors ? entry.colors.byteLength : 0);
+    const meshCacheTouch = (key, entry) => {
+      // Re-inserting moves the key to the end of the Map: iteration order is the LRU order.
       meshCache.delete(key);
+      meshCache.set(key, entry);
     };
+    const meshCacheEvict = (key) => {
+      const entry = meshCache.get(key);
+      if (!entry) return;
+      meshCacheStats.bytes -= entry.size || 0;
+      meshCacheStats.entries = meshCache.size - 1;
+      meshCache.delete(key);
+      meshCacheStats.evictions += 1;
+    };
+    const meshCacheClear = (reason) => {
+      if (!meshCache.size) return 0;
+      const released = meshCacheStats.bytes;
+      meshCache.clear();
+      meshCacheStats.bytes = 0;
+      meshCacheStats.entries = 0;
+      devlog('mesh-cache-clear', [reason || 'manual', 'bytes=' + released]);
+      return released;
+    };
+    const meshCacheGet = (key) => {
+      const entry = meshCache.get(key);
+      if (!entry) {
+        meshCacheStats.misses += 1;
+        return null;
+      }
+      meshCacheStats.hits += 1;
+      entry.lastUsed = Date.now();
+      meshCacheTouch(key, entry);
+      return entry;
+    };
+    const meshCacheSet = (key, value) => {
+      const size = (value.positions ? value.positions.byteLength : 0) + (value.colors ? value.colors.byteLength : 0);
+      // One oversized mesh must not evict everything else for a single hit; it is simply
+      // not cached, and the viewer keeps its own live copy.
+      if (!size || size > MESH_CACHE_ITEM_LIMIT) {
+        meshCacheStats.skipped += 1;
+        return false;
+      }
+      if (meshCache.has(key)) meshCacheEvict(key);
+      while (meshCache.size && meshCacheStats.bytes + size > MESH_CACHE_LIMIT) {
+        const oldest = meshCache.keys().next().value;
+        meshCacheEvict(oldest);
+      }
+      const entry = { key, size, positions: value.positions, colors: value.colors || null, lastUsed: Date.now() };
+      meshCache.set(key, entry);
+      meshCacheStats.bytes += size;
+      meshCacheStats.entries = meshCache.size;
+      return true;
+    };
+    const meshCacheReport = () => ({
+      entries: meshCache.size,
+      bytes: meshCacheStats.bytes,
+      limit: MESH_CACHE_LIMIT,
+      hardLimit: MESH_CACHE_HARD_LIMIT,
+      itemLimit: MESH_CACHE_ITEM_LIMIT,
+      hits: meshCacheStats.hits,
+      misses: meshCacheStats.misses,
+      evictions: meshCacheStats.evictions,
+      skipped: meshCacheStats.skipped,
+    });
+    // Memory pressure, page hide and session switches all release the cache; the renderer
+    // keeps its own reference to whatever array it is currently drawing.
+    const releaseMesh = (key) => meshCacheEvict(key);
 
-    // File contents come from the in-process workspace channel; the HTTP route
+// File contents come from the in-process workspace channel; the HTTP route
     // only answers metadata, so nothing here can read arbitrary bytes.
 
     const assertFits = async (sessionId, path, kind, signal) => {
@@ -4430,7 +4667,7 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
               if (bytes) html = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
             }
             if (cancelled) return;
-            objectUrl = URL.createObjectURL(
+            objectUrl = createObjectUrl(
   new Blob([injectScriptAllowed() ? injectPicker(html) : html], { type: 'text/html' }),
 );
             setState({ status: 'ready', url: objectUrl, error: '' });
@@ -4442,7 +4679,7 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         return () => {
           cancelled = true;
           controller.abort();
-          if (objectUrl) URL.revokeObjectURL(objectUrl);
+          if (objectUrl) revokeObjectUrl(objectUrl);
         };
       }, [doc.path, sessionId]);
 
@@ -4652,7 +4889,7 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
               return;
             }
             const html = buildSvgDocument(markup);
-            objectUrl = URL.createObjectURL(
+            objectUrl = createObjectUrl(
               new Blob([injectScriptAllowed() ? injectPicker(html) : html], { type: 'text/html' }),
             );
             setState({ status: 'ready', url: objectUrl, error: '' });
@@ -4664,7 +4901,7 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         return () => {
           cancelled = true;
           controller.abort();
-          if (objectUrl) URL.revokeObjectURL(objectUrl);
+          if (objectUrl) revokeObjectUrl(objectUrl);
         };
       }, [doc.path, sessionId]);
 

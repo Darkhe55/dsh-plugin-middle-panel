@@ -21,7 +21,7 @@ const block = (from, to, label) => {
 
 // ---- 视频元素释放 ----
 const video = block("const native = VIDEO_NATIVE.includes(videoExtOf(doc.path));", 'const seek = store.seek;', '视频加载 effect');
-check(/URL\.revokeObjectURL\(objectUrl\)/.test(video), '视频 Object URL 在卸载时释放');
+check(/revokeObjectUrl\(objectUrl\)/.test(video), '视频 Object URL 在卸载时释放');
 check(/node\.pause\(\)/.test(video), '卸载时暂停播放');
 check(/removeAttribute\('src'\)/.test(video), '卸载时清空 src');
 check(/node\.srcObject = null/.test(video), '卸载时清空 srcObject');
@@ -50,7 +50,7 @@ const html = block('function HtmlDoc(props)', 'function FitStage', 'HTML 预览�
 check(/removeEventListener\('message', onMessage\)/.test(html), 'message 监听在卸载时移除');
 check(/frame\.src = 'about:blank'/.test(html), '关闭时卸载预览文档');
 check(/post\('pause'\)/.test(html), '关闭前暂停预览动画');
-check(/URL\.revokeObjectURL\(objectUrl\)/.test(html), 'HTML Object URL 在卸载时释放');
+check(/revokeObjectUrl\(objectUrl\)/.test(html), 'HTML Object URL 在卸载时释放');
 
 if (failures) {
   console.log('失败 ' + failures + ' 项');

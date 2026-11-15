@@ -14,6 +14,7 @@ const sliceFrom = src.lastIndexOf('const relocationMetrics = {', start);
 const body = src.slice(sliceFrom >= 0 ? sliceFrom : start, end);
 
 const factory = new Function(
+  'count',
   'store',
   'sameFile',
   'mutate',
@@ -27,6 +28,7 @@ const run = async (marks, positions, radius = 10) => {
   const store = { marks };
   const state = { mutated: null, persisted: 0 };
   const relocate = factory(
+    () => 0,
     store,
     (a, b) => a === b,
     (partial) => {
