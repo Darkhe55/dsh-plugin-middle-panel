@@ -182,6 +182,39 @@ window.__ModuleLoader__.load({
     };
 
 
+    // Remembering where the workspace picker was left is opt-in, and the path is kept per
+    // session: a remembered folder must not follow someone into another workspace.
+    const pickerPrefs = { remember: false };
+    try {
+      pickerPrefs.remember = localStorage.getItem('dsh.canvas.picker.remember') === '1';
+    } catch {
+      /* storage is best effort */
+    }
+    const pickerRemember = () => pickerPrefs.remember;
+    const setPickerRemember = (on) => {
+      pickerPrefs.remember = Boolean(on);
+      try {
+        localStorage.setItem('dsh.canvas.picker.remember', pickerPrefs.remember ? '1' : '0');
+      } catch {
+        /* storage is best effort */
+      }
+    };
+    const pickerPathKey = (sessionId) => 'dsh.canvas.picker.path.' + String(sessionId || '');
+    const readPickerPath = (sessionId) => {
+      try {
+        return localStorage.getItem(pickerPathKey(sessionId)) || '';
+      } catch {
+        return '';
+      }
+    };
+    const writePickerPath = (sessionId, path) => {
+      try {
+        localStorage.setItem(pickerPathKey(sessionId), String(path || ''));
+      } catch {
+        /* storage is best effort */
+      }
+    };
+
     const setFollowHover = (on) => {
       followHover.on = Boolean(on);
       try {
@@ -1553,7 +1586,9 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
       '.dshcv-animating{transition:flex-basis .2s cubic-bezier(.2,0,0,1)}',
       '@media (prefers-reduced-motion: reduce){.dshcv-reveal,.dshcv-closing{animation:none}.dshcv-animating{transition:none}}',
       '.dshcv-docs{display:flex;align-items:center;gap:2px;padding:6px 10px;border-bottom:1px solid var(--dsw-alias-border-l1);overflow-x:auto}',
-      '.dshcv-crumbs{display:flex;align-items:center;gap:2px;min-width:0;overflow-x:auto}',
+      '.dshcv-crumbs{display:flex;align-items:center;gap:2px;min-width:0;flex:1 1 auto;overflow-x:auto}',
+      // The picker toolbar keeps its path crumbs scrollable and the remember switch fixed.
+      '.dshcv-tools>.dshcv-chip{flex:0 0 auto;margin-left:auto}',
       '.dshcv-row{display:flex;align-items:center;gap:8px;width:100%;height:28px;padding:0 10px;border:0;border-radius:7px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;text-align:left;cursor:pointer}',
       '.dshcv-row:hover{background:var(--dsw-alias-bg-layer-2)}',
       '.dshcv-rowname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
@@ -1846,8 +1881,9 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
     function FilePicker(props) {
       const { sessionId, onOpen, onClose } = props;
       const [state, setState] = React.useState({ path: '', status: 'loading', entries: [], error: '' });
+      const [remember, setRemember] = React.useState(() => pickerRemember());
 
-      const load = async (path) => {
+      const load = async (path, allowFallback) => {
         // The workspace file service rejects an empty path; '.' names its root.
         const target = path && path !== '.' ? path : '.';
         setState({ path: target === '.' ? '' : target, status: 'loading', entries: [], error: '' });
@@ -1863,17 +1899,39 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
             .filter((entry) => entry.name);
           entries.sort((left, right) => (left.dir === right.dir ? left.name.localeCompare(right.name) : left.dir ? -1 : 1));
           const reported = String(result.path || target);
-          setState({ path: reported === '.' ? '' : reported, status: 'ready', entries, error: '' });
+          const resolved = reported === '.' ? '' : reported;
+          setState({ path: resolved, status: 'ready', entries, error: '' });
+          if (pickerRemember()) writePickerPath(sessionId, resolved);
         } catch (error) {
+          // A remembered folder can be renamed or deleted; fall back to the root once
+          // instead of leaving the picker stuck on an error.
+          if (allowFallback !== false && target !== '.') {
+            writePickerPath(sessionId, '');
+            load('', false);
+            return;
+          }
           setState({ path: '', status: 'failed', entries: [], error: errText(error) });
         }
       };
 
       React.useEffect(() => {
-        if (sessionId) load('');
-        else setState({ path: '', status: 'failed', entries: [], error: '等待会话…' });
+        if (!sessionId) {
+          setState({ path: '', status: 'failed', entries: [], error: '等待会话…' });
+          return;
+        }
+        // Resume where the last pick ended, but only while the switch is on.
+        const resume = remember ? readPickerPath(sessionId) : '';
+        load(resume);
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [sessionId]);
+
+      const toggleRemember = () => {
+        const next = !remember;
+        setRemember(next);
+        setPickerRemember(next);
+        // Turning it on mid-session records the folder currently on screen.
+        if (next) writePickerPath(sessionId, state.path || '');
+      };
 
       const segments = String(state.path || '').split('/').filter(Boolean);
       const crumbs = [h('button', { key: 'root', type: 'button', className: 'dshcv-chip', onClick: () => load('') }, '工作区')];
@@ -1901,6 +1959,18 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
           { className: 'dshcv-tools' },
           h('button', { type: 'button', className: 'dshcv-btn', onClick: onClose }, '返回'),
           h('span', { className: 'dshcv-crumbs' }, crumbs),
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'dshcv-chip',
+              'data-active': remember ? '1' : '0',
+              title: remember ? '下次打开回到这个目录（点击关闭）' : '记住当前目录，下次打开直接回到这里',
+              'aria-pressed': remember ? 'true' : 'false',
+              onClick: toggleRemember,
+            },
+            remember ? '✓ 记住路径' : '记住路径',
+          ),
         ),
         h(
           'div',

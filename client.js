@@ -132,6 +132,33 @@ localStorage.setItem('dsh.canvas.autoclear', sendPrefs.autoClear ? '1' : '0');
 }
 notify();
 };
+const pickerPrefs = { remember: false };
+try {
+pickerPrefs.remember = localStorage.getItem('dsh.canvas.picker.remember') === '1';
+} catch {
+}
+const pickerRemember = () => pickerPrefs.remember;
+const setPickerRemember = (on) => {
+pickerPrefs.remember = Boolean(on);
+try {
+localStorage.setItem('dsh.canvas.picker.remember', pickerPrefs.remember ? '1' : '0');
+} catch {
+}
+};
+const pickerPathKey = (sessionId) => 'dsh.canvas.picker.path.' + String(sessionId || '');
+const readPickerPath = (sessionId) => {
+try {
+return localStorage.getItem(pickerPathKey(sessionId)) || '';
+} catch {
+return '';
+}
+};
+const writePickerPath = (sessionId, path) => {
+try {
+localStorage.setItem(pickerPathKey(sessionId), String(path || ''));
+} catch {
+}
+};
 const setFollowHover = (on) => {
 followHover.on = Boolean(on);
 try {
@@ -1334,7 +1361,8 @@ const CSS_PANEL = [
 '.dshcv-animating{transition:flex-basis .2s cubic-bezier(.2,0,0,1)}',
 '@media (prefers-reduced-motion: reduce){.dshcv-reveal,.dshcv-closing{animation:none}.dshcv-animating{transition:none}}',
 '.dshcv-docs{display:flex;align-items:center;gap:2px;padding:6px 10px;border-bottom:1px solid var(--dsw-alias-border-l1);overflow-x:auto}',
-'.dshcv-crumbs{display:flex;align-items:center;gap:2px;min-width:0;overflow-x:auto}',
+'.dshcv-crumbs{display:flex;align-items:center;gap:2px;min-width:0;flex:1 1 auto;overflow-x:auto}',
+'.dshcv-tools>.dshcv-chip{flex:0 0 auto;margin-left:auto}',
 '.dshcv-row{display:flex;align-items:center;gap:8px;width:100%;height:28px;padding:0 10px;border:0;border-radius:7px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;text-align:left;cursor:pointer}',
 '.dshcv-row:hover{background:var(--dsw-alias-bg-layer-2)}',
 '.dshcv-rowname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
@@ -1601,7 +1629,8 @@ return prefix ? prefix + '/' + name : name;
 function FilePicker(props) {
 const { sessionId, onOpen, onClose } = props;
 const [state, setState] = React.useState({ path: '', status: 'loading', entries: [], error: '' });
-const load = async (path) => {
+const [remember, setRemember] = React.useState(() => pickerRemember());
+const load = async (path, allowFallback) => {
 const target = path && path !== '.' ? path : '.';
 setState({ path: target === '.' ? '' : target, status: 'loading', entries: [], error: '' });
 try {
@@ -1616,15 +1645,32 @@ dir: entry.type === 'directory' || entry.kind === 'directory' || entry.isDirecto
 .filter((entry) => entry.name);
 entries.sort((left, right) => (left.dir === right.dir ? left.name.localeCompare(right.name) : left.dir ? -1 : 1));
 const reported = String(result.path || target);
-setState({ path: reported === '.' ? '' : reported, status: 'ready', entries, error: '' });
+const resolved = reported === '.' ? '' : reported;
+setState({ path: resolved, status: 'ready', entries, error: '' });
+if (pickerRemember()) writePickerPath(sessionId, resolved);
 } catch (error) {
+if (allowFallback !== false && target !== '.') {
+writePickerPath(sessionId, '');
+load('', false);
+return;
+}
 setState({ path: '', status: 'failed', entries: [], error: errText(error) });
 }
 };
 React.useEffect(() => {
-if (sessionId) load('');
-else setState({ path: '', status: 'failed', entries: [], error: '等待会话…' });
+if (!sessionId) {
+setState({ path: '', status: 'failed', entries: [], error: '等待会话…' });
+return;
+}
+const resume = remember ? readPickerPath(sessionId) : '';
+load(resume);
 }, [sessionId]);
+const toggleRemember = () => {
+const next = !remember;
+setRemember(next);
+setPickerRemember(next);
+if (next) writePickerPath(sessionId, state.path || '');
+};
 const segments = String(state.path || '').split('/').filter(Boolean);
 const crumbs = [h('button', { key: 'root', type: 'button', className: 'dshcv-chip', onClick: () => load('') }, '工作区')];
 segments.forEach((segment, index) => {
@@ -1650,6 +1696,18 @@ h(
 { className: 'dshcv-tools' },
 h('button', { type: 'button', className: 'dshcv-btn', onClick: onClose }, '返回'),
 h('span', { className: 'dshcv-crumbs' }, crumbs),
+h(
+'button',
+{
+type: 'button',
+className: 'dshcv-chip',
+'data-active': remember ? '1' : '0',
+title: remember ? '下次打开回到这个目录（点击关闭）' : '记住当前目录，下次打开直接回到这里',
+'aria-pressed': remember ? 'true' : 'false',
+onClick: toggleRemember,
+},
+remember ? '✓ 记住路径' : '记住路径',
+),
 ),
 h(
 'div',
