@@ -285,50 +285,108 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
       return 'text';
     };
 
-    // A 14px glyph per kind so a list row can be read at a glance: the shape says
-    // folder vs file, and the mark inside the page says which sort of file.
+    // A 14px glyph per kind so a list row can be read at a glance: the page frame says
+    // "this is a file", and the mark inside it carries the type colour that people
+    // already associate with that format. Marks are tagged MARK; the frame stays in the
+    // theme colour so the colours sit on one neutral shape instead of twelve.
     const PAGE = ['M4.1 2.6h5.1l3.2 3.2v7.6H4.1z', 'M9.2 2.7v3.1h3.2'];
+    const MARK = 'mark';
     const ICON_SHAPES = {
       folder: [
-        ['path', { d: 'M2.1 5.1a1.1 1.1 0 0 1 1.1-1.1h2.4l1.2 1.5h5a1.1 1.1 0 0 1 1.1 1.1v5.1a1.1 1.1 0 0 1-1.1 1.1H3.2a1.1 1.1 0 0 1-1.1-1.1V5.1z' }],
+        ['path', { d: 'M2.1 5.1a1.1 1.1 0 0 1 1.1-1.1h2.4l1.2 1.5h5a1.1 1.1 0 0 1 1.1 1.1v5.1a1.1 1.1 0 0 1-1.1 1.1H3.2a1.1 1.1 0 0 1-1.1-1.1V5.1z' }, MARK],
       ],
-      text: [['path', { d: PAGE[0] }], ['path', { d: PAGE[1] }], ['path', { d: 'M6 8.9h4' }], ['path', { d: 'M6 11.1h2.6' }]],
-      markdown: [['path', { d: PAGE[0] }], ['path', { d: PAGE[1] }], ['path', { d: 'M5.7 8.4l1.6 1.9 1.6-1.9' }]],
-      html: [['path', { d: PAGE[0] }], ['path', { d: PAGE[1] }], ['path', { d: 'M6.9 9.1 5.5 10.6l1.4 1.5' }], ['path', { d: 'M9.4 9.1l1.4 1.5-1.4 1.5' }]],
-      pdf: [['path', { d: PAGE[0] }], ['path', { d: PAGE[1] }], ['path', { d: 'M5.9 8.7h4.3' }], ['path', { d: 'M5.9 11.2h2.1' }], ['path', { d: 'M9.4 10.6v1.4' }]],
-      office: [['path', { d: PAGE[0] }], ['path', { d: PAGE[1] }], ['path', { d: 'M5.8 8.6h4.4v3.8H5.8z' }], ['path', { d: 'M5.8 10.5h4.4' }]],
-      sheet: [['path', { d: PAGE[0] }], ['path', { d: PAGE[1] }], ['path', { d: 'M5.8 8.6h4.4v3.8H5.8z' }], ['path', { d: 'M8 8.6v3.8' }]],
+      text: [
+        ['path', { d: PAGE[0] }],
+        ['path', { d: PAGE[1] }],
+        ['path', { d: 'M6 8.9h4' }, MARK],
+        ['path', { d: 'M6 11.1h2.6' }, MARK],
+      ],
+      markdown: [
+        ['path', { d: PAGE[0] }],
+        ['path', { d: PAGE[1] }],
+        ['path', { d: 'M5.7 8.4l1.6 1.9 1.6-1.9' }, MARK],
+      ],
+      html: [
+        ['path', { d: PAGE[0] }],
+        ['path', { d: PAGE[1] }],
+        ['path', { d: 'M6.9 9.1 5.5 10.6l1.4 1.5' }, MARK],
+        ['path', { d: 'M9.4 9.1l1.4 1.5-1.4 1.5' }, MARK],
+      ],
+      pdf: [
+        ['path', { d: PAGE[0] }],
+        ['path', { d: PAGE[1] }],
+        ['path', { d: 'M5.9 8.7h4.3' }, MARK],
+        ['path', { d: 'M5.9 11.2h2.1' }, MARK],
+        ['path', { d: 'M9.4 10.6v1.4' }, MARK],
+      ],
+      office: [
+        ['path', { d: PAGE[0] }],
+        ['path', { d: PAGE[1] }],
+        ['path', { d: 'M5.8 8.6h4.4v3.8H5.8z' }, MARK],
+        ['path', { d: 'M5.8 10.5h4.4' }, MARK],
+      ],
+      sheet: [
+        ['path', { d: PAGE[0] }],
+        ['path', { d: PAGE[1] }],
+        ['path', { d: 'M5.8 8.6h4.4v3.8H5.8z' }, MARK],
+        ['path', { d: 'M8 8.6v3.8' }, MARK],
+      ],
       image: [
-        ['rect', { x: '2.6', y: '3.6', width: '10.8', height: '8.8', rx: '1.1' }],
-        ['circle', { cx: '6', cy: '6.6', r: '1' }],
-        ['path', { d: 'M3.4 11.5l2.6-2.9 1.9 2 1.3-1.3 2.4 2.2' }],
+        ['rect', { x: '2.6', y: '3.6', width: '10.8', height: '8.8', rx: '1.1' }, MARK],
+        ['circle', { cx: '6', cy: '6.6', r: '1' }, MARK],
+        ['path', { d: 'M3.4 11.5l2.6-2.9 1.9 2 1.3-1.3 2.4 2.2' }, MARK],
       ],
       video: [
-        ['rect', { x: '2.6', y: '3.9', width: '10.8', height: '8.2', rx: '1.6' }],
-        ['path', { d: 'M6.8 6.4l2.7 1.7-2.7 1.7z' }],
+        ['rect', { x: '2.6', y: '3.9', width: '10.8', height: '8.2', rx: '1.6' }, MARK],
+        ['path', { d: 'M6.8 6.4l2.7 1.7-2.7 1.7z' }, MARK],
       ],
       model: [
-        ['path', { d: 'M8 2.6l4.5 2.4v5.4L8 13.4 3.5 10.4V5z' }],
-        ['path', { d: 'M3.5 5L8 7.4l4.5-2.4' }],
-        ['path', { d: 'M8 7.4v6' }],
+        ['path', { d: 'M8 2.6l4.5 2.4v5.4L8 13.4 3.5 10.4V5z' }, MARK],
+        ['path', { d: 'M3.5 5L8 7.4l4.5-2.4' }, MARK],
+        ['path', { d: 'M8 7.4v6' }, MARK],
       ],
-      cad: [['path', { d: 'M3.2 12.7h9.5V3.4z' }], ['path', { d: 'M5.6 10.3h2.4' }], ['path', { d: 'M8.6 12.7v-2.4' }]],
+      cad: [
+        ['path', { d: 'M3.2 12.7h9.5V3.4z' }, MARK],
+        ['path', { d: 'M5.6 10.3h2.4' }, MARK],
+        ['path', { d: 'M8.6 12.7v-2.4' }, MARK],
+      ],
       design: [
-        ['path', { d: 'M8 2.9a5.1 5.1 0 1 0 0 10.2c.9 0 1.2-.6 1.2-1.2 0-.9.7-1.2 1.4-1.2h.9a1.6 1.6 0 0 0 1.6-1.6A5.1 5.1 0 0 0 8 2.9z' }],
-        ['circle', { cx: '6.1', cy: '6.6', r: '.7' }],
-        ['circle', { cx: '9.4', cy: '6.2', r: '.7' }],
+        ['path', { d: 'M8 2.9a5.1 5.1 0 1 0 0 10.2c.9 0 1.2-.6 1.2-1.2 0-.9.7-1.2 1.4-1.2h.9a1.6 1.6 0 0 0 1.6-1.6A5.1 5.1 0 0 0 8 2.9z' }, MARK],
+        ['circle', { cx: '6.1', cy: '6.6', r: '.7' }, MARK],
+        ['circle', { cx: '9.4', cy: '6.2', r: '.7' }, MARK],
       ],
       unsupported: [
         ['path', { d: PAGE[0] }],
         ['path', { d: PAGE[1] }],
         // 问号比斜线更直白：这条是「不知道/打不开」，不是「禁止」
-        ['path', { d: 'M6.7 9.3c0-1 .8-1.6 1.7-1.6 1 0 1.7.6 1.7 1.5 0 1.2-1.6 1.3-1.6 2.4' }],
-        ['circle', { cx: '8.5', cy: '12.6', r: '.55', fill: 'currentColor', stroke: 'none' }],
+        ['path', { d: 'M6.7 9.3c0-1 .8-1.6 1.7-1.6 1 0 1.7.6 1.7 1.5 0 1.2-1.6 1.3-1.6 2.4' }, MARK],
+        ['circle', { cx: '8.5', cy: '12.6', r: '.55', fill: 'currentColor', stroke: 'none' }, MARK],
       ],
     };
 
+    // Mid-tone hues: they carry on a white sheet and on a dark one, and they follow the
+    // colours these formats already use elsewhere (PDF red, HTML orange, Word blue,
+    // Excel green). Text stays neutral so ordinary files do not compete for attention.
+    const ICON_COLORS = {
+      folder: '#c08a2e',
+      text: '#8a8f98',
+      markdown: '#2f7bd6',
+      html: '#d9553a',
+      pdf: '#cf3d33',
+      office: '#2b6cb0',
+      sheet: '#2f8f5b',
+      image: '#8a5cd6',
+      video: '#c94a86',
+      model: '#1f96a4',
+      cad: '#b8791f',
+      design: '#b8449a',
+      unsupported: '#a4791f',
+    };
+
     const fileIcon = (kind, isDir) => {
-      const shapes = ICON_SHAPES[isDir ? 'folder' : kind] || ICON_SHAPES.text;
+      const key = isDir ? 'folder' : kind;
+      const shapes = ICON_SHAPES[key] || ICON_SHAPES.text;
+      const accent = ICON_COLORS[key] || ICON_COLORS.text;
       return h(
         'svg',
         {
@@ -342,7 +400,15 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
           'aria-hidden': 'true',
           focusable: 'false',
         },
-        shapes.map(([tag, props], index) => h(tag, Object.assign({ key: tag + index }, props))),
+        shapes.map(([tag, props, role], index) => {
+          const merged = Object.assign({ key: tag + index }, props);
+          if (role === MARK) {
+            // The mark carries the type colour; a filled dot has to follow it too.
+            merged.stroke = accent;
+            if (merged.fill === 'currentColor') merged.fill = accent;
+          }
+          return h(tag, merged);
+        }),
       );
     };
 

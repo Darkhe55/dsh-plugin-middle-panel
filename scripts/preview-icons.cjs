@@ -17,10 +17,15 @@ const block = /const ICON_SHAPES = \{([\s\S]*?)\n    \};/.exec(source);
 if (!block) throw new Error('ICON_SHAPES not found in src/parts/00-head.js');
 const page = /const PAGE = \[([\s\S]*?)\];/.exec(source);
 if (!page) throw new Error('PAGE constant not found');
+const colorBlock = /const ICON_COLORS = \{([\s\S]*?)\n    \};/.exec(source);
+if (!colorBlock) throw new Error('ICON_COLORS not found');
+const colors = new Function('return {' + colorBlock[1] + '};')();
 
 // Evaluate only our own object literal; PAGE is supplied as a parameter.
-const shapes = new Function('PAGE', 'return {' + block[1] + '};')(
+const MARK = 'mark';
+const shapes = new Function('PAGE', 'MARK', 'return {' + block[1] + '};')(
   new Function('return [' + page[1] + '];')(),
+  MARK,
 );
 
 const attr = (props) =>
@@ -30,7 +35,17 @@ const attr = (props) =>
 
 const svg = (kind, size) => {
   const parts = shapes[kind] || shapes.text;
-  const body = parts.map(([tag, props]) => '<' + tag + ' ' + attr(props) + ' />').join('');
+  const accent = colors[kind] || colors.text;
+  const body = parts
+    .map(([tag, props, role]) => {
+      const merged = Object.assign({}, props);
+      if (role === 'mark') {
+        merged.stroke = accent;
+        if (merged.fill === 'currentColor') merged.fill = accent;
+      }
+      return '<' + tag + ' ' + attr(merged) + ' />';
+    })
+    .join('');
   return (
     '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" ' +
     'stroke-linecap="round" stroke-linejoin="round" width="' + size + '" height="' + size + '" ' +
