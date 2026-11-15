@@ -226,6 +226,57 @@ if (['docx', 'xlsx', 'pptx', 'doc', 'xls', 'ppt', 'odt', 'ods', 'odp'].includes(
 if (['csv', 'tsv'].includes(ext)) return 'sheet';
 return 'text';
 };
+const PAGE = ['M4.1 2.6h5.1l3.2 3.2v7.6H4.1z', 'M9.2 2.7v3.1h3.2'];
+const ICON_SHAPES = {
+folder: [
+['path', { d: 'M2.1 5.1a1.1 1.1 0 0 1 1.1-1.1h2.4l1.2 1.5h5a1.1 1.1 0 0 1 1.1 1.1v5.1a1.1 1.1 0 0 1-1.1 1.1H3.2a1.1 1.1 0 0 1-1.1-1.1V5.1z' }],
+],
+text: [['path', { d: PAGE[0] }], ['path', { d: PAGE[1] }], ['path', { d: 'M6 8.9h4' }], ['path', { d: 'M6 11.1h2.6' }]],
+markdown: [['path', { d: PAGE[0] }], ['path', { d: PAGE[1] }], ['path', { d: 'M5.7 8.4l1.6 1.9 1.6-1.9' }]],
+html: [['path', { d: PAGE[0] }], ['path', { d: PAGE[1] }], ['path', { d: 'M6.9 9.1 5.5 10.6l1.4 1.5' }], ['path', { d: 'M9.4 9.1l1.4 1.5-1.4 1.5' }]],
+pdf: [['path', { d: PAGE[0] }], ['path', { d: PAGE[1] }], ['path', { d: 'M5.9 8.7h4.3' }], ['path', { d: 'M5.9 11.2h2.1' }], ['path', { d: 'M9.4 10.6v1.4' }]],
+office: [['path', { d: PAGE[0] }], ['path', { d: PAGE[1] }], ['path', { d: 'M5.8 8.6h4.4v3.8H5.8z' }], ['path', { d: 'M5.8 10.5h4.4' }]],
+sheet: [['path', { d: PAGE[0] }], ['path', { d: PAGE[1] }], ['path', { d: 'M5.8 8.6h4.4v3.8H5.8z' }], ['path', { d: 'M8 8.6v3.8' }]],
+image: [
+['rect', { x: '2.6', y: '3.6', width: '10.8', height: '8.8', rx: '1.1' }],
+['circle', { cx: '6', cy: '6.6', r: '1' }],
+['path', { d: 'M3.4 11.5l2.6-2.9 1.9 2 1.3-1.3 2.4 2.2' }],
+],
+video: [
+['rect', { x: '2.6', y: '3.9', width: '10.8', height: '8.2', rx: '1.6' }],
+['path', { d: 'M6.8 6.4l2.7 1.7-2.7 1.7z' }],
+],
+model: [
+['path', { d: 'M8 2.6l4.5 2.4v5.4L8 13.4 3.5 10.4V5z' }],
+['path', { d: 'M3.5 5L8 7.4l4.5-2.4' }],
+['path', { d: 'M8 7.4v6' }],
+],
+cad: [['path', { d: 'M3.2 12.7h9.5V3.4z' }], ['path', { d: 'M5.6 10.3h2.4' }], ['path', { d: 'M8.6 12.7v-2.4' }]],
+design: [
+['path', { d: 'M8 2.9a5.1 5.1 0 1 0 0 10.2c.9 0 1.2-.6 1.2-1.2 0-.9.7-1.2 1.4-1.2h.9a1.6 1.6 0 0 0 1.6-1.6A5.1 5.1 0 0 0 8 2.9z' }],
+['circle', { cx: '6.1', cy: '6.6', r: '.7' }],
+['circle', { cx: '9.4', cy: '6.2', r: '.7' }],
+],
+unsupported: [['path', { d: PAGE[0] }], ['path', { d: PAGE[1] }], ['path', { d: 'M6.5 12.4 10 8.2' }]],
+};
+const fileIcon = (kind, isDir) => {
+const shapes = ICON_SHAPES[isDir ? 'folder' : kind] || ICON_SHAPES.text;
+return h(
+'svg',
+{
+className: 'dshcv-rowicon',
+viewBox: '0 0 16 16',
+fill: 'none',
+stroke: 'currentColor',
+strokeWidth: 1.25,
+strokeLinecap: 'round',
+strokeLinejoin: 'round',
+'aria-hidden': 'true',
+focusable: 'false',
+},
+shapes.map(([tag, props], index) => h(tag, Object.assign({ key: tag + index }, props))),
+);
+};
 const resolveView = (requested, path) =>
 !requested || requested === 'auto' ? fileKind(path) : requested;
 const findMark = (id) => store.marks.find((mark) => mark.id === id);
@@ -1223,6 +1274,8 @@ const CSS_PANEL = [
 '.dshcv-row{display:flex;align-items:center;gap:8px;width:100%;height:28px;padding:0 10px;border:0;border-radius:7px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;text-align:left;cursor:pointer}',
 '.dshcv-row:hover{background:var(--dsw-alias-bg-layer-2)}',
 '.dshcv-rowname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+'.dshcv-rowicon{display:block;flex:0 0 auto;width:14px;height:14px;color:var(--dsw-alias-label-secondary);opacity:.9}',
+'.dshcv-row:hover .dshcv-rowicon{color:var(--dsw-alias-label-primary);opacity:1}',
 '.dshcv-scroll{flex:1 1 auto;min-height:0;overflow:auto}',
 '.dshcv-tools{display:flex;align-items:center;gap:4px;min-height:34px;padding:0 8px;border-bottom:1px solid var(--dsw-alias-border-l1)}',
 '.dshcv-msg{font-size:11px;color:var(--dsw-alias-label-secondary);white-space:nowrap}',
@@ -1555,6 +1608,7 @@ onClose();
 }
 },
 },
+fileIcon(fileKind(joinPath(state.path, entry.name)), entry.dir),
 h('span', { className: 'dshcv-rowname' }, entry.name + (entry.dir ? '/' : '')),
 ),
 ),
