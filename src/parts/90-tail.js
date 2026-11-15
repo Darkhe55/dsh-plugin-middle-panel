@@ -2619,6 +2619,23 @@ h(
         const load = async () => {
           const bytes = await readBytesFile(sessionId, doc.path, controller.signal);
           if (cancelled || !bytes) return;
+          // Refuse a pixel bomb before the blob is decoded: a 2 MB file can still be
+          // 400 megapixels, which allocates gigabytes and can take the renderer down.
+          const oversized = imageTooLarge(bytes, doc.path);
+          if (oversized) {
+            setState({
+              status: 'failed',
+              url: '',
+              error:
+                '图片分辨率为 ' +
+                Math.round(oversized / 1e6) +
+                ' 百万像素，超过预览上限（' +
+                Math.round(MAX_IMAGE_PIXELS / 1e6) +
+                ' 百万像素）。可用图片编辑器缩小后查看。',
+            });
+            devlog('image-too-large', ['pixels=' + oversized]);
+            return;
+          }
           objectUrl = URL.createObjectURL(new Blob([bytes], { type: mimeOf(doc.path) }));
           setState({ status: 'ready', url: objectUrl, error: '' });
           devlog('image-ready', ['path=' + doc.path, 'bytes=' + (bytes.byteLength || bytes.length || 0)]);
@@ -3452,6 +3469,29 @@ function SplitDivider(props) {
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [doc.path, native]);
+
+      // Leaving the video releases the media pipeline as well as the URL: without this the
+      // element keeps its decoder and buffered ranges alive until GC gets to it.
+      React.useEffect(() => {
+        if (!state.url) return undefined;
+        return () => {
+          const node = videoRef.current;
+          if (!node) return;
+          try {
+            node.pause();
+          } catch (error) {
+            /* detached element */
+          }
+          try {
+            node.removeAttribute('src');
+            node.srcObject = null;
+            // load() tears the pipeline down; without it the old source stays attached.
+            node.load();
+          } catch (error) {
+            /* element already gone */
+          }
+        };
+      }, [state.url]);
 
       const seek = store.seek;
       // Only a request newer than the one seen at mount may move the playhead, so a

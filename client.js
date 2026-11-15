@@ -3593,6 +3593,68 @@ if (ext === 'bmp') return 'image/bmp';
 if (ext === 'ico') return 'image/x-icon';
 return 'application/octet-stream';
 };
+const MAX_IMAGE_PIXELS = 40 * 1000 * 1000;
+const imagePixelSize = (bytes) => {
+if (!bytes || bytes.length < 24) return null;
+const view = new DataView(bytes.buffer ? bytes.buffer : bytes, bytes.byteOffset || 0, Math.min(bytes.byteLength || bytes.length, 32));
+const byteAt = (index) => (bytes[index] === undefined ? 0 : bytes[index]);
+if (byteAt(0) === 0x89 && byteAt(1) === 0x50 && byteAt(2) === 0x4e && byteAt(3) === 0x47) {
+return { width: view.getUint32(16), height: view.getUint32(20) };
+}
+if (byteAt(0) === 0x47 && byteAt(1) === 0x49 && byteAt(2) === 0x46) {
+return { width: byteAt(6) | (byteAt(7) << 8), height: byteAt(8) | (byteAt(9) << 8) };
+}
+if (byteAt(0) === 0x42 && byteAt(1) === 0x4d) {
+return {
+width: byteAt(18) | (byteAt(19) << 8) | (byteAt(20) << 16) | (byteAt(21) << 24),
+height: Math.abs(byteAt(22) | (byteAt(23) << 8) | (byteAt(24) << 16) | (byteAt(25) << 24)),
+};
+}
+if (byteAt(0) === 0x52 && byteAt(1) === 0x49 && byteAt(2) === 0x46 && byteAt(8) === 0x57) {
+if (byteAt(12) === 0x56 && byteAt(13) === 0x50 && byteAt(14) === 0x38 && byteAt(15) === 0x58) {
+return {
+width: 1 + (byteAt(24) | (byteAt(25) << 8) | (byteAt(26) << 16)),
+height: 1 + (byteAt(27) | (byteAt(28) << 8) | (byteAt(29) << 16)),
+};
+}
+if (byteAt(12) === 0x56 && byteAt(13) === 0x50 && byteAt(14) === 0x38 && byteAt(15) === 0x4c) {
+const bits = byteAt(21) | (byteAt(22) << 8) | (byteAt(23) << 16) | (byteAt(24) << 24);
+return { width: 1 + (bits & 0x3fff), height: 1 + ((bits >> 14) & 0x3fff) };
+}
+}
+if (byteAt(0) === 0xff && byteAt(1) === 0xd8) {
+const length = Math.min(bytes.byteLength || bytes.length, 64 * 1024);
+let index = 2;
+while (index + 9 < length) {
+if (bytes[index] !== 0xff) {
+index += 1;
+continue;
+}
+const marker = bytes[index + 1];
+if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+index += 2;
+continue;
+}
+const segment = (bytes[index + 2] << 8) | bytes[index + 3];
+if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+return {
+height: (bytes[index + 5] << 8) | bytes[index + 6],
+width: (bytes[index + 7] << 8) | bytes[index + 8],
+};
+}
+if (segment < 2) return null;
+index += 2 + segment;
+}
+}
+return null;
+};
+const imageTooLarge = (bytes, path) => {
+if (/\.svg$/i.test(String(path || ''))) return 0;
+const size = imagePixelSize(bytes);
+if (!size || !size.width || !size.height) return 0;
+const pixels = size.width * size.height;
+return pixels > MAX_IMAGE_PIXELS ? pixels : 0;
+};
 const PICKER_SCRIPT = [
 '(function(){',
 'var box=null,dwellEl=null,dwellTimer=null,spotEl=null,paused=false;',
@@ -3842,6 +3904,21 @@ rect: Array.isArray(data.rect) ? data.rect : undefined,
 window.addEventListener('message', onMessage);
 return () => window.removeEventListener('message', onMessage);
 }, [doc.path]);
+React.useEffect(() => {
+if (state.status !== 'ready' || !state.url) return undefined;
+return () => {
+const frame = frameRef.current;
+if (!frame) return;
+try {
+post('pause');
+} catch (error) {
+}
+try {
+frame.src = 'about:blank';
+} catch (error) {
+}
+};
+}, [state.status, state.url]);
 if (state.status === 'failed') {
 return h('div', { className: 'dshcv-empty' }, h('div', null, '无法预览该 HTML'), h('div', null, state.error));
 }
@@ -4612,18 +4689,27 @@ if (!visible || !pdf || !width || !known) return undefined;
 const token = tokenRef.current + 1;
 tokenRef.current = token;
 let cancelled = false;
+let renderTask = null;
+let pageRef = null;
 (async () => {
 const page = await pdf.getPage(pageNumber);
+pageRef = page;
 if (cancelled || tokenRef.current !== token) return;
 const viewport = page.getViewport({ scale: known ? width / baseSize.width : 1 });
-const ratio = Math.min(3, window.devicePixelRatio || 1);
+const ratio = Math.min(2, window.devicePixelRatio || 1);
 const buffer = document.createElement('canvas');
 buffer.width = Math.max(1, Math.round(viewport.width * ratio));
 buffer.height = Math.max(1, Math.round(viewport.height * ratio));
 const bufferCtx = buffer.getContext('2d');
 if (!bufferCtx) return;
 bufferCtx.setTransform(ratio, 0, 0, ratio, 0, 0);
-await page.render({ canvasContext: bufferCtx, viewport }).promise;
+renderTask = page.render({ canvasContext: bufferCtx, viewport });
+try {
+await renderTask.promise;
+} catch (error) {
+if (cancelled || tokenRef.current !== token) return;
+throw error;
+}
 if (cancelled || tokenRef.current !== token) return;
 const canvas = canvasRef.current;
 if (!canvas) return;
@@ -4702,6 +4788,18 @@ setItems(glyphs);
 })().catch(() => setItems([]));
 return () => {
 cancelled = true;
+if (renderTask && typeof renderTask.cancel === 'function') {
+try {
+renderTask.cancel();
+} catch (error) {
+}
+}
+if (pageRef && typeof pageRef.cleanup === 'function') {
+try {
+pageRef.cleanup();
+} catch (error) {
+}
+}
 };
 }, [visible, pageNumber, width, pdf]);
 React.useEffect(() => {
@@ -4986,8 +5084,11 @@ const [drawn, setDrawn] = React.useState(false);
 React.useEffect(() => {
 if (drawn || !pdf) return undefined;
 let cancelled = false;
+let renderTask = null;
+let pageRef = null;
 (async () => {
 const page = await pdf.getPage(pageNumber);
+pageRef = page;
 const base = page.getViewport({ scale: 1 });
 const scale = width / base.width;
 const viewport = page.getViewport({ scale });
@@ -5001,11 +5102,24 @@ canvas.style.height = viewport.height + 'px';
 const context = canvas.getContext('2d');
 if (!context) return;
 context.setTransform(ratio, 0, 0, ratio, 0, 0);
-await page.render({ canvasContext: context, viewport }).promise;
+renderTask = page.render({ canvasContext: context, viewport });
+await renderTask.promise;
 if (!cancelled) setDrawn(true);
 })().catch(() => {});
 return () => {
 cancelled = true;
+if (renderTask && typeof renderTask.cancel === 'function') {
+try {
+renderTask.cancel();
+} catch (error) {
+}
+}
+if (pageRef && typeof pageRef.cleanup === 'function') {
+try {
+pageRef.cleanup();
+} catch (error) {
+}
+}
 };
 }, [pageNumber, pdf, width]);
 return h(
@@ -8005,6 +8119,21 @@ setState({ status: 'loading', url: '', error: '' });
 const load = async () => {
 const bytes = await readBytesFile(sessionId, doc.path, controller.signal);
 if (cancelled || !bytes) return;
+const oversized = imageTooLarge(bytes, doc.path);
+if (oversized) {
+setState({
+status: 'failed',
+url: '',
+error:
+'图片分辨率为 ' +
+Math.round(oversized / 1e6) +
+' 百万像素，超过预览上限（' +
+Math.round(MAX_IMAGE_PIXELS / 1e6) +
+' 百万像素）。可用图片编辑器缩小后查看。',
+});
+devlog('image-too-large', ['pixels=' + oversized]);
+return;
+}
 objectUrl = URL.createObjectURL(new Blob([bytes], { type: mimeOf(doc.path) }));
 setState({ status: 'ready', url: objectUrl, error: '' });
 devlog('image-ready', ['path=' + doc.path, 'bytes=' + (bytes.byteLength || bytes.length || 0)]);
@@ -8765,6 +8894,23 @@ cancelled = true;
 if (objectUrl) URL.revokeObjectURL(objectUrl);
 };
 }, [doc.path, native]);
+React.useEffect(() => {
+if (!state.url) return undefined;
+return () => {
+const node = videoRef.current;
+if (!node) return;
+try {
+node.pause();
+} catch (error) {
+}
+try {
+node.removeAttribute('src');
+node.srcObject = null;
+node.load();
+} catch (error) {
+}
+};
+}, [state.url]);
 const seek = store.seek;
 const lastSeekStamp = React.useRef(seek && seek.stamp ? seek.stamp : 0);
 React.useEffect(() => {

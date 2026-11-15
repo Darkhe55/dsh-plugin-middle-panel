@@ -5,8 +5,13 @@
       React.useEffect(() => {
         if (drawn || !pdf) return undefined;
         let cancelled = false;
+        // A thumbnail that scrolls out of the rail must stop rasterising, or a long
+        // document keeps one render task alive per page.
+        let renderTask = null;
+        let pageRef = null;
         (async () => {
           const page = await pdf.getPage(pageNumber);
+          pageRef = page;
           const base = page.getViewport({ scale: 1 });
           const scale = width / base.width;
           const viewport = page.getViewport({ scale });
@@ -20,11 +25,26 @@
           const context = canvas.getContext('2d');
           if (!context) return;
           context.setTransform(ratio, 0, 0, ratio, 0, 0);
-          await page.render({ canvasContext: context, viewport }).promise;
+          renderTask = page.render({ canvasContext: context, viewport });
+          await renderTask.promise;
           if (!cancelled) setDrawn(true);
         })().catch(() => {});
         return () => {
           cancelled = true;
+          if (renderTask && typeof renderTask.cancel === 'function') {
+            try {
+              renderTask.cancel();
+            } catch (error) {
+              /* already finished */
+            }
+          }
+          if (pageRef && typeof pageRef.cleanup === 'function') {
+            try {
+              pageRef.cleanup();
+            } catch (error) {
+              /* document may be destroyed */
+            }
+          }
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [pageNumber, pdf, width]);

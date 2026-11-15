@@ -36,7 +36,7 @@ check(view.includes('baseSize: pageSizes[pageNumber] || baseSize,'), '按页传�
 
 // —— 2. 位图双缓冲 ——
 check(page.includes("const buffer = document.createElement('canvas');"), '离屏缓冲画布');
-check(page.includes('await page.render({ canvasContext: bufferCtx, viewport }).promise;'), '渲染到缓冲');
+check(page.includes('renderTask = page.render({ canvasContext: bufferCtx, viewport });'), '渲染到缓冲');
 check(page.includes('canvas.width = buffer.width;'), '替换时才改尺寸');
 check(page.includes('ctx.drawImage(buffer, 0, 0);'), '一次性合成');
 check(!page.includes('setRenderedAt'), '不再维护无效的清晰度状态');

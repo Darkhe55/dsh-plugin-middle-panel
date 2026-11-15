@@ -31,7 +31,8 @@ check(view.includes('if (ratio > 0.35) setCurrent'), '当前页跟随滚动');
 // —— 缩略图侧栏 ——
 check(view.includes("className: 'dshcv-pdfthumbs'"), '有侧栏容器');
 check(view.includes('h(PdfThumb, {'), '逐页缩略图');
-check(thumb.includes('page.render({ canvasContext: context, viewport }).promise'), '缩略图真实渲染');
+check(thumb.includes('renderTask = page.render({ canvasContext: context, viewport });'), '缩略图真实渲染');
+check(thumb.includes('renderTask.cancel()'), '缩略图渲染可取消');
 check(thumb.includes('onClick: () => onPick(pageNumber)'), '点击缩略图跳页');
 check(has("'.dshcv-pdfthumb-on canvas{box-shadow:0 0 0 2px rgba(79,140,255,.95)"), '当前页高亮');
 

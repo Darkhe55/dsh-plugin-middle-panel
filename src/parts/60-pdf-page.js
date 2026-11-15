@@ -69,18 +69,32 @@
         const token = tokenRef.current + 1;
         tokenRef.current = token;
         let cancelled = false;
+        // pdf.js keeps rasterising until told otherwise; a stale render used to burn CPU
+        // even after the user scrolled away or zoomed.
+        let renderTask = null;
+        let pageRef = null;
         (async () => {
           const page = await pdf.getPage(pageNumber);
+          pageRef = page;
           if (cancelled || tokenRef.current !== token) return;
           const viewport = page.getViewport({ scale: known ? width / baseSize.width : 1 });
-          const ratio = Math.min(3, window.devicePixelRatio || 1);
+          // 2x is the point where extra pixels stop being visible and start costing memory.
+          const ratio = Math.min(2, window.devicePixelRatio || 1);
           const buffer = document.createElement('canvas');
           buffer.width = Math.max(1, Math.round(viewport.width * ratio));
           buffer.height = Math.max(1, Math.round(viewport.height * ratio));
           const bufferCtx = buffer.getContext('2d');
           if (!bufferCtx) return;
           bufferCtx.setTransform(ratio, 0, 0, ratio, 0, 0);
-          await page.render({ canvasContext: bufferCtx, viewport }).promise;
+          renderTask = page.render({ canvasContext: bufferCtx, viewport });
+          try {
+            await renderTask.promise;
+          } catch (error) {
+            // A cancelled render rejects with RenderingCancelledException; the token check
+            // below already decides whether the result is still wanted.
+            if (cancelled || tokenRef.current !== token) return;
+            throw error;
+          }
           if (cancelled || tokenRef.current !== token) return;
           const canvas = canvasRef.current;
           if (!canvas) return;
@@ -170,6 +184,21 @@ for (let index = 0; index < rawItems.length; index += 1) {
         })().catch(() => setItems([]));
         return () => {
           cancelled = true;
+          if (renderTask && typeof renderTask.cancel === 'function') {
+            try {
+              renderTask.cancel();
+            } catch (error) {
+              /* already finished */
+            }
+          }
+          // Release the page's own caches; the document fetches it again if needed.
+          if (pageRef && typeof pageRef.cleanup === 'function') {
+            try {
+              pageRef.cleanup();
+            } catch (error) {
+              /* document may be destroyed */
+            }
+          }
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [visible, pageNumber, width, pdf]);

@@ -4103,6 +4103,77 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
       return 'application/octet-stream';
     };
 
+    // A small file can still decode into gigabytes of pixels. Reading the dimensions out
+    // of the header is cheap, and lets us refuse before the browser allocates the raster.
+    const MAX_IMAGE_PIXELS = 40 * 1000 * 1000;
+    const imagePixelSize = (bytes) => {
+      if (!bytes || bytes.length < 24) return null;
+      const view = new DataView(bytes.buffer ? bytes.buffer : bytes, bytes.byteOffset || 0, Math.min(bytes.byteLength || bytes.length, 32));
+      const byteAt = (index) => (bytes[index] === undefined ? 0 : bytes[index]);
+      // PNG: IHDR carries width/height as big-endian 32-bit integers.
+      if (byteAt(0) === 0x89 && byteAt(1) === 0x50 && byteAt(2) === 0x4e && byteAt(3) === 0x47) {
+        return { width: view.getUint32(16), height: view.getUint32(20) };
+      }
+      // GIF: little-endian 16-bit dimensions right after the signature.
+      if (byteAt(0) === 0x47 && byteAt(1) === 0x49 && byteAt(2) === 0x46) {
+        return { width: byteAt(6) | (byteAt(7) << 8), height: byteAt(8) | (byteAt(9) << 8) };
+      }
+      // BMP: little-endian 32-bit dimensions in the info header.
+      if (byteAt(0) === 0x42 && byteAt(1) === 0x4d) {
+        return {
+          width: byteAt(18) | (byteAt(19) << 8) | (byteAt(20) << 16) | (byteAt(21) << 24),
+          height: Math.abs(byteAt(22) | (byteAt(23) << 8) | (byteAt(24) << 16) | (byteAt(25) << 24)),
+        };
+      }
+      // WebP: VP8X stores canvas size minus one; VP8/VP8L keep it in the frame header.
+      if (byteAt(0) === 0x52 && byteAt(1) === 0x49 && byteAt(2) === 0x46 && byteAt(8) === 0x57) {
+        if (byteAt(12) === 0x56 && byteAt(13) === 0x50 && byteAt(14) === 0x38 && byteAt(15) === 0x58) {
+          return {
+            width: 1 + (byteAt(24) | (byteAt(25) << 8) | (byteAt(26) << 16)),
+            height: 1 + (byteAt(27) | (byteAt(28) << 8) | (byteAt(29) << 16)),
+          };
+        }
+        if (byteAt(12) === 0x56 && byteAt(13) === 0x50 && byteAt(14) === 0x38 && byteAt(15) === 0x4c) {
+          const bits = byteAt(21) | (byteAt(22) << 8) | (byteAt(23) << 16) | (byteAt(24) << 24);
+          return { width: 1 + (bits & 0x3fff), height: 1 + ((bits >> 14) & 0x3fff) };
+        }
+      }
+      // JPEG: walk the marker segments until a start-of-frame carries the dimensions.
+      if (byteAt(0) === 0xff && byteAt(1) === 0xd8) {
+        const length = Math.min(bytes.byteLength || bytes.length, 64 * 1024);
+        let index = 2;
+        while (index + 9 < length) {
+          if (bytes[index] !== 0xff) {
+            index += 1;
+            continue;
+          }
+          const marker = bytes[index + 1];
+          if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+            index += 2;
+            continue;
+          }
+          const segment = (bytes[index + 2] << 8) | bytes[index + 3];
+          if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+            return {
+              height: (bytes[index + 5] << 8) | bytes[index + 6],
+              width: (bytes[index + 7] << 8) | bytes[index + 8],
+            };
+          }
+          if (segment < 2) return null;
+          index += 2 + segment;
+        }
+      }
+      return null;
+    };
+    // SVG scales without a raster budget; everything else is checked before decode.
+    const imageTooLarge = (bytes, path) => {
+      if (/\.svg$/i.test(String(path || ''))) return 0;
+      const size = imagePixelSize(bytes);
+      if (!size || !size.width || !size.height) return 0;
+      const pixels = size.width * size.height;
+      return pixels > MAX_IMAGE_PIXELS ? pixels : 0;
+    };
+
     // ---------------- html viewer with element picking ----------------
     // Injected into the preview document: element picking, the 0.5s dwell
     // spotlight, and animation freeze/scrub control (CSS, WAAPI and SMIL).
@@ -4392,6 +4463,27 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         window.addEventListener('message', onMessage);
         return () => window.removeEventListener('message', onMessage);
       }, [doc.path]);
+
+      // Closing or switching away stops the preview: pause its animation loop first, then
+      // detach the document so no scripts keep running behind the panel.
+      React.useEffect(() => {
+        if (state.status !== 'ready' || !state.url) return undefined;
+        return () => {
+          const frame = frameRef.current;
+          if (!frame) return;
+          try {
+            post('pause');
+          } catch (error) {
+            /* frame already gone */
+          }
+          try {
+            frame.src = 'about:blank';
+          } catch (error) {
+            /* already detached */
+          }
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [state.status, state.url]);
 
       if (state.status === 'failed') {
         return h('div', { className: 'dshcv-empty' }, h('div', null, '无法预览该 HTML'), h('div', null, state.error));

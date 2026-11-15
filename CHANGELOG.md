@@ -41,12 +41,23 @@
 - 新增 `resourceReport()`：文档数、标注数、缓存大小、持久化与重定位指标，只含计数不含正文。
 - `devlog` 改为由 `dsh.canvas.debug` 开关控制的 `console.debug` 出口，默认静默。
 
+### PDF / 视频 / 图片 / HTML 预览
+
+- PDF 页面与缩略图的 `page.render()` 任务在卸载、缩放或切换文件时 `cancel()`，并调用 `page.cleanup()` 释放页面缓存；此前渲染会在组件卸载后继续跑完。
+- PDF 页面与缩略图的 `devicePixelRatio` 同样封顶 2。
+- 视频卸载时 `pause()`、清空 `src` 与 `srcObject`、调用 `load()` 释放媒体管线；Object URL 仍按原路径释放。
+- 图片在解码前读取文件头判断像素尺寸（PNG / JPEG / GIF / WebP / BMP），超过 4000 万像素直接拒绝并说明原因，SVG 不受此限制；此前只检查压缩后字节数。
+- HTML 预览关闭时先发送 `pause` 停掉预览内的动画循环，再把 iframe 指向 `about:blank`，避免隐藏标签页里继续跑脚本。
+
 ### 测试
 
 - `test/persist-scheduler.test.cjs`：一万次变更只写一次、未变化不写、flush 只 stringify 一次、配额失败保留旧值且有界重试、无会话不写。
 - `test/frame-scheduler.test.cjs`：1000 次触发每帧只执行一次、可取消、超频只记一次。
 - `test/relocate-spot-chunk.test.cjs`：与旧同步算法结果一致、150 万三角形分片执行、中断后旧任务不提交、无标注不扫描。
 - `test/spot-relocate.test.cjs` 更新为异步调用，断言不变。
+- `test/image-pixels.test.cjs`：PNG/JPEG/GIF 尺寸解析、像素炸弹拒绝、SVG 不受限、未知格式不误判。
+- `test/viewer-cleanup.test.cjs`：视频 pause/清空 src/load()、PDF renderTask 取消与 page.cleanup、HTML iframe 卸载与 message 监听移除。
+- `test/pdf-canvas.test.cjs`、`test/pdf-multipage.test.cjs`、`test/pdf-zoom-stability.test.cjs` 同步到新的 renderTask 写法。
 
 ## 0.5.9（未发布）
 

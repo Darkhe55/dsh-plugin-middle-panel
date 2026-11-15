@@ -46,8 +46,9 @@ const pageStart = src.indexOf('function PdfPage(props) {');
 const pageEnd = src.indexOf('function PdfThumb(props) {');
 const page = src.slice(pageStart, pageEnd);
 check(page.includes("h('canvas', { ref: canvasRef, className: 'dshcv-pdfcanvas' })"), '页面渲染到 canvas');
-check(page.includes('const ratio = Math.min(3, window.devicePixelRatio || 1);'), '按 DPR 提清晰度');
-check(page.includes('await page.render({ canvasContext: bufferCtx, viewport }).promise;'), '调用 pdf.js 渲染到离屏缓冲');
+check(page.includes('const ratio = Math.min(2, window.devicePixelRatio || 1);'), '按 DPR 提清晰度（上限 2）');
+check(page.includes('renderTask = page.render({ canvasContext: bufferCtx, viewport });'), '调用 pdf.js 渲染到离屏缓冲');
+check(page.includes('renderTask.cancel()'), '渲染任务可在卸载时取消');
 check(body.includes('cMapUrl:'), '带上 cmaps');
 check(body.includes('standardFontDataUrl:'), '带上标准字体');
 
