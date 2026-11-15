@@ -2550,6 +2550,50 @@ h(
     }
 
     // ---------------- image viewer with region / layer picking ----------------
+    // Ctrl (Cmd) + wheel on the image stage. Kept as a factory so the behaviour (one step
+    // per frame, pointer anchor, cleanup) can be exercised without a browser DOM.
+    const attachImageZoom = (node, deps) => {
+      let frame = 0;
+      let factor = 1;
+      let anchor = null;
+      const apply = () => {
+        frame = 0;
+        const step = factor;
+        factor = 1;
+        if (step === 1 || !anchor) return;
+        const rect = node.getBoundingClientRect();
+        const offsetX = anchor.x - rect.left;
+        const offsetY = anchor.y - rect.top;
+        const current = deps.getZoom();
+        const next = Math.min(4, Math.max(0.25, Math.round(current * step * 100) / 100));
+        if (next === current) return;
+        // Content point under the cursor, in unscaled image coordinates.
+        const contentX = (node.scrollLeft + offsetX) / current;
+        const contentY = (node.scrollTop + offsetY) / current;
+        deps.setPendingScroll({
+          left: Math.max(0, contentX * next - offsetX),
+          top: Math.max(0, contentY * next - offsetY),
+        });
+        deps.setZoom(next);
+      };
+      const onWheel = (event) => {
+        if (!event.ctrlKey && !event.metaKey) return;
+        if (typeof event.preventDefault === 'function') event.preventDefault();
+        // Keep the viewport coordinates; apply() subtracts the box origin once.
+        anchor = { x: event.clientX, y: event.clientY };
+        // One physical gesture emits many events: fold them into a single step per frame.
+        factor *= event.deltaY < 0 ? 1.1 : 1 / 1.1;
+        if (!frame) frame = deps.requestFrame(apply);
+      };
+      node.addEventListener('wheel', onWheel, { passive: false });
+      return () => {
+        if (frame) deps.cancelFrame(frame);
+        frame = 0;
+        deps.setPendingScroll(null);
+        node.removeEventListener('wheel', onWheel);
+      };
+    };
+
     function ImageDoc(props) {
       const { doc, sessionId } = props;
       const [state, setState] = React.useState({ status: 'idle', url: '', error: '' });
@@ -2616,50 +2660,27 @@ h(
       // Ctrl (Cmd) + wheel zooms the picture, like the PDF viewer. React binds wheel
       // passively, so the listener is native: that is also what lets us stop the browser
       // from zooming the whole application instead.
-      React.useEffect(() => {
-        const node = scrollRef.current;
-        if (!node) return undefined;
-        let frame = 0;
-        let factor = 1;
-        let anchor = null;
-        const apply = () => {
-          frame = 0;
-          const step = factor;
-          factor = 1;
-          if (step === 1 || !anchor) return;
-          const rect = node.getBoundingClientRect();
-          const offsetX = anchor.x - rect.left;
-          const offsetY = anchor.y - rect.top;
-          const current = zoomRef.current;
-          const next = Math.min(4, Math.max(0.25, Math.round(current * step * 100) / 100));
-          if (next === current) return;
-          // Content point under the cursor, in unscaled image coordinates.
-          const contentX = (node.scrollLeft + offsetX) / current;
-          const contentY = (node.scrollTop + offsetY) / current;
-          pendingScroll.current = {
-            left: Math.max(0, contentX * next - offsetX),
-            top: Math.max(0, contentY * next - offsetY),
-          };
-          setZoom(next);
-        };
-        const onWheel = (event) => {
-          if (!event.ctrlKey && !event.metaKey) return;
-          event.preventDefault();
-          const rect = node.getBoundingClientRect();
-          anchor = { x: event.clientX - rect.left, y: event.clientY - rect.top };
-          // One physical gesture emits many events: fold them into a single step per frame.
-          factor *= event.deltaY < 0 ? 1.1 : 1 / 1.1;
-          if (!frame) frame = requestAnimationFrame(apply);
-        };
-        node.addEventListener('wheel', onWheel, { passive: false });
-        return () => {
-          if (frame) {
-            cancelAnimationFrame(frame);
-            frame = 0;
-          }
-          pendingScroll.current = null;
-          node.removeEventListener('wheel', onWheel);
-        };
+      //
+      // It is installed from a callback ref rather than an effect: the scroll container is
+      // only rendered once the picture is ready, so an effect that read the ref on mount
+      // found null and never attached anything.
+      const wheelCleanup = React.useRef(null);
+      const attachScroll = React.useCallback((node) => {
+        if (wheelCleanup.current) {
+          wheelCleanup.current();
+          wheelCleanup.current = null;
+        }
+        scrollRef.current = node || null;
+        if (!node) return;
+        wheelCleanup.current = attachImageZoom(node, {
+          getZoom: () => zoomRef.current,
+          setZoom: (value) => setZoom(value),
+          setPendingScroll: (value) => {
+            pendingScroll.current = value;
+          },
+          requestFrame: (fn) => requestAnimationFrame(fn),
+          cancelFrame: (id) => cancelAnimationFrame(id),
+        });
       }, []);
 
       // The scroll correction lands after the scaled layout is committed, otherwise it
@@ -2998,7 +3019,7 @@ h(
         ),
         h(
           'div',
-          { className: 'dshcv-scroll', style: { position: 'relative' }, ref: scrollRef },
+          { className: 'dshcv-scroll', style: { position: 'relative' }, ref: attachScroll },
           h(
             'div',
             {
