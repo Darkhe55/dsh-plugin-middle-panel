@@ -1,4 +1,7 @@
-    function EmbeddedPdfDoc(props) {
+    // One 3D viewport must not allocate more than this many backing-store pixels.
+const MAX_CANVAS_PIXELS = 4096 * 1024;
+
+function EmbeddedPdfDoc(props) {
       const { doc, sessionId } = props;
       const [state, setState] = React.useState({ status: 'idle', url: '', size: 0, error: '', pages: 0, aspect: 0 });
       const [page, setPage] = React.useState(1);
@@ -1421,8 +1424,13 @@
           /* best effort */
         }
 
+        // GPU objects are owned by this effect and deleted in its cleanup. Without the
+        // bookkeeping, every option change leaked two programs and their shaders.
+        const createdShaders = [];
+        const createdPrograms = [];
         const compile = (type, source) => {
           const shader = gl.createShader(type);
+          createdShaders.push(shader);
           gl.shaderSource(shader, source);
           gl.compileShader(shader);
           if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(shader) || '着色器编译失败');
@@ -1430,6 +1438,7 @@
         };
         const link = (vertexSource, fragmentSource) => {
           const program = gl.createProgram();
+          createdPrograms.push(program);
           gl.attachShader(program, compile(gl.VERTEX_SHADER, vertexSource));
           gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fragmentSource));
           gl.linkProgram(program);
@@ -1524,9 +1533,13 @@
         const identity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
         const render = () => {
-          const ratio = window.devicePixelRatio || 1;
+          // Past 2x the extra pixels cost fill rate without looking better, and a large
+          // canvas at 3x is a real memory hit on integrated GPUs.
+          const dpr = window.devicePixelRatio || 1;
           const width = canvas.clientWidth || 1;
           const height = canvas.clientHeight || 1;
+          const budget = Math.sqrt(MAX_CANVAS_PIXELS / Math.max(1, width * height));
+          const ratio = Math.max(0.5, Math.min(2, dpr, budget));
           if (canvas.width !== Math.round(width * ratio) || canvas.height !== Math.round(height * ratio)) {
             canvas.width = Math.round(width * ratio);
             canvas.height = Math.round(height * ratio);
@@ -1884,6 +1897,23 @@
           gl.deleteBuffer(solidBuffer);
           if (lineBuffer) gl.deleteBuffer(lineBuffer);
           gl.deleteBuffer(axisBuffer);
+          // Programs and their shaders belong to this effect too; detach and delete them.
+          for (const program of createdPrograms) {
+            try {
+              gl.deleteProgram(program);
+            } catch {
+              /* context may already be gone */
+            }
+          }
+          for (const shader of createdShaders) {
+            try {
+              gl.deleteShader(shader);
+            } catch {
+              /* context may already be gone */
+            }
+          }
+          // The canvas is unmounted with the panel, so its backing store is released by
+          // the DOM; the context itself is reused on re-render and must not be lost here.
         };
       }, [state.status, options, doc.path]);
 

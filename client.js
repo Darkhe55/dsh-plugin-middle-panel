@@ -5570,6 +5570,7 @@ h(EmbeddedPdfDoc, props),
 }
 return h(PdfCanvasDoc, Object.assign({}, props, { onFail: (error) => setFallback(error || 'pdf.js 不可用') }));
 }
+const MAX_CANVAS_PIXELS = 4096 * 1024;
 function EmbeddedPdfDoc(props) {
 const { doc, sessionId } = props;
 const [state, setState] = React.useState({ status: 'idle', url: '', size: 0, error: '', pages: 0, aspect: 0 });
@@ -6908,8 +6909,11 @@ const maxAttributes = gl.getParameter(gl.MAX_VERTEX_ATTRIBS) || 8;
 for (let index = 0; index < maxAttributes; index += 1) gl.disableVertexAttribArray(index);
 } catch {
 }
+const createdShaders = [];
+const createdPrograms = [];
 const compile = (type, source) => {
 const shader = gl.createShader(type);
+createdShaders.push(shader);
 gl.shaderSource(shader, source);
 gl.compileShader(shader);
 if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(shader) || '着色器编译失败');
@@ -6917,6 +6921,7 @@ return shader;
 };
 const link = (vertexSource, fragmentSource) => {
 const program = gl.createProgram();
+createdPrograms.push(program);
 gl.attachShader(program, compile(gl.VERTEX_SHADER, vertexSource));
 gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fragmentSource));
 gl.linkProgram(program);
@@ -6996,9 +7001,11 @@ lines: { position: gl.getAttribLocation(lines, 'aPosition') },
 };
 const identity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 const render = () => {
-const ratio = window.devicePixelRatio || 1;
+const dpr = window.devicePixelRatio || 1;
 const width = canvas.clientWidth || 1;
 const height = canvas.clientHeight || 1;
+const budget = Math.sqrt(MAX_CANVAS_PIXELS / Math.max(1, width * height));
+const ratio = Math.max(0.5, Math.min(2, dpr, budget));
 if (canvas.width !== Math.round(width * ratio) || canvas.height !== Math.round(height * ratio)) {
 canvas.width = Math.round(width * ratio);
 canvas.height = Math.round(height * ratio);
@@ -7322,6 +7329,18 @@ if (attributes.lines.position >= 0) gl.disableVertexAttribArray(attributes.lines
 gl.deleteBuffer(solidBuffer);
 if (lineBuffer) gl.deleteBuffer(lineBuffer);
 gl.deleteBuffer(axisBuffer);
+for (const program of createdPrograms) {
+try {
+gl.deleteProgram(program);
+} catch {
+}
+}
+for (const shader of createdShaders) {
+try {
+gl.deleteShader(shader);
+} catch {
+}
+}
 };
 }, [state.status, options, doc.path]);
 React.useEffect(() => {
