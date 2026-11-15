@@ -1588,7 +1588,7 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
       '.dshcv-docs{display:flex;align-items:center;gap:2px;padding:6px 10px;border-bottom:1px solid var(--dsw-alias-border-l1);overflow-x:auto}',
       '.dshcv-crumbs{display:flex;align-items:center;gap:2px;min-width:0;flex:1 1 auto;overflow-x:auto}',
       // The picker toolbar keeps its path crumbs scrollable and the remember switch fixed.
-      '.dshcv-tools>.dshcv-chip{flex:0 0 auto;margin-left:auto}',
+      '.dshcv-tools>.dshcv-toggle{flex:0 0 auto;margin-left:auto}',
       '.dshcv-row{display:flex;align-items:center;gap:8px;width:100%;height:28px;padding:0 10px;border:0;border-radius:7px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;text-align:left;cursor:pointer}',
       '.dshcv-row:hover{background:var(--dsw-alias-bg-layer-2)}',
       '.dshcv-rowname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
@@ -1963,13 +1963,14 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
             'button',
             {
               type: 'button',
-              className: 'dshcv-chip',
-              'data-active': remember ? '1' : '0',
-              title: remember ? '下次打开回到这个目录（点击关闭）' : '记住当前目录，下次打开直接回到这里',
+              // Same red/green switch the 3D view uses: the hue carries the state, so the
+              // label stays constant instead of switching to a tick.
+              className: 'dshcv-toggle',
               'aria-pressed': remember ? 'true' : 'false',
+              title: remember ? '下次打开回到这个目录（点击关闭）' : '记住当前目录，下次打开直接回到这里',
               onClick: toggleRemember,
             },
-            remember ? '✓ 记住路径' : '记住路径',
+            '记住路径',
           ),
         ),
         h(

@@ -35,8 +35,9 @@ check(/const \[remember, setRemember\] = React\.useState\(\(\) => pickerRemember
 check(/const toggleRemember = \(\) =>/.test(src), '有切换函数');
 check(/if \(next\) writePickerPath\(sessionId, state\.path \|\| ''\)/.test(src), '打开开关时立刻记录当前目录');
 check(/'aria-pressed': remember \? 'true' : 'false'/.test(src), '开关有无障碍状态');
-check(/remember \? '✓ 记住路径' : '记住路径'/.test(src), '开关有可见文字状态');
-check(/\.dshcv-tools>\.dshcv-chip\{flex:0 0 auto;margin-left:auto\}/.test(src), '开关固定在工具栏右侧');
+check(/className: 'dshcv-toggle'/.test(src), '沿用红绿开关样式');
+check(/'记住路径',/.test(src), '标签固定，状态由颜色表达');
+check(/\.dshcv-tools>\.dshcv-toggle\{flex:0 0 auto;margin-left:auto\}/.test(src), '开关固定在工具栏右侧');
 
 if (failures) {
   console.log('失败 ' + failures + ' 项');
