@@ -1764,7 +1764,12 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
       '.dshcv-chip[data-active="1"]{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}',
       '.dshcv-layers{display:inline-flex;gap:4px;flex-wrap:wrap;align-items:center;max-width:100%}',
       '.dshcv-chip[data-on="0"]{opacity:.45;text-decoration:line-through}',
-      '.dshcv-help{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:60;min-width:300px;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l1);border-radius:12px;padding:14px 18px;box-shadow:0 18px 48px rgba(0,0,0,.3);font-size:12px;line-height:2}',
+      '.dshcv-help{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:60;min-width:300px;max-width:min(460px,calc(100% - 32px));max-height:calc(100% - 32px);overflow:auto;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l1);border-radius:12px;padding:14px 18px;box-shadow:0 18px 48px rgba(0,0,0,.3);font-size:12px;line-height:2}',
+      // The close affordance stays visible while the list scrolls, and the backdrop
+      // closes on click so the help is escapable even when the panel does not own the keys.
+      '.dshcv-helpbackdrop{position:absolute;inset:0;z-index:59;background:color-mix(in srgb,var(--dsw-alias-bg-base) 55%,transparent)}',
+      '.dshcv-helphead{position:sticky;top:-14px;display:flex;align-items:center;gap:10px;margin:-14px -18px 6px;padding:12px 18px 8px;background:var(--dsw-alias-bg-overlay);border-bottom:1px solid var(--dsw-alias-border-l1);font-weight:600}',
+      '.dshcv-helphead>span{flex:1 1 auto}',
       '.dshcv-help kbd{display:inline-block;min-width:52px;padding:0 6px;border-radius:5px;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l1);font:inherit;text-align:center;margin-right:8px}',
       '.dshcv-search{display:inline-flex;align-items:center;gap:6px}',
       '.dshcv-searchinput{height:24px;width:140px;padding:0 8px;border-radius:7px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;outline:none}',

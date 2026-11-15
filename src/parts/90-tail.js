@@ -5261,10 +5261,42 @@ function CanvasPanel(props) {      useVersion();
         toast ? h('div', { className: 'dshcv-toast dshcv-toast-2' }, toast) : null,
         helpOpen
           ? h(
-              'div',
-              { className: 'dshcv-help' },
-              h('div', { style: { fontWeight: 600, marginBottom: 4 } }, '快捷键'),
-              ...[
+              React.Fragment,
+              { key: 'help-layer' },
+              // A click outside the card dismisses it, so closing never depends on the
+              // panel owning the keyboard.
+              h('div', {
+                className: 'dshcv-helpbackdrop',
+                key: 'help-backdrop',
+                onClick: () => setHelpOpen(false),
+              }),
+              h(
+                'div',
+                {
+                  className: 'dshcv-help',
+                  key: 'help',
+                  role: 'dialog',
+                  'aria-label': '快捷键帮助',
+                  'aria-modal': 'true',
+                },
+                h(
+                  'div',
+                  { className: 'dshcv-helphead' },
+                  h('span', null, '快捷键'),
+                  h(
+                    'button',
+                    {
+                      type: 'button',
+                      className: 'dshcv-btn',
+                      'data-kind': 'quiet',
+                      title: '关闭帮助（Esc 或 ?）',
+                      'aria-label': '关闭帮助',
+                      onClick: () => setHelpOpen(false),
+                    },
+                    '关闭',
+                  ),
+                ),
+                ...[
                 ['Alt+S', '暂停 / 继续（单手，悬停面板即可）'],
                 ['Alt+A / Alt+D', '后退 / 前进一帧（Shift 为 100ms）'],
                 ['← →', '逐帧步进（备用，Shift 为 100ms）'],
@@ -5307,6 +5339,7 @@ function CanvasPanel(props) {      useVersion();
                   },
                   injectScriptAllowed() ? '预览注入标注脚本：开' : '预览注入标注脚本：关',
                 ),
+              ),
               ),
             )
           : null,
