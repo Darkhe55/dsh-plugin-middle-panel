@@ -234,6 +234,12 @@
         node.addEventListener("wheel", onWheel, { passive: false });
         return () => {
           token += 1;
+          // Cancel the pending zoom frame as well: an unmounted viewer must not run one
+          // more state update, and the closure must not keep the scroll node alive.
+          if (frame) {
+            window.cancelAnimationFrame(frame);
+            frame = 0;
+          }
           node.removeEventListener("wheel", onWheel);
         };
       }, []);

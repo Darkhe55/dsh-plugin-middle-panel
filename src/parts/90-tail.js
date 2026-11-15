@@ -394,6 +394,9 @@
         if (!sessionId) return undefined;
         const controller = new AbortController();
         let cancelled = false;
+        // The .ai branch hands a blob URL to the viewer; the effect owns it and revokes
+        // it on switch or unmount, since nothing else can free it.
+        let aiUrl = '';
         setState({ status: 'loading', error: '', mode: '', bitmap: null, outline: [], info: '' });
         const match = /\.([a-z0-9]+)$/i.exec(doc.path);
         const extension = match ? match[1].toLowerCase() : '';
@@ -419,7 +422,12 @@
                 throw new Error('该 .ai 不含 PDF 兼容数据（可能是纯 EPS），请另存为 PDF 后再预览');
               }
               const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
-              if (cancelled) return;
+              if (cancelled) {
+                // The effect already ran its cleanup; nobody else would free this URL.
+                URL.revokeObjectURL(url);
+                return;
+              }
+              aiUrl = url;
               setState({ status: 'ready', error: '', mode: 'pdf', bitmap: null, outline: [], info: url });
               return;
             }
@@ -439,6 +447,10 @@
         return () => {
           cancelled = true;
           controller.abort();
+          if (aiUrl) {
+            URL.revokeObjectURL(aiUrl);
+            aiUrl = '';
+          }
         };
       }, [doc.path, sessionId]);
 
@@ -4399,6 +4411,8 @@ function CanvasPanel(props) {      useVersion();
           }
         };
 
+        const scheduleContent = perFrame(onContent, 'content');
+
         const attach = (next) => {
           if (!next || !next.isConnected || next === area) return;
           if (area) {
@@ -4415,7 +4429,9 @@ function CanvasPanel(props) {      useVersion();
           area.addEventListener('touchstart', markUserScroll, { passive: true });
           area.addEventListener('pointerdown', markUserScroll, { passive: true });
           area.addEventListener('keydown', markUserScroll);
-          contentObserver = new MutationObserver(onContent);
+          contentObserver = new MutationObserver(scheduleContent);
+          // Streamed text needs characterData, but the subtree stays on the scroller
+          // instead of the whole document.
           contentObserver.observe(area, { childList: true, subtree: true, characterData: true });
           following = true;
           pinToBottom();
@@ -4460,9 +4476,34 @@ function CanvasPanel(props) {      useVersion();
         };
         apply();
         const timer = setTimeout(apply, 600);
-        const observer = new MutationObserver(apply);
+        // The host mutates on every streamed token, so the structural pass is coalesced
+        // to one per frame and skipped entirely when nothing it depends on moved.
+        const scheduleApply = perFrame((() => {
+          let lastScroller = null;
+          let lastNext = null;
+          let lastSeat = null;
+          let lastHeight = -1;
+          return () => {
+            const scroller = host.querySelector('[data-conversation-scroll]');
+            const seat = host.querySelector('[data-composer-seat]');
+            const view = scroller ? scroller.querySelector('[data-slot="conversation.session"]') : null;
+            const next = view && view.firstElementChild ? view.firstElementChild : null;
+            const height = seat ? seat.offsetHeight : 0;
+            if (scroller === lastScroller && next === lastNext && seat === lastSeat && Math.abs(height - lastHeight) <= 1) {
+              return;
+            }
+            lastScroller = scroller;
+            lastNext = next;
+            lastSeat = seat;
+            lastHeight = height;
+            apply();
+          };
+        })(), 'bridge');
+        const observer = new MutationObserver(scheduleApply);
         observer.observe(host, { childList: true, subtree: true });
         return () => {
+          scheduleApply.cancel();
+          scheduleContent.cancel();
           observer.disconnect();
           clearTimeout(timer);
           if (seatObserver) seatObserver.disconnect();
@@ -4841,6 +4882,25 @@ function CanvasPanel(props) {      useVersion();
                 minWidth: 0,
               },
             },
+            // Storage trouble is reported in place, and dismissing it only hides the
+            // message: the marks behind it stay exactly as they were.
+            store.storageIssue
+              ? h(
+                  'div',
+                  { className: 'dshcv-notice', key: 'storage-issue', role: 'status' },
+                  h('span', null, store.storageIssue),
+                  h(
+                    'button',
+                    {
+                      type: 'button',
+                      className: 'dshcv-btn',
+                      'data-kind': 'quiet',
+                      onClick: () => mutate({ storageIssue: '' }),
+                    },
+                    '知道了',
+                  ),
+                )
+              : null,
             store.docs.length
               ? h(
                   'div',

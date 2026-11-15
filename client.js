@@ -44,10 +44,30 @@ const absolute = isAbsolutePath(a) ? a : b;
 const relative = isAbsolutePath(a) ? b : a;
 return absolute.endsWith('/' + relative);
 };
-const devlog = () => {};
+const devlogState = { on: false };
+try {
+devlogState.on = localStorage.getItem('dsh.canvas.debug') === '1';
+} catch {
+}
+const devlog = (...args) => {
+if (!devlogState.on) return;
+try {
+console.debug('[canvas]', ...args);
+} catch {
+}
+};
 const listeners = new Set();
 let version = 0;
 const autoOpened = new Set();
+const AUTO_OPENED_LIMIT = 200;
+const rememberAutoOpened = (key) => {
+autoOpened.add(key);
+while (autoOpened.size > AUTO_OPENED_LIMIT) {
+const oldest = autoOpened.values().next().value;
+if (oldest === undefined) break;
+autoOpened.delete(oldest);
+}
+};
 const store = {
 sessionId: undefined,
 actions: undefined,
@@ -61,12 +81,44 @@ seq: 0,
 restored: false,
 reportedBridge: false,
 reportedBlock: false,
+storageIssue: '',
 flash: '',
 };
 const notify = () => {
 version += 1;
 for (const listener of Array.from(listeners)) listener();
-};    const subscribe = (listener) => {
+};
+const perFrame = (run, label) => {
+let frame = 0;
+let calls = 0;
+let windowStart = Date.now();
+let reported = false;
+const schedule = () => {
+calls += 1;
+const now = Date.now();
+if (now - windowStart >= 1000) {
+if (calls > 240 && !reported) {
+reported = true;
+devlog('observer-rate', [label + '=' + calls + '/s']);
+}
+calls = 0;
+windowStart = now;
+}
+if (frame) return;
+frame = requestAnimationFrame(() => {
+frame = 0;
+run();
+});
+};
+schedule.cancel = () => {
+if (frame) {
+cancelAnimationFrame(frame);
+frame = 0;
+}
+};
+return schedule;
+};
+const subscribe = (listener) => {
 listeners.add(listener);
 return () => listeners.delete(listener);
 };
@@ -77,12 +129,23 @@ notify();
 };
 const storageKey = () => STORAGE_PREFIX + (store.sessionId || 'none');
 const fileVersions = new Map();
+const FILE_VERSION_LIMIT = 400;
 const noteFileVersion = (path, version) => {
 const key = pathKey(path);
 const stamp = Number(version) || 0;
 if (!key || !stamp) return;
 if (fileVersions.get(key) === stamp) return;
 fileVersions.set(key, stamp);
+if (fileVersions.size > FILE_VERSION_LIMIT) {
+const keep = new Set();
+for (const doc of store.docs) keep.add(pathKey(doc.path));
+for (const mark of store.marks) keep.add(pathKey(mark.path));
+for (const existing of Array.from(fileVersions.keys())) {
+if (fileVersions.size <= FILE_VERSION_LIMIT) break;
+if (!keep.has(existing)) fileVersions.delete(existing);
+}
+devlog('file-versions-evicted', [String(fileVersions.size)]);
+}
 notify();
 };
 const fileVersionOf = (path) => fileVersions.get(pathKey(path)) || 0;
@@ -172,22 +235,169 @@ if (mark.spotStale) return true;
 const current = fileVersionOf(mark.path);
 return Boolean(mark.mtimeMs && current && Math.abs(mark.mtimeMs - current) > 1);
 };
-const persist = () => {
-try {
-localStorage.setItem(
-storageKey(),
-JSON.stringify({
+const PERSIST_QUIET_MS = 350;
+const PERSIST_MAX_WAIT_MS = 2500;
+const PERSIST_MAX_RETRIES = 3;
+const PERSIST_RESTORE_LIMIT = 4 * 1024 * 1024;
+const markLimit = { max: 5000 };
+const persistMetrics = {
+revision: 0,
+writes: 0,
+skipped: 0,
+coalesced: 0,
+serializedBytes: 0,
+stringifyDurationMs: 0,
+writeDurationMs: 0,
+pending: false,
+lastError: '',
+retryCount: 0,
+};
+let persistTimer = null;
+let persistQueuedAt = 0;
+let persistDigest = '';
+let persistErrorAt = 0;
+const clock = () => (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now());
+const persistSnapshot = () => ({
 docs: store.docs,
 activeId: store.activeId,
 marks: store.marks,
 seq: store.seq,
 split: splitState(),
 splitFocus: store.splitFocus,
-}),
-);
+});
+const writePersisted = () => {
+if (!store.sessionId) return;
+let text;
+const stringifyAt = clock();
+try {
+text = JSON.stringify(persistSnapshot());
 } catch (error) {
-devlog('persist-failed', [errText(error)]);
+persistMetrics.lastError = 'stringify: ' + errText(error);
+devlog('persist-failed', [persistMetrics.lastError]);
+return;
 }
+persistMetrics.stringifyDurationMs = Math.round(clock() - stringifyAt);
+if (text === persistDigest) {
+persistMetrics.skipped += 1;
+return;
+}
+const writeAt = clock();
+try {
+localStorage.setItem(storageKey(), text);
+persistDigest = text;
+persistMetrics.revision += 1;
+persistMetrics.writes += 1;
+persistMetrics.serializedBytes = text.length;
+persistMetrics.retryCount = 0;
+persistMetrics.lastError = '';
+persistErrorAt = 0;
+} catch (error) {
+persistMetrics.lastError = errText(error);
+persistMetrics.retryCount += 1;
+persistErrorAt = Date.now();
+devlog('persist-failed', [persistMetrics.lastError, 'retry=' + persistMetrics.retryCount]);
+if (persistMetrics.retryCount <= PERSIST_MAX_RETRIES) {
+const backoff = 500 * Math.pow(2, persistMetrics.retryCount - 1);
+if (persistTimer) clearTimeout(persistTimer);
+persistMetrics.pending = true;
+persistTimer = setTimeout(() => {
+persistTimer = null;
+persistMetrics.pending = false;
+writePersisted();
+}, backoff);
+}
+} finally {
+persistMetrics.writeDurationMs = Math.round(clock() - writeAt);
+}
+};
+const flushPersist = () => {
+if (persistTimer) {
+clearTimeout(persistTimer);
+persistTimer = null;
+}
+persistMetrics.pending = false;
+persistQueuedAt = 0;
+writePersisted();
+};
+const persist = () => {
+persistMetrics.coalesced += 1;
+if (!store.sessionId) return;
+const now = Date.now();
+if (!persistQueuedAt) persistQueuedAt = now;
+const waited = now - persistQueuedAt;
+const delay = Math.max(0, Math.min(PERSIST_QUIET_MS, PERSIST_MAX_WAIT_MS - waited));
+if (persistTimer) clearTimeout(persistTimer);
+persistMetrics.pending = true;
+persistTimer = setTimeout(() => {
+persistTimer = null;
+persistMetrics.pending = false;
+persistQueuedAt = 0;
+writePersisted();
+}, delay);
+};
+if (typeof window !== 'undefined' && window.addEventListener) {
+window.addEventListener('pagehide', flushPersist);
+if (typeof document !== 'undefined' && document.addEventListener) {
+document.addEventListener('visibilitychange', () => {
+if (document.visibilityState === 'hidden') flushPersist();
+});
+}
+}
+const restoreBounds = { docs: 200, marks: markLimit.max, quote: 4000, path: 1024, note: 20000 };
+const resourceReport = () => ({
+docs: store.docs.length,
+marks: store.marks.length,
+fileVersions: fileVersions.size,
+autoOpened: autoOpened.size,
+persist: {
+revision: persistMetrics.revision,
+writes: persistMetrics.writes,
+skipped: persistMetrics.skipped,
+coalesced: persistMetrics.coalesced,
+serializedBytes: persistMetrics.serializedBytes,
+stringifyDurationMs: persistMetrics.stringifyDurationMs,
+writeDurationMs: persistMetrics.writeDurationMs,
+pending: persistMetrics.pending,
+retryCount: persistMetrics.retryCount,
+lastError: persistMetrics.lastError,
+},
+relocation: {
+runs: relocationMetrics.runs,
+scannedTriangles: relocationMetrics.scannedTriangles,
+totalTriangles: relocationMetrics.totalTriangles,
+elapsedMs: relocationMetrics.elapsedMs,
+cancelled: relocationMetrics.cancelled,
+matched: relocationMetrics.matched,
+lastSliceMs: relocationMetrics.lastSliceMs,
+},
+storageIssue: Boolean(store.storageIssue),
+});
+const pressure = { docsWarn: 12, docsHard: 24, marksWarn: 1500, marksHard: markLimit.max, once: new Set() };
+const noteOnce = (key, message) => {
+if (pressure.once.has(key)) return;
+pressure.once.add(key);
+devlog('pressure', [key, message]);
+};
+const pressureState = () => {
+const docs = store.docs.length;
+const marks = store.marks.length;
+if (marks >= pressure.marksWarn) noteOnce('marks-warn', String(marks));
+if (docs >= pressure.docsWarn) noteOnce('docs-warn', String(docs));
+return {
+docs,
+marks,
+docsHard: docs >= pressure.docsHard,
+docsWarn: docs >= pressure.docsWarn,
+marksHard: marks >= pressure.marksHard,
+marksWarn: marks >= pressure.marksWarn,
+};
+};
+const restoreIssue = (rawLength) => {
+store.storageIssue =
+'本地状态过大（' +
+Math.round(rawLength / 1024) +
+' KB），已跳过加载以免卡顿。原有数据未被删除，请先导出或清理后再打开面板。';
+devlog('restore-too-large', [String(rawLength)]);
 };
 const dedupeDocs = (docs) => {
 const kept = [];
@@ -213,9 +423,31 @@ store.restored = true;
 try {
 const raw = localStorage.getItem(storageKey());
 if (!raw) return;
+if (raw.length > PERSIST_RESTORE_LIMIT) {
+restoreIssue(raw.length);
+return;
+}
 const data = JSON.parse(raw);
-if (Array.isArray(data.docs)) store.docs = dedupeDocs(data.docs);
-if (Array.isArray(data.marks)) store.marks = dedupeMarks(data.marks);
+const docsOk = Array.isArray(data.docs) ? data.docs.filter((doc) => doc && typeof doc.path === 'string' && doc.path.length <= restoreBounds.path) : [];
+const marksOk = Array.isArray(data.marks)
+? data.marks.filter(
+(mark) =>
+mark &&
+typeof mark.path === 'string' &&
+mark.path.length <= restoreBounds.path &&
+(!mark.quote || String(mark.quote).length <= restoreBounds.quote) &&
+(!mark.note || String(mark.note).length <= restoreBounds.note),
+)
+: [];
+if (Array.isArray(data.docs) && docsOk.length === data.docs.length) store.docs = dedupeDocs(docsOk);
+else store.docs = dedupeDocs(docsOk);
+store.marks = dedupeMarks(marksOk);
+if (docsOk.length > restoreBounds.docs) {
+store.storageIssue = '打开的文档较多（' + docsOk.length + ' 个），可能影响性能；可关闭部分标签。';
+}
+if (marksOk.length > restoreBounds.marks) {
+store.storageIssue = '标注数量已超过上限（' + marksOk.length + '/' + restoreBounds.marks + '），仍全部保留，但不会再新增。';
+}
 if (typeof data.activeId === 'string') store.activeId = data.activeId;
 if (data.split && typeof data.split === 'object') {
 store.split = {
@@ -408,6 +640,12 @@ persist();
 devlog('mark-reused', ['n=' + existing.n]);
 return existing.n;
 }
+if (store.marks.length >= markLimit.max) {
+store.storageIssue = '标注数量已达上限（' + markLimit.max + '），本次没有新增。请先导出或清理一部分。';
+notify();
+devlog('mark-limit', [String(store.marks.length)]);
+return 0;
+}
 const highest = store.marks.reduce((max, candidate) => Math.max(max, Number(candidate.n) || 0), 0);
 const n = highest + 1;
 const created = Object.assign({ id: 'm' + Date.now().toString(36) + n, n, note: '' }, mark);
@@ -490,56 +728,129 @@ persist();
 devlog('marks-relocated', ['count=' + changed]);
 }
 };
-const relocateSpotMarks = (path, positions, radius) => {
-if (!positions || !positions.length) return;
+const relocationMetrics = {
+runs: 0,
+scannedTriangles: 0,
+totalTriangles: 0,
+elapsedMs: 0,
+cancelled: 0,
+matched: 0,
+lastSliceMs: 0,
+};
+const RELOCATE_SLICE_MS = 8;
+const RELOCATE_SLICE_TRIANGLES = 20000;
+let relocationGeneration = 0;
+const relocateSpotMarks = (path, positions, radius, options) => {
+if (!positions || !positions.length) return Promise.resolve(null);
 const total = Math.floor(positions.length / 9);
-if (!total) return;
+if (!total) return Promise.resolve(null);
+const opts = options || {};
+const yieldTo = opts.yieldTo || ((run) => setTimeout(run, 0));
+const nowAt = opts.now || clock;
+const sliceMs = opts.sliceMs || RELOCATE_SLICE_MS;
+const sliceTriangles = opts.sliceTriangles || RELOCATE_SLICE_TRIANGLES;
 const tolerance = Math.max(1e-9, Number(radius || 1) * 0.01);
 const limit = tolerance * tolerance;
+const generation = ++relocationGeneration;
+relocationMetrics.runs += 1;
+const next = store.marks.slice();
+const targets = [];
 let changed = 0;
-const next = store.marks.map((mark) => {
-if (!sameFile(mark.path, path) || mark.kind !== 'spot') return mark;
-if (typeof mark.triangle !== 'number') return mark;
-if (!Array.isArray(mark.centroid) || mark.centroid.length !== 3) return mark;
+store.marks.forEach((mark, index) => {
+if (!sameFile(mark.path, path) || mark.kind !== 'spot') return;
+if (typeof mark.triangle !== 'number') return;
+if (!Array.isArray(mark.centroid) || mark.centroid.length !== 3) return;
 const centerX = Number(mark.centroid[0]) || 0;
 const centerY = Number(mark.centroid[1]) || 0;
 const centerZ = Number(mark.centroid[2]) || 0;
-const distanceSquared = (triangle) => {
-const base = triangle * 9;
+if (mark.triangle >= 0 && mark.triangle < total) {
+const base = mark.triangle * 9;
 const dx = (positions[base] + positions[base + 3] + positions[base + 6]) / 3 - centerX;
 const dy = (positions[base + 1] + positions[base + 4] + positions[base + 7]) / 3 - centerY;
 const dz = (positions[base + 2] + positions[base + 5] + positions[base + 8]) / 3 - centerZ;
-return dx * dx + dy * dy + dz * dz;
-};
-if (mark.triangle >= 0 && mark.triangle < total && distanceSquared(mark.triangle) <= limit) {
-if (!mark.spotStale) return mark;
+if (dx * dx + dy * dy + dz * dz <= limit) {
+if (mark.spotStale) {
 changed += 1;
-return Object.assign({}, mark, { spotStale: false });
+next[index] = Object.assign({}, mark, { spotStale: false });
 }
-let best = -1;
-let bestDistance = Infinity;
-if (total <= 1500000) {
-for (let triangle = 0; triangle < total; triangle += 1) {
-const value = distanceSquared(triangle);
-if (value < bestDistance) {
-bestDistance = value;
-best = triangle;
+return;
 }
 }
-}
-if (best >= 0 && bestDistance <= limit * 4) {
-changed += 1;
-return Object.assign({}, mark, { triangle: best, spotStale: false, relocated: true });
-}
-if (mark.spotStale) return mark;
-changed += 1;
-return Object.assign({}, mark, { spotStale: true });
+targets.push({ index, centerX, centerY, centerZ, best: -1, bestDistance: Infinity });
 });
+const commit = (summary) => {
 if (changed) {
 mutate({ marks: next });
 persist();
-devlog('spot-marks-relocated', ['changed=' + changed]);
+devlog('spot-marks-relocated', ['changed=' + changed, 'scanned=' + summary.scannedTriangles]);
 }
+return summary;
+};
+if (!targets.length) {
+return Promise.resolve(commit({ scannedTriangles: 0, totalTriangles: total, elapsedMs: 0, cancelled: false, matched: 0 }));
+}
+const started = nowAt();
+let scanned = 0;
+let triangle = 0;
+return new Promise((resolve) => {
+const finish = () => {
+for (const target of targets) {
+const mark = store.marks[target.index];
+if (target.best >= 0 && target.bestDistance <= limit * 4) {
+next[target.index] = Object.assign({}, mark, {
+triangle: target.best,
+spotStale: false,
+relocated: true,
+});
+changed += 1;
+relocationMetrics.matched += 1;
+} else if (!mark.spotStale) {
+next[target.index] = Object.assign({}, mark, { spotStale: true });
+changed += 1;
+}
+}
+const elapsedMs = Math.round(nowAt() - started);
+relocationMetrics.scannedTriangles = scanned;
+relocationMetrics.totalTriangles = total;
+relocationMetrics.elapsedMs = elapsedMs;
+resolve(commit({ scannedTriangles: scanned, totalTriangles: total, elapsedMs, cancelled: false, matched: relocationMetrics.matched }));
+};
+const step = () => {
+if (generation !== relocationGeneration) {
+relocationMetrics.cancelled += 1;
+resolve({ scannedTriangles: scanned, totalTriangles: total, elapsedMs: Math.round(nowAt() - started), cancelled: true, matched: 0 });
+return;
+}
+const sliceStart = nowAt();
+let processed = 0;
+while (triangle < total && processed < sliceTriangles && nowAt() - sliceStart < sliceMs) {
+const base = triangle * 9;
+const cx = (positions[base] + positions[base + 3] + positions[base + 6]) / 3;
+const cy = (positions[base + 1] + positions[base + 4] + positions[base + 7]) / 3;
+const cz = (positions[base + 2] + positions[base + 5] + positions[base + 8]) / 3;
+for (const target of targets) {
+const dx = cx - target.centerX;
+const dy = cy - target.centerY;
+const dz = cz - target.centerZ;
+const value = dx * dx + dy * dy + dz * dz;
+if (value < target.bestDistance) {
+target.bestDistance = value;
+target.best = triangle;
+}
+}
+triangle += 1;
+processed += 1;
+}
+scanned += processed;
+relocationMetrics.lastSliceMs = Math.round(nowAt() - sliceStart);
+if (triangle < total) {
+yieldTo(step);
+return;
+}
+finish();
+};
+step();
+});
 };
 const addMark = (partial) => {
 if (!partial || !partial.path) return 0;
@@ -607,6 +918,18 @@ doc.id === existing.id
 );
 activeId = existing.id;
 } else {
+const limit = pressureState();
+if (limit.docsHard) {
+store.storageIssue =
+'已打开 ' + limit.docs + ' 个文档，达到同时预览上限（' + pressure.docsHard + '）。请先关闭一些再打开新文件。';
+notify();
+devlog('doc-limit', [String(limit.docs)]);
+return;
+}
+if (limit.docsWarn) {
+store.storageIssue = '已打开 ' + limit.docs + ' 个文档，占用较多内存；建议关闭不用的标签。';
+notify();
+}
 const kept = store.docs.filter((doc) => !sameFile(doc.path, path));
 const id = 'd' + Date.now().toString(36);
 docs = kept.concat({ id, path, view, note: input && input.note, line: input && input.line });
@@ -1366,6 +1689,8 @@ const CSS_PANEL = [
 '.dshcv-row{display:flex;align-items:center;gap:8px;width:100%;height:28px;padding:0 10px;border:0;border-radius:7px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;text-align:left;cursor:pointer}',
 '.dshcv-row:hover{background:var(--dsw-alias-bg-layer-2)}',
 '.dshcv-rowname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+'.dshcv-notice{display:flex;align-items:flex-start;gap:8px;margin:6px 10px;padding:7px 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-2);font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary)}',
+'.dshcv-notice>span{flex:1 1 auto;min-width:0}',
 '.dshcv-rowicon{display:block;flex:0 0 auto;width:14px;height:14px;color:var(--dsw-alias-label-secondary);opacity:.9}',
 '.dshcv-row:hover .dshcv-rowicon{color:var(--dsw-alias-label-primary);opacity:1}',
 '.dshcv-scroll{flex:1 1 auto;min-height:0;overflow:auto}',
@@ -1553,7 +1878,7 @@ const key = String(props.callId || '') + '|' + targets.join('|');
 if (opened.current === key) return;
 opened.current = key;
 if (autoOpened.has(key)) return;
-autoOpened.add(key);
+rememberAutoOpened(key);
 selectPanel(PANEL_KEY);
 if (targets.length) {
 openDocs(
@@ -4898,6 +5223,10 @@ if (!frame) frame = window.requestAnimationFrame(applyZoom);
 node.addEventListener("wheel", onWheel, { passive: false });
 return () => {
 token += 1;
+if (frame) {
+window.cancelAnimationFrame(frame);
+frame = 0;
+}
 node.removeEventListener("wheel", onWheel);
 };
 }, []);
@@ -5610,6 +5939,7 @@ React.useEffect(() => {
 if (!sessionId) return undefined;
 const controller = new AbortController();
 let cancelled = false;
+let aiUrl = '';
 setState({ status: 'loading', error: '', mode: '', bitmap: null, outline: [], info: '' });
 const match = /\.([a-z0-9]+)$/i.exec(doc.path);
 const extension = match ? match[1].toLowerCase() : '';
@@ -5635,7 +5965,11 @@ if (head !== '%PDF-') {
 throw new Error('该 .ai 不含 PDF 兼容数据（可能是纯 EPS），请另存为 PDF 后再预览');
 }
 const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
-if (cancelled) return;
+if (cancelled) {
+URL.revokeObjectURL(url);
+return;
+}
+aiUrl = url;
 setState({ status: 'ready', error: '', mode: 'pdf', bitmap: null, outline: [], info: url });
 return;
 }
@@ -5655,6 +5989,10 @@ if (!cancelled) setState({ status: 'failed', error: errText(error), mode: '', bi
 return () => {
 cancelled = true;
 controller.abort();
+if (aiUrl) {
+URL.revokeObjectURL(aiUrl);
+aiUrl = '';
+}
 };
 }, [doc.path, sessionId]);
 React.useEffect(() => {
@@ -9272,6 +9610,7 @@ pinToBottom();
 area.scrollTop = anchor;
 }
 };
+const scheduleContent = perFrame(onContent, 'content');
 const attach = (next) => {
 if (!next || !next.isConnected || next === area) return;
 if (area) {
@@ -9288,7 +9627,7 @@ area.addEventListener('wheel', markUserScroll, { passive: true });
 area.addEventListener('touchstart', markUserScroll, { passive: true });
 area.addEventListener('pointerdown', markUserScroll, { passive: true });
 area.addEventListener('keydown', markUserScroll);
-contentObserver = new MutationObserver(onContent);
+contentObserver = new MutationObserver(scheduleContent);
 contentObserver.observe(area, { childList: true, subtree: true, characterData: true });
 following = true;
 pinToBottom();
@@ -9331,9 +9670,32 @@ seatObserver.observe(seat);
 };
 apply();
 const timer = setTimeout(apply, 600);
-const observer = new MutationObserver(apply);
+const scheduleApply = perFrame((() => {
+let lastScroller = null;
+let lastNext = null;
+let lastSeat = null;
+let lastHeight = -1;
+return () => {
+const scroller = host.querySelector('[data-conversation-scroll]');
+const seat = host.querySelector('[data-composer-seat]');
+const view = scroller ? scroller.querySelector('[data-slot="conversation.session"]') : null;
+const next = view && view.firstElementChild ? view.firstElementChild : null;
+const height = seat ? seat.offsetHeight : 0;
+if (scroller === lastScroller && next === lastNext && seat === lastSeat && Math.abs(height - lastHeight) <= 1) {
+return;
+}
+lastScroller = scroller;
+lastNext = next;
+lastSeat = seat;
+lastHeight = height;
+apply();
+};
+})(), 'bridge');
+const observer = new MutationObserver(scheduleApply);
 observer.observe(host, { childList: true, subtree: true });
 return () => {
+scheduleApply.cancel();
+scheduleContent.cancel();
 observer.disconnect();
 clearTimeout(timer);
 if (seatObserver) seatObserver.disconnect();
@@ -9699,6 +10061,23 @@ flex: '0 0 ' + (revealed ? Math.round(ratio * 1000) / 10 : 0) + '%',
 minWidth: 0,
 },
 },
+store.storageIssue
+? h(
+'div',
+{ className: 'dshcv-notice', key: 'storage-issue', role: 'status' },
+h('span', null, store.storageIssue),
+h(
+'button',
+{
+type: 'button',
+className: 'dshcv-btn',
+'data-kind': 'quiet',
+onClick: () => mutate({ storageIssue: '' }),
+},
+'知道了',
+),
+)
+: null,
 store.docs.length
 ? h(
 'div',

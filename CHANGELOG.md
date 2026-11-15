@@ -2,6 +2,51 @@
 
 本项目的版本按 `主.次.修订` 递增；`npm` 上已发布的版本不可撤回，修正一律走新版本。
 
+## 0.6.0（未发布）
+
+预防性加固：降低长时间运行、流式输出、大文件预览和 GPU 资源叠加时的卡顿与内存增长。
+没有证据表明这些问题是近期系统级崩溃的原因，这里只是把插件自身的资源边界收紧。
+
+### 持久化
+
+- `persist()` 从「每次变更同步 stringify + 同步写 localStorage」改为 trailing debounce（默认 350ms，最长 2.5s 强制落盘），同一时刻只有一个待写任务，高频变更合并为一次写入。
+- 用摘要比较跳过未变化的写入；`pagehide` 与 `visibilitychange(hidden)` 触发一次受控 flush，flush 只 stringify 一次。
+- 写入失败（含 `QuotaExceededError`）不清空原值、不丢内存状态，最多重试 3 次并指数退避，之后只记录错误。
+- 新增持久化指标：`revision`、`serializedBytes`、`stringifyDurationMs`、`writeDurationMs`、`pending`、`lastError`、`retryCount`。
+- 恢复时先检查字符串长度（4 MB 上限）再 `JSON.parse`；超限不删除原值，改为可恢复提示。docs / marks / split / activeId 增加 schema 校验，损坏数据不会导致初始化失败。
+- 标注上限 5000：达到上限时拒绝新增并提示，不截断、不删除已有标注。
+
+### 观察者与高频回调
+
+- 两个 `MutationObserver` 的回调改为每帧最多执行一次（`perFrame` 调度器），同帧内多次 mutation 合并，卸载时取消待执行帧。
+- 会话结构遍历前先比较 scroller / 会话节点 / 输入区高度（1px 死区），无变化时跳过整次 `querySelector` 遍历。
+- 观察者回调频率按秒采样，异常高频只记录一次诊断，不重复刷屏。
+- PDF 缩放的 `requestAnimationFrame` 在卸载时取消，不再对已卸载组件做状态更新。
+
+### 3D 标注重定位
+
+- 由「每个标注一次同步全量扫描」改为单次分片扫描：默认每片 8ms 或 20000 个三角形，片间让出主线程。
+- 使用 generation token 取消旧任务；取消或过期任务不提交任何状态。
+- 记录 `scannedTriangles`、`totalTriangles`、`elapsedMs`、`cancelled`、`matched`、`lastSliceMs`。
+
+### 资源释放
+
+- `.ai` 预览的 Object URL 由加载 effect 持有，切换文件或卸载时 `revokeObjectURL`；被取消时立即释放。
+- `autoOpened`（最多 200 条）与 `fileVersions`（最多 400 条，优先保留打开文档和标注引用的文件）改为有界。
+- 打开文档数达到软阈值（12）提示，硬阈值（24）拒绝继续打开重型预览，但不会关闭已有文档。
+
+### 诊断
+
+- 新增 `resourceReport()`：文档数、标注数、缓存大小、持久化与重定位指标，只含计数不含正文。
+- `devlog` 改为由 `dsh.canvas.debug` 开关控制的 `console.debug` 出口，默认静默。
+
+### 测试
+
+- `test/persist-scheduler.test.cjs`：一万次变更只写一次、未变化不写、flush 只 stringify 一次、配额失败保留旧值且有界重试、无会话不写。
+- `test/frame-scheduler.test.cjs`：1000 次触发每帧只执行一次、可取消、超频只记一次。
+- `test/relocate-spot-chunk.test.cjs`：与旧同步算法结果一致、150 万三角形分片执行、中断后旧任务不提交、无标注不扫描。
+- `test/spot-relocate.test.cjs` 更新为异步调用，断言不变。
+
 ## 0.5.9（未发布）
 
 ### 新增

@@ -68,15 +68,39 @@ window.__ModuleLoader__.load({
       return absolute.endsWith('/' + relative);
     };
 
-    // Diagnostics stay silent in the delivered plugin; point this at
-    // console.debug while iterating on a viewer.
-    const devlog = () => {};
+    // Diagnostics are opt-in: silent in normal use, and only reachable through the
+    // debug toggle. Nothing here logs document text or mark contents.
+    const devlogState = { on: false };
+    try {
+      devlogState.on = localStorage.getItem('dsh.canvas.debug') === '1';
+    } catch {
+      /* storage is best effort */
+    }
+    const devlog = (...args) => {
+      if (!devlogState.on) return;
+      try {
+        console.debug('[canvas]', ...args);
+      } catch {
+        /* console is best effort */
+      }
+    };
 
     // ---------------- tiny shared store ----------------
     const listeners = new Set();
     let version = 0;
     /** Tool calls whose panel opening already happened; a remounted card must not reopen it. */
     const autoOpened = new Set();
+    // Long sessions must not grow this without bound: the oldest call ids are the ones a
+    // remount is least likely to revisit.
+    const AUTO_OPENED_LIMIT = 200;
+    const rememberAutoOpened = (key) => {
+      autoOpened.add(key);
+      while (autoOpened.size > AUTO_OPENED_LIMIT) {
+        const oldest = autoOpened.values().next().value;
+        if (oldest === undefined) break;
+        autoOpened.delete(oldest);
+      }
+    };
     const store = {
       sessionId: undefined,
       actions: undefined,
@@ -93,13 +117,51 @@ window.__ModuleLoader__.load({
       restored: false,
       reportedBridge: false,
       reportedBlock: false,
+      // Set when storage could not be trusted (too large, over a limit, quota error).
+      // Shown to the user; never silently drops their marks.
+      storageIssue: '',
       // Transient UI state: the floating confirmation shown after a copy action.
       flash: '',
     };
     const notify = () => {
       version += 1;
       for (const listener of Array.from(listeners)) listener();
-    };    const subscribe = (listener) => {
+    };
+
+    // Coalesce DOM work to one pass per frame. Streaming output fires hundreds of
+    // mutations per frame; without this each one ran its own querySelector pass.
+    // The call rate is sampled so a runaway observer shows up in the log.
+    const perFrame = (run, label) => {
+      let frame = 0;
+      let calls = 0;
+      let windowStart = Date.now();
+      let reported = false;
+      const schedule = () => {
+        calls += 1;
+        const now = Date.now();
+        if (now - windowStart >= 1000) {
+          if (calls > 240 && !reported) {
+            reported = true;
+            devlog('observer-rate', [label + '=' + calls + '/s']);
+          }
+          calls = 0;
+          windowStart = now;
+        }
+        if (frame) return;
+        frame = requestAnimationFrame(() => {
+          frame = 0;
+          run();
+        });
+      };
+      schedule.cancel = () => {
+        if (frame) {
+          cancelAnimationFrame(frame);
+          frame = 0;
+        }
+      };
+      return schedule;
+    };
+    const subscribe = (listener) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
     };
@@ -112,14 +174,26 @@ window.__ModuleLoader__.load({
     const storageKey = () => STORAGE_PREFIX + (store.sessionId || 'none');
 
     // Last mtime seen per file: it stamps new marks and detects marks that the
-    // file has since outgrown.
+    // file has since outgrown. Bounded, because a long session reads many files:
+    // entries still referenced by an open document or a mark are never evicted.
     const fileVersions = new Map();
+    const FILE_VERSION_LIMIT = 400;
     const noteFileVersion = (path, version) => {
       const key = pathKey(path);
       const stamp = Number(version) || 0;
       if (!key || !stamp) return;
       if (fileVersions.get(key) === stamp) return;
       fileVersions.set(key, stamp);
+      if (fileVersions.size > FILE_VERSION_LIMIT) {
+        const keep = new Set();
+        for (const doc of store.docs) keep.add(pathKey(doc.path));
+        for (const mark of store.marks) keep.add(pathKey(mark.path));
+        for (const existing of Array.from(fileVersions.keys())) {
+          if (fileVersions.size <= FILE_VERSION_LIMIT) break;
+          if (!keep.has(existing)) fileVersions.delete(existing);
+        }
+        devlog('file-versions-evicted', [String(fileVersions.size)]);
+      }
       notify();
     };
     const fileVersionOf = (path) => fileVersions.get(pathKey(path)) || 0;
@@ -231,22 +305,196 @@ window.__ModuleLoader__.load({
       return Boolean(mark.mtimeMs && current && Math.abs(mark.mtimeMs - current) > 1);
     };
 
-    const persist = () => {
+    // ---- persistence ----
+    // Every mark edit used to stringify the whole state and block the main thread on a
+    // localStorage write. Under rapid annotation (or streamed tool output causing many
+    // mutations) that became O(n) work per keystroke, so writes are now trailing-debounced,
+    // merged into a single task, skipped when nothing changed, and bounded on failure.
+    const PERSIST_QUIET_MS = 350;
+    const PERSIST_MAX_WAIT_MS = 2500;
+    const PERSIST_MAX_RETRIES = 3;
+    // Restoring is guarded separately: parsing a huge string on the main thread is the
+    // same freeze we just removed from the write path.
+    const PERSIST_RESTORE_LIMIT = 4 * 1024 * 1024;
+    const markLimit = { max: 5000 };
+    const persistMetrics = {
+      revision: 0,
+      writes: 0,
+      skipped: 0,
+      coalesced: 0,
+      serializedBytes: 0,
+      stringifyDurationMs: 0,
+      writeDurationMs: 0,
+      pending: false,
+      lastError: '',
+      retryCount: 0,
+    };
+    let persistTimer = null;
+    let persistQueuedAt = 0;
+    let persistDigest = '';
+    let persistErrorAt = 0;
+    const clock = () => (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now());
+
+    const persistSnapshot = () => ({
+      docs: store.docs,
+      activeId: store.activeId,
+      marks: store.marks,
+      seq: store.seq,
+      split: splitState(),
+      splitFocus: store.splitFocus,
+    });
+
+    // One stringify, one comparison, one write — or none of them.
+    const writePersisted = () => {
+      if (!store.sessionId) return;
+      let text;
+      const stringifyAt = clock();
       try {
-        localStorage.setItem(
-          storageKey(),
-          JSON.stringify({
-            docs: store.docs,
-            activeId: store.activeId,
-            marks: store.marks,
-            seq: store.seq,
-            split: splitState(),
-            splitFocus: store.splitFocus,
-          }),
-        );
+        text = JSON.stringify(persistSnapshot());
       } catch (error) {
-        devlog('persist-failed', [errText(error)]);
+        persistMetrics.lastError = 'stringify: ' + errText(error);
+        devlog('persist-failed', [persistMetrics.lastError]);
+        return;
       }
+      persistMetrics.stringifyDurationMs = Math.round(clock() - stringifyAt);
+      if (text === persistDigest) {
+        // Nothing observable changed; do not touch storage.
+        persistMetrics.skipped += 1;
+        return;
+      }
+      const writeAt = clock();
+      try {
+        localStorage.setItem(storageKey(), text);
+        persistDigest = text;
+        persistMetrics.revision += 1;
+        persistMetrics.writes += 1;
+        persistMetrics.serializedBytes = text.length;
+        persistMetrics.retryCount = 0;
+        persistMetrics.lastError = '';
+        persistErrorAt = 0;
+      } catch (error) {
+        // Keep the in-memory state and the previous stored value; retry a bounded number
+        // of times with backoff instead of hammering a full or blocked quota.
+        persistMetrics.lastError = errText(error);
+        persistMetrics.retryCount += 1;
+        persistErrorAt = Date.now();
+        devlog('persist-failed', [persistMetrics.lastError, 'retry=' + persistMetrics.retryCount]);
+        if (persistMetrics.retryCount <= PERSIST_MAX_RETRIES) {
+          const backoff = 500 * Math.pow(2, persistMetrics.retryCount - 1);
+          if (persistTimer) clearTimeout(persistTimer);
+          persistMetrics.pending = true;
+          persistTimer = setTimeout(() => {
+            persistTimer = null;
+            persistMetrics.pending = false;
+            writePersisted();
+          }, backoff);
+        }
+      } finally {
+        persistMetrics.writeDurationMs = Math.round(clock() - writeAt);
+      }
+    };
+
+    const flushPersist = () => {
+      if (persistTimer) {
+        clearTimeout(persistTimer);
+        persistTimer = null;
+      }
+      persistMetrics.pending = false;
+      persistQueuedAt = 0;
+      writePersisted();
+    };
+
+    // Trailing debounce with a ceiling, so a steady stream of edits still lands within
+    // a couple of seconds instead of only after it stops.
+    const persist = () => {
+      persistMetrics.coalesced += 1;
+      if (!store.sessionId) return;
+      const now = Date.now();
+      if (!persistQueuedAt) persistQueuedAt = now;
+      const waited = now - persistQueuedAt;
+      const delay = Math.max(0, Math.min(PERSIST_QUIET_MS, PERSIST_MAX_WAIT_MS - waited));
+      if (persistTimer) clearTimeout(persistTimer);
+      persistMetrics.pending = true;
+      persistTimer = setTimeout(() => {
+        persistTimer = null;
+        persistMetrics.pending = false;
+        persistQueuedAt = 0;
+        writePersisted();
+      }, delay);
+    };
+
+    // A tab that is being hidden or closed must not lose the last edit.
+    if (typeof window !== 'undefined' && window.addEventListener) {
+      window.addEventListener('pagehide', flushPersist);
+      if (typeof document !== 'undefined' && document.addEventListener) {
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'hidden') flushPersist();
+        });
+      }
+    }
+
+    // Bounded schema checks: a corrupted or hand-edited entry must not abort startup,
+    // and an oversized one must be reported instead of parsed on the main thread.
+    const restoreBounds = { docs: 200, marks: markLimit.max, quote: 4000, path: 1024, note: 20000 };
+
+    // Counters only — no paths, no mark text. Enough to see pressure building up, which
+    // is what the debug toggle and the thresholds below report.
+    const resourceReport = () => ({
+      docs: store.docs.length,
+      marks: store.marks.length,
+      fileVersions: fileVersions.size,
+      autoOpened: autoOpened.size,
+      persist: {
+        revision: persistMetrics.revision,
+        writes: persistMetrics.writes,
+        skipped: persistMetrics.skipped,
+        coalesced: persistMetrics.coalesced,
+        serializedBytes: persistMetrics.serializedBytes,
+        stringifyDurationMs: persistMetrics.stringifyDurationMs,
+        writeDurationMs: persistMetrics.writeDurationMs,
+        pending: persistMetrics.pending,
+        retryCount: persistMetrics.retryCount,
+        lastError: persistMetrics.lastError,
+      },
+      relocation: {
+        runs: relocationMetrics.runs,
+        scannedTriangles: relocationMetrics.scannedTriangles,
+        totalTriangles: relocationMetrics.totalTriangles,
+        elapsedMs: relocationMetrics.elapsedMs,
+        cancelled: relocationMetrics.cancelled,
+        matched: relocationMetrics.matched,
+        lastSliceMs: relocationMetrics.lastSliceMs,
+      },
+      storageIssue: Boolean(store.storageIssue),
+    });
+    // Soft ceilings: report once when crossed, and refuse new heavy work rather than
+    // letting a long session degrade until something else breaks.
+    const pressure = { docsWarn: 12, docsHard: 24, marksWarn: 1500, marksHard: markLimit.max, once: new Set() };
+    const noteOnce = (key, message) => {
+      if (pressure.once.has(key)) return;
+      pressure.once.add(key);
+      devlog('pressure', [key, message]);
+    };
+    const pressureState = () => {
+      const docs = store.docs.length;
+      const marks = store.marks.length;
+      if (marks >= pressure.marksWarn) noteOnce('marks-warn', String(marks));
+      if (docs >= pressure.docsWarn) noteOnce('docs-warn', String(docs));
+      return {
+        docs,
+        marks,
+        docsHard: docs >= pressure.docsHard,
+        docsWarn: docs >= pressure.docsWarn,
+        marksHard: marks >= pressure.marksHard,
+        marksWarn: marks >= pressure.marksWarn,
+      };
+    };
+    const restoreIssue = (rawLength) => {
+      store.storageIssue =
+        '本地状态过大（' +
+        Math.round(rawLength / 1024) +
+        ' KB），已跳过加载以免卡顿。原有数据未被删除，请先导出或清理后再打开面板。';
+      devlog('restore-too-large', [String(rawLength)]);
     };
 
     // Heal state saved by earlier builds: one tab per file, one number per spot.
@@ -275,9 +523,34 @@ window.__ModuleLoader__.load({
       try {
         const raw = localStorage.getItem(storageKey());
         if (!raw) return;
+        // Check the size before parsing: a multi-megabyte string is the freeze we avoid.
+        if (raw.length > PERSIST_RESTORE_LIMIT) {
+          restoreIssue(raw.length);
+          return;
+        }
         const data = JSON.parse(raw);
-        if (Array.isArray(data.docs)) store.docs = dedupeDocs(data.docs);
-        if (Array.isArray(data.marks)) store.marks = dedupeMarks(data.marks);
+        // Schema validation, not truncation: anything that fails a type check is dropped,
+        // but a list that merely exceeds the soft bound is loaded whole and reported.
+        const docsOk = Array.isArray(data.docs) ? data.docs.filter((doc) => doc && typeof doc.path === 'string' && doc.path.length <= restoreBounds.path) : [];
+        const marksOk = Array.isArray(data.marks)
+          ? data.marks.filter(
+              (mark) =>
+                mark &&
+                typeof mark.path === 'string' &&
+                mark.path.length <= restoreBounds.path &&
+                (!mark.quote || String(mark.quote).length <= restoreBounds.quote) &&
+                (!mark.note || String(mark.note).length <= restoreBounds.note),
+            )
+          : [];
+        if (Array.isArray(data.docs) && docsOk.length === data.docs.length) store.docs = dedupeDocs(docsOk);
+        else store.docs = dedupeDocs(docsOk);
+        store.marks = dedupeMarks(marksOk);
+        if (docsOk.length > restoreBounds.docs) {
+          store.storageIssue = '打开的文档较多（' + docsOk.length + ' 个），可能影响性能；可关闭部分标签。';
+        }
+        if (marksOk.length > restoreBounds.marks) {
+          store.storageIssue = '标注数量已超过上限（' + marksOk.length + '/' + restoreBounds.marks + '），仍全部保留，但不会再新增。';
+        }
         if (typeof data.activeId === 'string') store.activeId = data.activeId;
       if (data.split && typeof data.split === 'object') {
         store.split = {
@@ -496,6 +769,14 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         devlog('mark-reused', ['n=' + existing.n]);
         return existing.n;
       }
+      // At the ceiling new marks are refused with a visible reason. Existing marks are
+      // never dropped to make room: losing a user's annotation is worse than saying no.
+      if (store.marks.length >= markLimit.max) {
+        store.storageIssue = '标注数量已达上限（' + markLimit.max + '），本次没有新增。请先导出或清理一部分。';
+        notify();
+        devlog('mark-limit', [String(store.marks.length)]);
+        return 0;
+      }
       // Numbers stay dense: they follow the marks that exist, so a cleared or
       // restored list always continues from what is actually on screen.
       const highest = store.marks.reduce((max, candidate) => Math.max(max, Number(candidate.n) || 0), 0);
@@ -590,58 +871,143 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
     // A 3D mark names a face by index, which only holds for the exact export that
     // produced it. The centroid recorded with the mark finds the same face again
     // after a re-export: first at the same index, then by nearest match.
-    const relocateSpotMarks = (path, positions, radius) => {
-      if (!positions || !positions.length) return;
+    // A full scan over a large model used to run inside one synchronous loop per mark,
+    // which froze the viewer and the conversation for as long as it took. The scan is now
+    // sliced, yields between slices, and is cancelled by a generation token; results are
+    // committed in one pass at the end, so a cancelled or superseded run changes nothing.
+    const relocationMetrics = {
+      runs: 0,
+      scannedTriangles: 0,
+      totalTriangles: 0,
+      elapsedMs: 0,
+      cancelled: 0,
+      matched: 0,
+      lastSliceMs: 0,
+    };
+    const RELOCATE_SLICE_MS = 8;
+    const RELOCATE_SLICE_TRIANGLES = 20000;
+    let relocationGeneration = 0;
+
+    const relocateSpotMarks = (path, positions, radius, options) => {
+      if (!positions || !positions.length) return Promise.resolve(null);
       const total = Math.floor(positions.length / 9);
-      if (!total) return;
+      if (!total) return Promise.resolve(null);
+      const opts = options || {};
+      const yieldTo = opts.yieldTo || ((run) => setTimeout(run, 0));
+      const nowAt = opts.now || clock;
+      const sliceMs = opts.sliceMs || RELOCATE_SLICE_MS;
+      const sliceTriangles = opts.sliceTriangles || RELOCATE_SLICE_TRIANGLES;
       const tolerance = Math.max(1e-9, Number(radius || 1) * 0.01);
       const limit = tolerance * tolerance;
+      const generation = ++relocationGeneration;
+      relocationMetrics.runs += 1;
+
+      const next = store.marks.slice();
+      const targets = [];
       let changed = 0;
-      const next = store.marks.map((mark) => {
-        if (!sameFile(mark.path, path) || mark.kind !== 'spot') return mark;
-        if (typeof mark.triangle !== 'number') return mark;
-        if (!Array.isArray(mark.centroid) || mark.centroid.length !== 3) return mark;
+
+      store.marks.forEach((mark, index) => {
+        if (!sameFile(mark.path, path) || mark.kind !== 'spot') return;
+        if (typeof mark.triangle !== 'number') return;
+        if (!Array.isArray(mark.centroid) || mark.centroid.length !== 3) return;
         const centerX = Number(mark.centroid[0]) || 0;
         const centerY = Number(mark.centroid[1]) || 0;
         const centerZ = Number(mark.centroid[2]) || 0;
-        const distanceSquared = (triangle) => {
-          const base = triangle * 9;
+        if (mark.triangle >= 0 && mark.triangle < total) {
+          const base = mark.triangle * 9;
           const dx = (positions[base] + positions[base + 3] + positions[base + 6]) / 3 - centerX;
           const dy = (positions[base + 1] + positions[base + 4] + positions[base + 7]) / 3 - centerY;
           const dz = (positions[base + 2] + positions[base + 5] + positions[base + 8]) / 3 - centerZ;
-          return dx * dx + dy * dy + dz * dz;
-        };
-        if (mark.triangle >= 0 && mark.triangle < total && distanceSquared(mark.triangle) <= limit) {
-          if (!mark.spotStale) return mark;
-          changed += 1;
-          return Object.assign({}, mark, { spotStale: false });
-        }
-        // A full scan is only worth it while the model stays interactive; past that
-        // the mark is flagged instead of freezing the viewer.
-        let best = -1;
-        let bestDistance = Infinity;
-        if (total <= 1500000) {
-          for (let triangle = 0; triangle < total; triangle += 1) {
-            const value = distanceSquared(triangle);
-            if (value < bestDistance) {
-              bestDistance = value;
-              best = triangle;
+          if (dx * dx + dy * dy + dz * dz <= limit) {
+            // Still on the same face: only the stale flag may need clearing.
+            if (mark.spotStale) {
+              changed += 1;
+              next[index] = Object.assign({}, mark, { spotStale: false });
             }
+            return;
           }
         }
-        if (best >= 0 && bestDistance <= limit * 4) {
-          changed += 1;
-          return Object.assign({}, mark, { triangle: best, spotStale: false, relocated: true });
-        }
-        if (mark.spotStale) return mark;
-        changed += 1;
-        return Object.assign({}, mark, { spotStale: true });
+        targets.push({ index, centerX, centerY, centerZ, best: -1, bestDistance: Infinity });
       });
-      if (changed) {
-        mutate({ marks: next });
-        persist();
-        devlog('spot-marks-relocated', ['changed=' + changed]);
+
+      const commit = (summary) => {
+        if (changed) {
+          mutate({ marks: next });
+          persist();
+          devlog('spot-marks-relocated', ['changed=' + changed, 'scanned=' + summary.scannedTriangles]);
+        }
+        return summary;
+      };
+
+      if (!targets.length) {
+        return Promise.resolve(commit({ scannedTriangles: 0, totalTriangles: total, elapsedMs: 0, cancelled: false, matched: 0 }));
       }
+
+      const started = nowAt();
+      let scanned = 0;
+      let triangle = 0;
+      return new Promise((resolve) => {
+        const finish = () => {
+          for (const target of targets) {
+            const mark = store.marks[target.index];
+            if (target.best >= 0 && target.bestDistance <= limit * 4) {
+              next[target.index] = Object.assign({}, mark, {
+                triangle: target.best,
+                spotStale: false,
+                relocated: true,
+              });
+              changed += 1;
+              relocationMetrics.matched += 1;
+            } else if (!mark.spotStale) {
+              // No acceptable face: keep the old index and flag it for the user.
+              next[target.index] = Object.assign({}, mark, { spotStale: true });
+              changed += 1;
+            }
+          }
+          const elapsedMs = Math.round(nowAt() - started);
+          relocationMetrics.scannedTriangles = scanned;
+          relocationMetrics.totalTriangles = total;
+          relocationMetrics.elapsedMs = elapsedMs;
+          resolve(commit({ scannedTriangles: scanned, totalTriangles: total, elapsedMs, cancelled: false, matched: relocationMetrics.matched }));
+        };
+
+        const step = () => {
+          if (generation !== relocationGeneration) {
+            relocationMetrics.cancelled += 1;
+            resolve({ scannedTriangles: scanned, totalTriangles: total, elapsedMs: Math.round(nowAt() - started), cancelled: true, matched: 0 });
+            return;
+          }
+          const sliceStart = nowAt();
+          let processed = 0;
+          while (triangle < total && processed < sliceTriangles && nowAt() - sliceStart < sliceMs) {
+            const base = triangle * 9;
+            const cx = (positions[base] + positions[base + 3] + positions[base + 6]) / 3;
+            const cy = (positions[base + 1] + positions[base + 4] + positions[base + 7]) / 3;
+            const cz = (positions[base + 2] + positions[base + 5] + positions[base + 8]) / 3;
+            for (const target of targets) {
+              const dx = cx - target.centerX;
+              const dy = cy - target.centerY;
+              const dz = cz - target.centerZ;
+              const value = dx * dx + dy * dy + dz * dz;
+              if (value < target.bestDistance) {
+                target.bestDistance = value;
+                target.best = triangle;
+              }
+            }
+            triangle += 1;
+            processed += 1;
+          }
+          scanned += processed;
+          relocationMetrics.lastSliceMs = Math.round(nowAt() - sliceStart);
+          if (triangle < total) {
+            yieldTo(step);
+            return;
+          }
+          finish();
+        };
+
+        step();
+      });
     };
 
     const addMark = (partial) => {
@@ -724,6 +1090,20 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         );
         activeId = existing.id;
       } else {
+        // Heavy previews each hold memory of their own, so there is a ceiling on how many
+        // may be open at once. Existing documents are never closed to make room.
+        const limit = pressureState();
+        if (limit.docsHard) {
+          store.storageIssue =
+            '已打开 ' + limit.docs + ' 个文档，达到同时预览上限（' + pressure.docsHard + '）。请先关闭一些再打开新文件。';
+          notify();
+          devlog('doc-limit', [String(limit.docs)]);
+          return;
+        }
+        if (limit.docsWarn) {
+          store.storageIssue = '已打开 ' + limit.docs + ' 个文档，占用较多内存；建议关闭不用的标签。';
+          notify();
+        }
         // Drop any stale duplicate tab of the same file (older builds stored them).
         const kept = store.docs.filter((doc) => !sameFile(doc.path, path));
         const id = 'd' + Date.now().toString(36);
@@ -1592,6 +1972,8 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
       '.dshcv-row{display:flex;align-items:center;gap:8px;width:100%;height:28px;padding:0 10px;border:0;border-radius:7px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;text-align:left;cursor:pointer}',
       '.dshcv-row:hover{background:var(--dsw-alias-bg-layer-2)}',
       '.dshcv-rowname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.dshcv-notice{display:flex;align-items:flex-start;gap:8px;margin:6px 10px;padding:7px 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-2);font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary)}',
+      '.dshcv-notice>span{flex:1 1 auto;min-width:0}',
       '.dshcv-rowicon{display:block;flex:0 0 auto;width:14px;height:14px;color:var(--dsw-alias-label-secondary);opacity:.9}',
       '.dshcv-row:hover .dshcv-rowicon{color:var(--dsw-alias-label-primary);opacity:1}',
       '.dshcv-scroll{flex:1 1 auto;min-height:0;overflow:auto}',
@@ -1799,7 +2181,7 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         // conversation remounts this card, whose effect would immediately
         // select the canvas again and the panel could never be closed.
         if (autoOpened.has(key)) return;
-        autoOpened.add(key);
+        rememberAutoOpened(key);
         selectPanel(PANEL_KEY);
         if (targets.length) {
           openDocs(
