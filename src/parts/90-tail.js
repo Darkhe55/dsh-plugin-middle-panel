@@ -2554,6 +2554,12 @@ h(
       const { doc, sessionId } = props;
       const [state, setState] = React.useState({ status: 'idle', url: '', error: '' });
       const [zoom, setZoom] = React.useState(1);
+      // Ctrl/Cmd + wheel zooms around the pointer, the way the PDF viewer does: one step
+      // per frame, and the point under the cursor stays put.
+      const zoomRef = React.useRef(1);
+      const scrollRef = React.useRef(null);
+      const pendingScroll = React.useRef(null);
+      zoomRef.current = zoom;
       const [selecting, setSelecting] = React.useState(false);
       const [marquee, setMarquee] = React.useState(null);
       // Animated images (GIF/APNG/WebP) play natively in <img>. Freezing keeps the
@@ -2606,6 +2612,67 @@ h(
         const pixel = context.getImageData(x, y, 1, 1).data;
         setSample({ x, y, r: pixel[0], g: pixel[1], b: pixel[2], a: pixel[3] });
       };
+
+      // Ctrl (Cmd) + wheel zooms the picture, like the PDF viewer. React binds wheel
+      // passively, so the listener is native: that is also what lets us stop the browser
+      // from zooming the whole application instead.
+      React.useEffect(() => {
+        const node = scrollRef.current;
+        if (!node) return undefined;
+        let frame = 0;
+        let factor = 1;
+        let anchor = null;
+        const apply = () => {
+          frame = 0;
+          const step = factor;
+          factor = 1;
+          if (step === 1 || !anchor) return;
+          const rect = node.getBoundingClientRect();
+          const offsetX = anchor.x - rect.left;
+          const offsetY = anchor.y - rect.top;
+          const current = zoomRef.current;
+          const next = Math.min(4, Math.max(0.25, Math.round(current * step * 100) / 100));
+          if (next === current) return;
+          // Content point under the cursor, in unscaled image coordinates.
+          const contentX = (node.scrollLeft + offsetX) / current;
+          const contentY = (node.scrollTop + offsetY) / current;
+          pendingScroll.current = {
+            left: Math.max(0, contentX * next - offsetX),
+            top: Math.max(0, contentY * next - offsetY),
+          };
+          setZoom(next);
+        };
+        const onWheel = (event) => {
+          if (!event.ctrlKey && !event.metaKey) return;
+          event.preventDefault();
+          const rect = node.getBoundingClientRect();
+          anchor = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+          // One physical gesture emits many events: fold them into a single step per frame.
+          factor *= event.deltaY < 0 ? 1.1 : 1 / 1.1;
+          if (!frame) frame = requestAnimationFrame(apply);
+        };
+        node.addEventListener('wheel', onWheel, { passive: false });
+        return () => {
+          if (frame) {
+            cancelAnimationFrame(frame);
+            frame = 0;
+          }
+          pendingScroll.current = null;
+          node.removeEventListener('wheel', onWheel);
+        };
+      }, []);
+
+      // The scroll correction lands after the scaled layout is committed, otherwise it
+      // would be computed against the previous zoom.
+      React.useLayoutEffect(() => {
+        const pending = pendingScroll.current;
+        if (!pending) return;
+        pendingScroll.current = null;
+        const node = scrollRef.current;
+        if (!node) return;
+        node.scrollLeft = pending.left;
+        node.scrollTop = pending.top;
+      });
 
       React.useEffect(() => {
         if (!sessionId) {
@@ -2931,7 +2998,7 @@ h(
         ),
         h(
           'div',
-          { className: 'dshcv-scroll', style: { position: 'relative' } },
+          { className: 'dshcv-scroll', style: { position: 'relative' }, ref: scrollRef },
           h(
             'div',
             {
