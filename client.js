@@ -257,7 +257,12 @@ design: [
 ['circle', { cx: '6.1', cy: '6.6', r: '.7' }],
 ['circle', { cx: '9.4', cy: '6.2', r: '.7' }],
 ],
-unsupported: [['path', { d: PAGE[0] }], ['path', { d: PAGE[1] }], ['path', { d: 'M6.5 12.4 10 8.2' }]],
+unsupported: [
+['path', { d: PAGE[0] }],
+['path', { d: PAGE[1] }],
+['path', { d: 'M6.7 9.3c0-1 .8-1.6 1.7-1.6 1 0 1.7.6 1.7 1.5 0 1.2-1.6 1.3-1.6 2.4' }],
+['circle', { cx: '8.5', cy: '12.6', r: '.55', fill: 'currentColor', stroke: 'none' }],
+],
 };
 const fileIcon = (kind, isDir) => {
 const shapes = ICON_SHAPES[isDir ? 'folder' : kind] || ICON_SHAPES.text;

@@ -60,7 +60,8 @@
     "release:stage": "node scripts/release.cjs --stage",
     "release:approve": "node scripts/release.cjs --approve",
     "release:check-token": "node scripts/release.cjs --check-token",
-    "guard": "node scripts/version-guard.cjs"
+    "guard": "node scripts/version-guard.cjs",
+    "icons:preview": "node scripts/preview-icons.cjs"
   },
   "files": [
     "client.js",

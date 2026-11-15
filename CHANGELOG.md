@@ -6,9 +6,14 @@
 
 ### 新增
 
-- **文件列表类型图标**：面板的目录浏览列表每行前加了一个 14px 的 SVG 图标——文件夹用文件夹形状，文件按类型区分（markdown / html / pdf / 图片 / 视频 / 3D 模型 / CAD / 设计稿 / Office / 表格 / 文本 / 暂不支持）。颜色取 currentColor，跟随主题；行高与文件名截断行为不变。
-- 图标为内联 SVG，不引入图标库、不增加网络请求；ria-hidden 隐藏，读屏不受影响。
-- 新增 	est/file-icons.test.cjs（28 项）：每个 ileKind 都有对应图形、目录优先用文件夹图标、行渲染真的插入了图标、样式约束 14px 且不参与伸缩、不使用 emoji。
+- **文件列表类型图标**：面板的目录浏览列表每行前加了一个 14px 的 SVG 图标——文件夹用文件夹形状，文件按类型区分（markdown / html / pdf / 图片 / 视频 / 3D 模型 / CAD / 设计稿 / Office / 表格 / 文本 / 暂不支持）。颜色取 `currentColor`，跟随主题；行高、文件名截断与悬停行为不变。
+- 图标为内联 SVG，不引入图标库、不增加网络请求；带 `aria-hidden`，读屏不受影响。
+- 「暂不支持」的标记由斜线改为问号：它的语义是「不知道 / 打不开」，不是「禁止」。
+- 预览页 `demo/icons-preview.html` 由 `npm run icons:preview`（`scripts/preview-icons.cjs`）从源码生成，改了图形重新跑一次即可，避免快照与实现漂移。
+
+### 测试
+
+- 新增 `test/file-icons.test.cjs`（28 项）：每个 `fileKind` 都有对应图形、目录优先用文件夹图标、行渲染真的插入了图标、样式约束 14px 且不参与伸缩、不使用 emoji。
 
 ## 0.5.7（未发布）
 
