@@ -551,6 +551,13 @@ Math.round(rawLength / 1024) +
 ' KB），已跳过加载以免卡顿。原有数据未被删除，请先导出或清理后再打开面板。';
 devlog('restore-too-large', [String(rawLength)]);
 };
+if (devlogState.on && typeof window !== 'undefined') {
+try {
+window.__dshCanvasReport = () => resourceReport();
+window.__dshCanvasClearMeshCache = () => meshCacheClear('manual');
+} catch {
+}
+}
 const dedupeDocs = (docs) => {
 const kept = [];
 for (const doc of docs) {

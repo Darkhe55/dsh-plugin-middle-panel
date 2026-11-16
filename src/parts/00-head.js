@@ -668,6 +668,17 @@ window.__ModuleLoader__.load({
       devlog('restore-too-large', [String(rawLength)]);
     };
 
+    // Debug builds expose the counters so a manual verification can read them from the
+    // console instead of guessing: __dshCanvasReport(). Off unless dsh.canvas.debug is set.
+    if (devlogState.on && typeof window !== 'undefined') {
+      try {
+        window.__dshCanvasReport = () => resourceReport();
+        window.__dshCanvasClearMeshCache = () => meshCacheClear('manual');
+      } catch {
+        /* a frozen window is fine */
+      }
+    }
+
     // Heal state saved by earlier builds: one tab per file, one number per spot.
     const dedupeDocs = (docs) => {
       const kept = [];
