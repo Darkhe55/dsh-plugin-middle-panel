@@ -98,6 +98,7 @@ const signal = opts.signal;
 const budgetMs = Math.min(SLICE_HARD_CAP_MS, Math.max(1, opts.budgetMs || SLICE_BUDGET_MS));
 const chunk = Math.max(1, opts.chunk || 4096);
 const yieldTo = opts.yieldTo || ((run) => setTimeout(run, 0));
+const shouldStop = typeof opts.shouldStop === 'function' ? opts.shouldStop : null;
 return new Promise((resolve) => {
 let index = 0;
 let slices = 0;
@@ -106,6 +107,10 @@ const finish = (cancelled) => resolve({ cancelled, processed: index, slices, max
 const step = () => {
 if (signal && signal.aborted) {
 finish(true);
+return;
+}
+if (shouldStop && shouldStop()) {
+finish(false);
 return;
 }
 const started = sliceNow();
@@ -139,6 +144,7 @@ rafs: 0,
 webglContexts: 0,
 canvasPixels: 0,
 modelTasks: 0,
+analysisTasks: 0,
 relocationTasks: 0,
 };
 const count = (key, delta) => {
@@ -507,6 +513,7 @@ storageIssue: Boolean(store.storageIssue),
 meshCache: meshCacheReport(),
 active: {
 modelTasks: counters.modelTasks,
+analysisTasks: counters.analysisTasks,
 relocationTasks: counters.relocationTasks,
 objectUrls: counters.objectUrls,
 pdfTasks: counters.pdfTasks,
@@ -7195,6 +7202,27 @@ if (!cancelled) setProgress(stage === 'decimate' ? 0.5 : 0.8);
 if (!built || built.cancelled || cancelled || controller.signal.aborted) return;
 meshCacheSet(key, { positions: built.positions, colors: mesh ? mesh.colors : null });
 commit(built, rawPositions, Boolean(cached));
+if (built.stats.watertightSkipped && built.stats.watertightReason === 'triangles') {
+const positionsForCheck = built.positions;
+count('analysisTasks', 1);
+analyzeWatertightInBackground(positionsForCheck, { signal: controller.signal })
+.then((closed) => {
+if (cancelled || controller.signal.aborted) return;
+if (!closed || closed.skipped || typeof closed.watertight !== 'boolean') return;
+setState((previous) =>
+previous.status === 'ready' && previous.stats
+? Object.assign({}, previous, {
+stats: Object.assign({}, previous.stats, {
+watertight: closed.watertight,
+watertightSkipped: false,
+}),
+})
+: previous,
+);
+})
+.catch(() => {})
+.finally(() => count('analysisTasks', -1));
+}
 } finally {
 count('modelTasks', -1);
 }
@@ -8109,8 +8137,11 @@ Object.assign({ chunk: 4096 }, options),
 ).then((run) => (run.cancelled ? null : { area, volume: Math.abs(volume), run }));
 };
 const watertightSliced = (positions, options) => {
+const opts = options || {};
+const budgets = opts.budgets || WATERTIGHT_BUDGET;
+const deadline = Number(opts.deadline) || 0;
 const triangles = Math.floor(positions.length / 9);
-if (triangles > WATERTIGHT_BUDGET.maxTriangles) {
+if (triangles > budgets.maxTriangles) {
 return Promise.resolve({ watertight: null, skipped: true, reason: 'triangles' });
 }
 const edges = new Map();
@@ -8120,16 +8151,21 @@ const vertexId = (x, y, z) => {
 const key = keyOf(x, y, z);
 const seen = vertexIds.get(key);
 if (seen !== undefined) return seen;
-if (vertexIds.size >= WATERTIGHT_BUDGET.maxVertices) return -1;
+if (vertexIds.size >= budgets.maxVertices) return -1;
 const id = vertexIds.size;
 vertexIds.set(key, id);
 return id;
 };
 let overflow = false;
+let timedOut = false;
 return runSliced(
 triangles,
 (from, to) => {
 for (let triangle = from; triangle < to && !overflow; triangle += 1) {
+if (deadline && Date.now() > deadline) {
+timedOut = true;
+break;
+}
 const base = triangle * 9;
 const ids = [
 vertexId(positions[base], positions[base + 1], positions[base + 2]),
@@ -8150,21 +8186,39 @@ b = swap;
 }
 const key = a * 2097152 + b;
 edges.set(key, (edges.get(key) || 0) + 1);
-if (edges.size > WATERTIGHT_BUDGET.maxEdges) {
+if (edges.size > budgets.maxEdges) {
 overflow = true;
 break;
 }
 }
 }
 },
-Object.assign({ chunk: 2048 }, options),
+Object.assign({ chunk: 2048, shouldStop: () => timedOut }, options),
 ).then((run) => {
 if (run.cancelled) return { watertight: null, skipped: true, reason: 'cancelled' };
+if (timedOut) return { watertight: null, skipped: true, reason: 'time' };
 if (overflow) return { watertight: null, skipped: true, reason: 'edges' };
 for (const total of edges.values()) {
 if (total !== 2) return { watertight: false, skipped: false };
 }
 return { watertight: true, skipped: false };
+});
+};
+const WATER_TIGHT_BACKGROUND = {
+maxTriangles: 900000,
+maxVertices: 1200000,
+maxEdges: 3000000,
+timeBudgetMs: 4000,
+sliceBudgetMs: 12,
+};
+const analyzeWatertightInBackground = (positions, options) => {
+const opts = options || {};
+return watertightSliced(positions, {
+signal: opts.signal,
+budgets: WATER_TIGHT_BACKGROUND,
+budgetMs: WATER_TIGHT_BACKGROUND.sliceBudgetMs,
+deadline: Date.now() + WATER_TIGHT_BACKGROUND.timeBudgetMs,
+yieldTo: opts.yieldTo,
 });
 };
 const buildModelPreview = async (positions, options) => {

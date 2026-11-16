@@ -1369,6 +1369,29 @@ function EmbeddedPdfDoc(props) {
             if (!built || built.cancelled || cancelled || controller.signal.aborted) return;
             meshCacheSet(key, { positions: built.positions, colors: mesh ? mesh.colors : null });
             commit(built, rawPositions, Boolean(cached));
+            // Skipped for size in the foreground: try again in the background, where a
+            // larger budget and a wall-clock ceiling cannot delay the first frame.
+            if (built.stats.watertightSkipped && built.stats.watertightReason === 'triangles') {
+              const positionsForCheck = built.positions;
+              count('analysisTasks', 1);
+              analyzeWatertightInBackground(positionsForCheck, { signal: controller.signal })
+                .then((closed) => {
+                  if (cancelled || controller.signal.aborted) return;
+                  if (!closed || closed.skipped || typeof closed.watertight !== 'boolean') return;
+                  setState((previous) =>
+                    previous.status === 'ready' && previous.stats
+                      ? Object.assign({}, previous, {
+                          stats: Object.assign({}, previous.stats, {
+                            watertight: closed.watertight,
+                            watertightSkipped: false,
+                          }),
+                        })
+                      : previous,
+                  );
+                })
+                .catch(() => {})
+                .finally(() => count('analysisTasks', -1));
+            }
           } finally {
             count('modelTasks', -1);
           }
@@ -2385,8 +2408,11 @@ h(
     // Edge census with an explicit budget. Over budget the answer is "unknown" (null), not
     // a slow crawl that builds a huge Map and freezes the panel.
     const watertightSliced = (positions, options) => {
+      const opts = options || {};
+      const budgets = opts.budgets || WATERTIGHT_BUDGET;
+      const deadline = Number(opts.deadline) || 0;
       const triangles = Math.floor(positions.length / 9);
-      if (triangles > WATERTIGHT_BUDGET.maxTriangles) {
+      if (triangles > budgets.maxTriangles) {
         return Promise.resolve({ watertight: null, skipped: true, reason: 'triangles' });
       }
       const edges = new Map();
@@ -2396,16 +2422,21 @@ h(
         const key = keyOf(x, y, z);
         const seen = vertexIds.get(key);
         if (seen !== undefined) return seen;
-        if (vertexIds.size >= WATERTIGHT_BUDGET.maxVertices) return -1;
+        if (vertexIds.size >= budgets.maxVertices) return -1;
         const id = vertexIds.size;
         vertexIds.set(key, id);
         return id;
       };
       let overflow = false;
+      let timedOut = false;
       return runSliced(
         triangles,
         (from, to) => {
           for (let triangle = from; triangle < to && !overflow; triangle += 1) {
+            if (deadline && Date.now() > deadline) {
+              timedOut = true;
+              break;
+            }
             const base = triangle * 9;
             const ids = [
               vertexId(positions[base], positions[base + 1], positions[base + 2]),
@@ -2426,21 +2457,44 @@ h(
               }
               const key = a * 2097152 + b;
               edges.set(key, (edges.get(key) || 0) + 1);
-              if (edges.size > WATERTIGHT_BUDGET.maxEdges) {
+              if (edges.size > budgets.maxEdges) {
                 overflow = true;
                 break;
               }
             }
           }
         },
-        Object.assign({ chunk: 2048 }, options),
+        Object.assign({ chunk: 2048, shouldStop: () => timedOut }, options),
       ).then((run) => {
         if (run.cancelled) return { watertight: null, skipped: true, reason: 'cancelled' };
+        if (timedOut) return { watertight: null, skipped: true, reason: 'time' };
         if (overflow) return { watertight: null, skipped: true, reason: 'edges' };
         for (const total of edges.values()) {
           if (total !== 2) return { watertight: false, skipped: false };
         }
         return { watertight: true, skipped: false };
+      });
+    };
+
+    // The foreground census is deliberately small so it never delays the first frame. If
+    // it gives up on size, the same analysis may continue in the background with a larger
+    // budget and a wall-clock ceiling: the preview stays interactive and the label simply
+    // fills in if the answer arrives in time.
+    const WATER_TIGHT_BACKGROUND = {
+      maxTriangles: 900000,
+      maxVertices: 1200000,
+      maxEdges: 3000000,
+      timeBudgetMs: 4000,
+      sliceBudgetMs: 12,
+    };
+    const analyzeWatertightInBackground = (positions, options) => {
+      const opts = options || {};
+      return watertightSliced(positions, {
+        signal: opts.signal,
+        budgets: WATER_TIGHT_BACKGROUND,
+        budgetMs: WATER_TIGHT_BACKGROUND.sliceBudgetMs,
+        deadline: Date.now() + WATER_TIGHT_BACKGROUND.timeBudgetMs,
+        yieldTo: opts.yieldTo,
       });
     };
 

@@ -142,6 +142,7 @@ window.__ModuleLoader__.load({
       const budgetMs = Math.min(SLICE_HARD_CAP_MS, Math.max(1, opts.budgetMs || SLICE_BUDGET_MS));
       const chunk = Math.max(1, opts.chunk || 4096);
       const yieldTo = opts.yieldTo || ((run) => setTimeout(run, 0));
+      const shouldStop = typeof opts.shouldStop === 'function' ? opts.shouldStop : null;
       return new Promise((resolve) => {
         let index = 0;
         let slices = 0;
@@ -150,6 +151,10 @@ window.__ModuleLoader__.load({
         const step = () => {
           if (signal && signal.aborted) {
             finish(true);
+            return;
+          }
+          if (shouldStop && shouldStop()) {
+            finish(false);
             return;
           }
           const started = sliceNow();
@@ -186,6 +191,7 @@ window.__ModuleLoader__.load({
       webglContexts: 0,
       canvasPixels: 0,
       modelTasks: 0,
+      analysisTasks: 0,
       relocationTasks: 0,
     };
     const count = (key, delta) => {
@@ -620,6 +626,7 @@ window.__ModuleLoader__.load({
       meshCache: meshCacheReport(),
       active: {
         modelTasks: counters.modelTasks,
+        analysisTasks: counters.analysisTasks,
         relocationTasks: counters.relocationTasks,
         objectUrls: counters.objectUrls,
         pdfTasks: counters.pdfTasks,

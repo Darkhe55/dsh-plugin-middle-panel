@@ -14,7 +14,7 @@ const factory = new Function(
   'runSliced',
   'devlog',
   body +
-    '\nreturn { buildModelPreview, decimateMeshSliced, meshBoundsSliced, watertightSliced, MAX_PREVIEW_TRIANGLES, WATERTIGHT_BUDGET };',
+    '\nreturn { buildModelPreview, decimateMeshSliced, meshBoundsSliced, watertightSliced, analyzeWatertightInBackground, MAX_PREVIEW_TRIANGLES, WATERTIGHT_BUDGET, WATER_TIGHT_BACKGROUND };',
 );
 
 // 与生产一致的分片执行器（同样的 8ms 预算/让出语义），从源码里取，避免测试自说自话。
@@ -182,6 +182,53 @@ const run = async () => {
     const positions = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1, 1, 0]);
     const closed = await api.watertightSliced(positions, { yieldTo: (fn) => fn() });
     check(closed.skipped === false && typeof closed.watertight === 'boolean', '小网格能得出封闭性结论', JSON.stringify(closed));
+  }
+
+  // 8) 后台渐进式封闭性：前台因规模跳过，后台用更大预算给出结论
+  {
+    const positions = makeMesh(130000);
+    const foreground = await api.watertightSliced(positions, { yieldTo: (fn) => fn() });
+    check(foreground.skipped === true && foreground.reason === 'triangles', '前台因规模跳过');
+    let committed = null;
+    const controller = new AbortController();
+    const background = await api.analyzeWatertightInBackground(positions, {
+      signal: controller.signal,
+      yieldTo: (fn) => setImmediate(fn),
+    });
+    if (!background.skipped) committed = background.watertight;
+    check(typeof committed === 'boolean', '后台给出了封闭性结论', JSON.stringify(background));
+    check(api.WATER_TIGHT_BACKGROUND.maxTriangles > api.WATERTIGHT_BUDGET.maxTriangles, '后台预算大于前台');
+  }
+
+  // 9) 后台分析被取消时不提交
+  {
+    const positions = makeMesh(130000);
+    const controller = new AbortController();
+    const queue = [];
+    const task = api.analyzeWatertightInBackground(positions, {
+      signal: controller.signal,
+      yieldTo: (fn) => queue.push(fn),
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    controller.abort();
+    while (queue.length) {
+      queue.shift()();
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    const result = await task;
+    check(result.skipped === true, '取消后不返回结论', JSON.stringify(result));
+    check(result.reason === 'cancelled' || result.reason === 'time', '取消原因可诊断', result.reason);
+  }
+
+  // 10) 时间上限：硬性 deadline 到达后不再继续建表
+  {
+    const positions = makeMesh(130000);
+    const closed = await api.watertightSliced(positions, {
+      budgets: api.WATER_TIGHT_BACKGROUND,
+      deadline: Date.now() + 1,
+      yieldTo: (fn) => setImmediate(fn),
+    });
+    check(closed.skipped === true && closed.reason === 'time', '超时后放弃并标记 time', JSON.stringify(closed));
   }
 
   if (failures) {
