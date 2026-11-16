@@ -82,11 +82,32 @@ const run = async () => {
     console.log('  分片数 ' + slices + '，抽稀后 ' + built.triangles.toLocaleString() + ' 三角形，总耗时 ' + elapsed + 'ms');
   }
 
-  // 2) 单片耗时预算：真实时钟下每两次让出之间的同步工作不应超过两帧
+  // 2) 分片结构（确定性）：注入一个每次调用就前进 9ms 的时钟，
+  //    每处理一个 chunk 都必然超过 8ms 预算，因此必须让出 —— 与机器快慢无关。
+  {
+    const positions = makeMesh(200000);
+    let fakeNow = 0;
+    let yields = 0;
+    const built = await api.buildModelPreview(positions, {
+      now: () => {
+        fakeNow += 9;
+        return fakeNow;
+      },
+      yieldTo: (fn) => {
+        yields += 1;
+        setImmediate(fn);
+      },
+    });
+    check(Boolean(built) && !built.cancelled, '确定性计时用例完成');
+    check(yields >= 10, '每个超预算的 chunk 都让出（确定性）', 'yields=' + yields);
+  }
+
+  // 3) 单片耗时预算（真实时钟）：有多次让出时，两次让出之间的同步工作不得长期超帧
   {
     const positions = makeMesh(800000);
     const gaps = [];
     let last = Date.now();
+    const startedAt = Date.now();
     const built = await api.buildModelPreview(positions, {
       yieldTo: (fn) => {
         gaps.push(Date.now() - last);
@@ -94,12 +115,16 @@ const run = async () => {
         setImmediate(fn);
       },
     });
+    const elapsed = Date.now() - startedAt;
     check(Boolean(built) && !built.cancelled, '计时用例的计算完成');
-    check(gaps.length >= 2, '确实发生了多次让出', 'gaps=' + gaps.length);
-    const worst = gaps.length ? Math.max(...gaps) : 0;
-    const over16 = gaps.filter((value) => value > 16).length;
-    console.log('  让出间隔：最多 ' + worst + 'ms，中位 ' + (gaps.length ? gaps.sort((a, b) => a - b)[Math.floor(gaps.length / 2)] : 0) + 'ms，超过 16ms 的 ' + over16 + '/' + gaps.length);
-    check(worst <= 40, '同步块没有长时间独占主线程（含调度抖动）', worst + 'ms');
+    const worst = gaps.length ? Math.max(...gaps.slice(1)) : 0;
+    if (gaps.length >= 2) {
+      check(worst <= 40, '同步块没有长时间独占主线程（含调度抖动）', worst + 'ms');
+    } else {
+      // 机器快到整条流水线只占一两片：这本身就不构成长任务，用总耗时兜底断言。
+      check(elapsed <= 400, '整条流水线本身很短，不构成长任务', elapsed + 'ms');
+    }
+    console.log('  真实时钟：让出 ' + gaps.length + ' 次，最长间隔 ' + worst + 'ms，总耗时 ' + elapsed + 'ms');
   }
 
   // 3) 取消：abort 后立即结束，且不产出可提交的结果

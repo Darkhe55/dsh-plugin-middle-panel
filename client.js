@@ -99,6 +99,7 @@ const budgetMs = Math.min(SLICE_HARD_CAP_MS, Math.max(1, opts.budgetMs || SLICE_
 const chunk = Math.max(1, opts.chunk || 4096);
 const yieldTo = opts.yieldTo || ((run) => setTimeout(run, 0));
 const shouldStop = typeof opts.shouldStop === 'function' ? opts.shouldStop : null;
+const nowAt = typeof opts.now === 'function' ? opts.now : sliceNow;
 return new Promise((resolve) => {
 let index = 0;
 let slices = 0;
@@ -113,14 +114,14 @@ if (shouldStop && shouldStop()) {
 finish(false);
 return;
 }
-const started = sliceNow();
+const started = nowAt();
 while (index < total) {
 const end = Math.min(total, index + chunk);
 each(index, end);
 index = end;
-if (sliceNow() - started >= budgetMs) break;
+if (nowAt() - started >= budgetMs) break;
 }
-const spent = sliceNow() - started;
+const spent = nowAt() - started;
 if (spent > maxSliceMs) maxSliceMs = spent;
 slices += 1;
 if (index < total) {
