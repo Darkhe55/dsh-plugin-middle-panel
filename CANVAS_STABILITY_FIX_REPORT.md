@@ -131,11 +131,21 @@ git diff --check                → 0
 
 被测用例：前台因规模跳过、后台给出结论、取消后不提交、deadline 到期标记 `time`。
 
+## 三之三、真实挂载/卸载测试（后续补充）
+
+`test/mount-lifecycle.test.cjs`（84 个测试文件中的新增一项）：
+
+- 极简 DOM：节点带监听器表、盒子尺寸、2D/WebGL 上下文桩；`ResizeObserver`/`MutationObserver`/`IntersectionObserver` 统计实例与断开；
+- 极简钩子运行时：`useState`/`useRef`/`useEffect`/`useLayoutEffect`/`useMemo`/`useCallback`，支持对象 ref 与函数 ref（卸载时置空）；
+- 每轮先渲染 `Bridge` 注入会话并触发 `restore()`，再渲染 `CanvasPanel`，因此**真的会挂载到对应查看器**；
+- 断言：卸载后全局监听不增加、观察者全部断开、RAF 归零、定时器归零、Object URL 创建数 == 释放数、卸载后 `setState` 次数为 0；
+- 防止空转：图片/视频/HTML 断言确实创建过 Object URL，PDF 断言确实创建过页面观察者。
+
 ## 四、仍未覆盖的真实环境风险
 
 1. **真实 GPU 行为未验证**：WebGL 上下文丢失（`webglcontextlost`）、驱动级内存回收、集成显卡上的大纹理行为，只能在真实 DSH 里观察。本轮只保证不泄漏程序/着色器/缓冲与画布像素上界。
 2. **未接入 Worker**：当前构建把 10 个 part 拼成单文件 IIFE，Worker 需要额外打包路径；已用统一分片执行器替代，单次同步块实测 ≤ 15 ms，但分片仍占用主线程（只是被打断）。
-3. **100 次挂载/卸载是模拟**：仓库没有 jsdom，计数测试通过生产代码中的同一批包装函数（`makeObserver` / `createObjectUrl` / `requestFrameTracked` / `attachImageZoom`）驱动，未真正渲染 React 组件树。真实 React 生命周期下的清理仍需要一次人工验证。
+3. ~~100 次挂载/卸载是模拟~~ **已补真实生命周期测试**：`test/mount-lifecycle.test.cjs` 用极简 DOM + 极简钩子运行时真正渲染 `CanvasPanel`（含 `Bridge` 会话注入），让 `TextDoc` / `ImageDoc` / `PdfDoc+PdfCanvasDoc` / `VideoDoc` / `ModelDoc` / `HtmlDoc` 各自挂载一次再卸载，断言全局监听、观察者、RAF、定时器、Object URL 全部归零且卸载后无 `setState`。仍未覆盖的是浏览器真实布局与 GPU 行为。
 4. ~~封闭性预算触发后没有渐进式替代方案~~ **已在后续提交补齐**：超限时先给「封闭性未分析」，同时在后台以更大预算（90 万三角形 / 120 万顶点 / 300 万条边、12ms 分片、4 秒挂钟上限）继续建表；成功则更新标签，取消或超时则保持「未分析」。
 5. **`sessionRoots` 的 45 分钟 TTL 是经验值**：若宿主长时间不触发 `workingDirectory.ensure`，回退可能失效；实时 session store 仍是首选路径（未改动）。
 6. **持久化摘要碰撞**：`hash36:length` 理论上可能对两段不同文本给出相同摘要，届时会跳过一次写入；概率极低且下一条变更会补齐，但这是可靠性换内存的取舍。
