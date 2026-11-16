@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Regenerate demo/icons-preview.html from the icon table in src/parts/00-head.js.
+ * Regenerate docs/internal/icons-preview.html from the icon table in src/parts/00-head.js.
  *
  *   node scripts/preview-icons.cjs
  *
@@ -154,7 +154,7 @@ const html = `<!-- 生成的图标快照：改了 ICON_SHAPES 之后运行 npm r
   <div class="grid">${gallery}</div>
 </body></html>`;
 
-const out = path.join(root, 'demo', 'icons-preview.html');
+const out = path.join(root, 'docs', 'internal', 'icons-preview.html');
 fs.mkdirSync(path.dirname(out), { recursive: true });
 fs.writeFileSync(out, html);
 console.log('已生成 ' + path.relative(root, out) + '（' + fs.statSync(out).size + ' 字节，' + Object.keys(labels).length + ' 个图标）');

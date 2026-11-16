@@ -28,6 +28,9 @@ npm-debug.log*
 *.orig
 *.rej
 
+# 内部开发资料（验证清单、稳定性报告、图标预览）：只在本地保留，不进公开仓库
+docs/internal/
+
 # 编辑器与系统
 .vscode/
 .idea/
