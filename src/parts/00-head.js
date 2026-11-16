@@ -624,6 +624,8 @@ window.__ModuleLoader__.load({
       },
       storageIssue: Boolean(store.storageIssue),
       meshCache: meshCacheReport(),
+      // 模型预算与最近一次结果：真实文件测试时直接看这里，不用猜是哪条限额拦下的。
+      modelBudget: typeof modelBudgetReport === 'function' ? modelBudgetReport() : null,
       active: {
         modelTasks: counters.modelTasks,
         analysisTasks: counters.analysisTasks,

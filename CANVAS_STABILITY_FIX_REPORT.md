@@ -141,6 +141,28 @@ git diff --check                → 0
 - 断言：卸载后全局监听不增加、观察者全部断开、RAF 归零、定时器归零、Object URL 创建数 == 释放数、卸载后 `setState` 次数为 0；
 - 防止空转：图片/视频/HTML 断言确实创建过 Object URL，PDF 断言确实创建过页面观察者。
 
+## 三之四、模型预算诊断（后续补充）
+
+所有模型限额集中到一处，拒绝消息、工具栏提示与 `resourceReport()` 共用同一份数字：
+
+```js
+MESH_LIMITS = {
+  bytes: 192 MB,
+  triangles: 800000,
+  watertightForegroundTriangles: 120000,
+  watertightVertices: 200000,
+  watertightEdges: 400000,
+  sliceBudgetMs: 8,
+  sliceHardCapMs: 16,
+}
+```
+
+- `modelBudgetCheck(info)`：读字节之前判定，超限返回 `{ ok: false, reason: 'bytes', size, limit, estimatedTriangles, message }`；
+- `estimateTriangles(bytes)`：按二进制网格 36 字节/三角形估算，仅作为提示，不用于拒绝；
+- `recordModelBudget(entry)`：成功与拒绝两条路径都记录（体积、估算/实际三角形、是否抽稀、是否截断、封闭性状态、是否命中缓存）；
+- `resourceReport().modelBudget`：暴露 `limits` 与 `last`，真实文件测试时不必猜是哪条预算拦下的；
+- 工具栏提示区分「已抽稀 / 已达上限截断 / 封闭性分析中 / 缓存」。
+
 ## 四、仍未覆盖的真实环境风险
 
 1. **真实 GPU 行为未验证**：WebGL 上下文丢失（`webglcontextlost`）、驱动级内存回收、集成显卡上的大纹理行为，只能在真实 DSH 里观察。本轮只保证不泄漏程序/着色器/缓冲与画布像素上界。

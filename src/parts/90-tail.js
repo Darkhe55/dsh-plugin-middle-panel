@@ -1306,8 +1306,11 @@ function EmbeddedPdfDoc(props) {
             info:
               built.triangles.toLocaleString() +
               ' 个三角形' +
-              (built.reduced ? '（已抽稀，原 ' + Math.floor(rawPositions.length / 9).toLocaleString() + (built.truncated ? '，已截断' : '') + '）' : '') +
-              (fromCache ? '（缓存）' : ''),
+              (built.reduced
+                ? '（已抽稀，原 ' + Math.floor(rawPositions.length / 9).toLocaleString() + (built.truncated ? '，已达上限截断' : '') + '）'
+                : '') +
+              (fromCache ? '（缓存）' : '') +
+              (built.stats.watertightSkipped ? ' · 封闭性分析中' : ''),
             stats: {
               triangles: built.triangles,
               vertices: positions.length / 3,
@@ -1331,14 +1334,12 @@ function EmbeddedPdfDoc(props) {
             if (cached) {
               rawPositions = cached.positions;
             } else {
-              if (info && info.size > MAX_PREVIEW_BYTES) {
-                throw new Error(
-                  '模型约 ' +
-                    Math.round(info.size / (1024 * 1024)) +
-                    ' MB，超过预览上限（' +
-                    Math.round(MAX_PREVIEW_BYTES / (1024 * 1024)) +
-                    ' MB）。请先用建模工具简化或分块导出。',
-                );
+              const budget = modelBudgetCheck(info, doc.path);
+              if (!budget.ok) {
+                // The message names the budget and the estimate, so a real-file test does
+                // not have to guess why a model was refused.
+                recordModelBudget({ path: doc.path, refused: budget.reason, size: budget.size, limit: budget.limit, estimatedTriangles: budget.estimatedTriangles });
+                throw new Error(budget.message);
               }
               let bytes = await readBytesFile(sessionId, doc.path, controller.signal);
               if (cancelled || !bytes) return;
@@ -1369,6 +1370,18 @@ function EmbeddedPdfDoc(props) {
             if (!built || built.cancelled || cancelled || controller.signal.aborted) return;
             meshCacheSet(key, { positions: built.positions, colors: mesh ? mesh.colors : null });
             commit(built, rawPositions, Boolean(cached));
+            recordModelBudget({
+              path: doc.path,
+              refused: '',
+              size: info && info.size ? info.size : 0,
+              estimatedTriangles: estimateTriangles(info && info.size),
+              triangles: built.triangles,
+              rawTriangles: Math.floor(rawPositions.length / 9),
+              decimated: built.reduced,
+              truncated: built.truncated,
+              watertight: built.stats.watertightSkipped ? 'analyzing' : built.stats.watertight,
+              fromCache: Boolean(cached),
+            });
             // Skipped for size in the foreground: try again in the background, where a
             // larger budget and a wall-clock ceiling cannot delay the first frame.
             if (built.stats.watertightSkipped && built.stats.watertightReason === 'triangles') {
@@ -2199,6 +2212,79 @@ h(
     // The edge census is the one pass whose memory grows with the mesh, so it gets its own
     // budget: past it the answer is "not analysed" rather than a multi-hundred-MB Map.
     const WATERTIGHT_BUDGET = { maxTriangles: 120000, maxVertices: 200000, maxEdges: 400000 };
+
+    // All model limits live in one place so the refusal message, the toolbar hint and
+    // resourceReport() cannot disagree about which budget stopped a file.
+    const MESH_LIMITS = {
+      bytes: MAX_PREVIEW_BYTES,
+      triangles: MAX_PREVIEW_TRIANGLES,
+      watertightForegroundTriangles: WATERTIGHT_BUDGET.maxTriangles,
+      watertightVertices: WATERTIGHT_BUDGET.maxVertices,
+      watertightEdges: WATERTIGHT_BUDGET.maxEdges,
+      sliceBudgetMs: 8,
+      sliceHardCapMs: 16,
+    };
+
+    // Triangle count a container of this size can plausibly hold. Binary meshes store 9
+    // floats per triangle (36 bytes); text formats spend far more per triangle, so this is
+    // a hint for the user, never a reason to reject a file.
+    const estimateTriangles = (bytes) => {
+      const size = Number(bytes) || 0;
+      if (!size) return 0;
+      return Math.max(0, Math.floor(size / 36));
+    };
+
+    const formatBytes = (value) => {
+      const size = Number(value) || 0;
+      if (size >= 1024 * 1024 * 1024) return (size / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
+      if (size >= 1024 * 1024) return Math.round(size / (1024 * 1024)) + ' MB';
+      if (size >= 1024) return Math.round(size / 1024) + ' KB';
+      return size + ' B';
+    };
+
+    /** Decide, before reading bytes, whether a model may be previewed at all. */
+    const modelBudgetCheck = (info, path) => {
+      const size = Number(info && info.size) || 0;
+      const limit = MESH_LIMITS.bytes;
+      if (size > limit) {
+        return {
+          ok: false,
+          reason: 'bytes',
+          size,
+          limit,
+          estimatedTriangles: estimateTriangles(size),
+          message:
+            '模型 ' +
+            formatBytes(size) +
+            '，超过预览上限 ' +
+            formatBytes(limit) +
+            '（约 ' +
+            estimateTriangles(size).toLocaleString() +
+            ' 个三角形）。请先简化或分块导出后再打开。',
+        };
+      }
+      return {
+        ok: true,
+        reason: '',
+        size,
+        limit,
+        estimatedTriangles: estimateTriangles(size),
+        message: '',
+      };
+    };
+
+    // Last outcome, shown in the toolbar hint and in resourceReport() so a real-file test
+    // says exactly which budget was hit instead of guessing.
+    let lastModelBudget = null;
+    const recordModelBudget = (entry) => {
+      lastModelBudget = Object.assign({ at: Date.now() }, entry);
+      return lastModelBudget;
+    };
+    const modelBudgetReport = () => ({
+      limits: MESH_LIMITS,
+      last: lastModelBudget,
+    });
+
 
     /** Chunked float storage: avoids a plain array of millions of Numbers. */
     const makeFloatChunks = (chunkFloats) => {

@@ -511,6 +511,7 @@ lastSliceMs: relocationMetrics.lastSliceMs,
 },
 storageIssue: Boolean(store.storageIssue),
 meshCache: meshCacheReport(),
+modelBudget: typeof modelBudgetReport === 'function' ? modelBudgetReport() : null,
 active: {
 modelTasks: counters.modelTasks,
 analysisTasks: counters.analysisTasks,
@@ -7143,8 +7144,11 @@ error: '',
 info:
 built.triangles.toLocaleString() +
 ' 个三角形' +
-(built.reduced ? '（已抽稀，原 ' + Math.floor(rawPositions.length / 9).toLocaleString() + (built.truncated ? '，已截断' : '') + '）' : '') +
-(fromCache ? '（缓存）' : ''),
+(built.reduced
+? '（已抽稀，原 ' + Math.floor(rawPositions.length / 9).toLocaleString() + (built.truncated ? '，已达上限截断' : '') + '）'
+: '') +
+(fromCache ? '（缓存）' : '') +
+(built.stats.watertightSkipped ? ' · 封闭性分析中' : ''),
 stats: {
 triangles: built.triangles,
 vertices: positions.length / 3,
@@ -7167,14 +7171,10 @@ let mesh = null;
 if (cached) {
 rawPositions = cached.positions;
 } else {
-if (info && info.size > MAX_PREVIEW_BYTES) {
-throw new Error(
-'模型约 ' +
-Math.round(info.size / (1024 * 1024)) +
-' MB，超过预览上限（' +
-Math.round(MAX_PREVIEW_BYTES / (1024 * 1024)) +
-' MB）。请先用建模工具简化或分块导出。',
-);
+const budget = modelBudgetCheck(info, doc.path);
+if (!budget.ok) {
+recordModelBudget({ path: doc.path, refused: budget.reason, size: budget.size, limit: budget.limit, estimatedTriangles: budget.estimatedTriangles });
+throw new Error(budget.message);
 }
 let bytes = await readBytesFile(sessionId, doc.path, controller.signal);
 if (cancelled || !bytes) return;
@@ -7202,6 +7202,18 @@ if (!cancelled) setProgress(stage === 'decimate' ? 0.5 : 0.8);
 if (!built || built.cancelled || cancelled || controller.signal.aborted) return;
 meshCacheSet(key, { positions: built.positions, colors: mesh ? mesh.colors : null });
 commit(built, rawPositions, Boolean(cached));
+recordModelBudget({
+path: doc.path,
+refused: '',
+size: info && info.size ? info.size : 0,
+estimatedTriangles: estimateTriangles(info && info.size),
+triangles: built.triangles,
+rawTriangles: Math.floor(rawPositions.length / 9),
+decimated: built.reduced,
+truncated: built.truncated,
+watertight: built.stats.watertightSkipped ? 'analyzing' : built.stats.watertight,
+fromCache: Boolean(cached),
+});
 if (built.stats.watertightSkipped && built.stats.watertightReason === 'triangles') {
 const positionsForCheck = built.positions;
 count('analysisTasks', 1);
@@ -7943,6 +7955,65 @@ h('div', { className: 'dshcv-tools' }, h('span', { className: 'dshcv-msg' }, '�
 const MAX_PREVIEW_TRIANGLES = 800000;
 const MAX_PREVIEW_BYTES = 192 * 1024 * 1024;
 const WATERTIGHT_BUDGET = { maxTriangles: 120000, maxVertices: 200000, maxEdges: 400000 };
+const MESH_LIMITS = {
+bytes: MAX_PREVIEW_BYTES,
+triangles: MAX_PREVIEW_TRIANGLES,
+watertightForegroundTriangles: WATERTIGHT_BUDGET.maxTriangles,
+watertightVertices: WATERTIGHT_BUDGET.maxVertices,
+watertightEdges: WATERTIGHT_BUDGET.maxEdges,
+sliceBudgetMs: 8,
+sliceHardCapMs: 16,
+};
+const estimateTriangles = (bytes) => {
+const size = Number(bytes) || 0;
+if (!size) return 0;
+return Math.max(0, Math.floor(size / 36));
+};
+const formatBytes = (value) => {
+const size = Number(value) || 0;
+if (size >= 1024 * 1024 * 1024) return (size / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
+if (size >= 1024 * 1024) return Math.round(size / (1024 * 1024)) + ' MB';
+if (size >= 1024) return Math.round(size / 1024) + ' KB';
+return size + ' B';
+};
+const modelBudgetCheck = (info, path) => {
+const size = Number(info && info.size) || 0;
+const limit = MESH_LIMITS.bytes;
+if (size > limit) {
+return {
+ok: false,
+reason: 'bytes',
+size,
+limit,
+estimatedTriangles: estimateTriangles(size),
+message:
+'模型 ' +
+formatBytes(size) +
+'，超过预览上限 ' +
+formatBytes(limit) +
+'（约 ' +
+estimateTriangles(size).toLocaleString() +
+' 个三角形）。请先简化或分块导出后再打开。',
+};
+}
+return {
+ok: true,
+reason: '',
+size,
+limit,
+estimatedTriangles: estimateTriangles(size),
+message: '',
+};
+};
+let lastModelBudget = null;
+const recordModelBudget = (entry) => {
+lastModelBudget = Object.assign({ at: Date.now() }, entry);
+return lastModelBudget;
+};
+const modelBudgetReport = () => ({
+limits: MESH_LIMITS,
+last: lastModelBudget,
+});
 const makeFloatChunks = (chunkFloats) => {
 const size = Math.max(3, chunkFloats || 12288);
 const chunks = [];
