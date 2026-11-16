@@ -3680,7 +3680,22 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
       };
 
       if (state.status === 'failed') {
-        return h('div', { className: 'dshcv-empty' }, h('div', null, '无法读取该文件'), h('div', null, state.error));
+        // A tab can outlive its file: the note was renamed, moved or deleted after it was
+        // opened. Say so, and offer the only actions that help (retry, close the tab).
+        const missing = /no entry|enoent|not found|does not exist|不存在|找不到/i.test(String(state.error || ''));
+        return h(
+          'div',
+          { className: 'dshcv-empty' },
+          h('div', null, missing ? '文件不存在或已被移动' : '无法读取该文件'),
+          h('div', null, state.error || ''),
+          missing ? h('div', null, '标签还指向旧位置；把它关掉即可，不会影响磁盘上的文件。') : null,
+          h(
+            'div',
+            { style: { display: 'flex', gap: 8, marginTop: 8, justifyContent: 'center' } },
+            h('button', { type: 'button', className: 'dshcv-btn', onClick: () => setReloadTick((value) => value + 1) }, '重试'),
+            h('button', { type: 'button', className: 'dshcv-btn', onClick: () => closeDoc(doc.id) }, '关闭标签'),
+          ),
+        );
       }
       if (state.status !== 'ready') {
         return h('div', { className: 'dshcv-empty' }, h('div', null, state.status === 'loading' ? '读取中…' : state.error || '……'));

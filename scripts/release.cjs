@@ -149,26 +149,77 @@ const withNpmrc = (callback) => {
 };
 
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+
+
 const version = pkg.version;
 
-/** Point market-index.json at `version`; safe to run on its own. */
-const updateMarketIndex = () => {
+/**
+ * Read the registry's own publication time for \`target\`, or null when it is not published.
+ * The index is a claim about what exists on npm, so it may only be written from the
+ * registry's answer: stamping Date.now() for an unreleased version made the index
+ * advertise a version nobody could install.
+ */
+const publishedAt = (name, target) =>
+  new Promise((resolve) => {
+    const url = 'https://registry.npmjs.org/' + encodeURIComponent(name);
+    const request = require('node:https').get(
+      url,
+      { agent: false, headers: { accept: 'application/json' } },
+      (response) => {
+        let body = '';
+        response.setEncoding('utf8');
+        response.on('data', (chunk) => {
+          if (body.length < 4 * 1024 * 1024) body += chunk;
+        });
+        response.on('end', () => {
+          try {
+            const data = JSON.parse(body);
+            const stamp = data && data.time && data.time[target];
+            resolve(stamp ? Math.floor(new Date(stamp).getTime() / 1000) : null);
+          } catch {
+            resolve(null);
+          }
+        });
+      },
+    );
+    request.on('error', () => resolve(null));
+    request.setTimeout(15000, () => {
+      request.destroy();
+      resolve(null);
+    });
+  });
+
+/** Point market-index.json at \`version\` — only when the registry confirms it is published. */
+const updateMarketIndex = async () => {
   const indexPath = path.join(root, 'market-index.json');
   const index = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
   const entry = (index.plugins || []).find((plugin) => plugin.name === pkg.name);
-  if (!entry) fail('market-index.json 里没有 ' + pkg.name);
+  if (!entry) {
+    fail('market-index.json 里没有 ' + pkg.name);
+    return;
+  }
+  const stamp = await publishedAt(pkg.name, version);
+  if (!stamp) {
+    fail(
+      pkg.name + '@' + version + ' 不在 npm registry 上',
+      'market-index 只能记录真实发布过的版本：先完成发布，再运行 --index-only。',
+    );
+    return;
+  }
   const versions = Array.isArray(entry.versions) ? entry.versions : [];
   const rest = versions.filter((item) => item.version !== version);
   const engines = (pkg.dsh && pkg.dsh.engines) || pkg.engines || {};
   rest.unshift({
     version,
-    publishTimestamp: Math.floor(Date.now() / 1000),
+    publishTimestamp: stamp,
     source: { type: 'npm' },
     ...(engines.dsh ? { engines: { dsh: engines.dsh } } : {}),
   });
   entry.versions = rest.slice(0, 5);
   fs.writeFileSync(indexPath, JSON.stringify(index, null, 2) + '\n');
-  console.log('✓ market-index.json 指向 ' + version);
+  console.log(
+    '✓ market-index.json 指向 ' + version + '（registry 发布时间 ' + new Date(stamp * 1000).toISOString() + '）',
+  );
 };
 
 // 审批一个已暂存的版本：这一步是「证明你在场」，需要 2FA 或豁免 2FA 的凭据
@@ -183,15 +234,23 @@ if (approveId) {
     fail(reason.message, reason.hint);
   }
   console.log('\n✓ 已审批 ' + approveId + '，' + pkg.name + '@' + version + ' 已上线');
-  updateMarketIndex();
-  console.log('  接下来：git add package.json market-index.json CHANGELOG.md && git commit -m "release: ' + version + '" && git push');
-  process.exit(0);
+  updateMarketIndex()
+    .then(() => {
+      console.log('  接下来：git add package.json market-index.json CHANGELOG.md && git commit -m "release: ' + version + '" && git push');
+      process.exit(0);
+    })
+    .catch((error) => fail('索引更新失败：' + (error && error.message ? error.message : String(error))));
+  return;
 }
 
 if (indexOnly) {
-  updateMarketIndex();
-  console.log('  接下来：git add market-index.json && git commit -m "release: ' + version + '" && git push');
-  process.exit(0);
+  updateMarketIndex()
+    .then(() => {
+      console.log('  接下来：git add market-index.json && git commit -m "release: ' + version + '" && git push');
+      process.exit(0);
+    })
+    .catch((error) => fail('索引更新失败：' + (error && error.message ? error.message : String(error))));
+  return;
 }
 
 // 只验凭据：token 会在某个日期过期，这一步让它在发布当天之前就暴露出来
@@ -255,14 +314,16 @@ if (stageOnly) {
 }
 
 // 4) 索引更新是独立一步：发布已经成功，索引失败不该让人以为整次发布失败
-try {
-  updateMarketIndex();
-} catch (error) {
-  fail(
-    'npm 已发布 ' + version + '，但 market-index.json 更新失败：' + (error && error.message ? error.message : String(error)),
-    '恢复命令：node scripts/release.cjs --index-only',
-  );
-}
+updateMarketIndex()
+  .then(() => {
+    console.log('✓ 发布流程完成：' + pkg.name + '@' + version);
+  })
+  .catch((error) => {
+    fail(
+      'npm 已发布 ' + version + '，但 market-index.json 更新失败：' + (error && error.message ? error.message : String(error)),
+      '恢复命令：node scripts/release.cjs --index-only',
+    );
+  });
 
 /** Files this script itself touches; the safe core of a release commit. */
 const RELEASE_FILES = ['package.json', 'client.js', 'CHANGELOG.md', 'market-index.json'];
