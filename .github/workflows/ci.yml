@@ -29,6 +29,10 @@ jobs:
         with:
           node-version: '24'
 
+      # 宿主半依赖 @deepseek-ai/schemastery 声明配置 schema，按锁文件安装
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
       # 仓库没有运行时/开发依赖，npm install 反而会引入不可控内容
       - name: Test
         run: npm test
