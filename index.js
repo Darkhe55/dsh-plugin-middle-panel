@@ -18,6 +18,7 @@ import {
   textTooLarge,
   utf8Bytes,
 } from './save-guard.js'
+import { promptFor } from './prompt-variants.js'
 
 const writeIsStale = (before, expectedMtime, expectedSize, force) => {
   if (!before) return false
@@ -38,14 +39,11 @@ export { sessionCwdOf, sessionRootFromStore, writeIsStale }
 
 const VIEWS = ['auto', 'text', 'markdown', 'html', 'image']
 
-const PROMPT = [
-  '## Canvas panel',
-  '',
-  'The Web GUI has a middle canvas panel between the workspace list and the conversation.',
-  'Use the `canvas` tool to open a deliverable there when the user will look at, judge or iterate on it: an HTML page or UI, a document, an image, a design, a JSON/text artifact.',
-  'Keep using `present` for a plain file list; use `canvas` when the file itself is the subject of the conversation.',
-  'After opening, the user can select text, pick HTML elements or mark image regions; those become numbered annotations they send back as one chat message. Read such a message as a numbered change list.',
-].join('\n')
+/** Current preference; the client pushes its own value through /dsh-canvas/prefs. */
+const viewPrefs = { autoOpenNew: true }
+let promptDispose = null
+
+const promptText = () => promptFor(viewPrefs.autoOpenNew)
 
 /**
  * Session workspaces seen so far, so a save stays inside the folder the user is working in.
@@ -297,14 +295,33 @@ export function apply(ctx) {
   }
   ctx.effect(() => ctx.tools.register(tool))
 
-  ctx.effect(() =>
-    ctx.systemPrompt.section({
-      name: 'canvas-panel',
-      order: 650,
-      text: PROMPT,
-      interpolate: false,
-    }),
-  )
+  // The section is registered again whenever the switch flips, so the prompt always
+  // matches what the panel itself is doing.
+  const registerPromptSection = () => {
+    if (typeof promptDispose === 'function') {
+      try {
+        promptDispose()
+      } catch {
+        /* the previous section may already be gone */
+      }
+    }
+    promptDispose = null
+    try {
+      const dispose = ctx.systemPrompt.section({
+        name: 'canvas-panel',
+        order: 650,
+        text: promptText(),
+        interpolate: false,
+      })
+      promptDispose = typeof dispose === 'function' ? dispose : null
+    } catch (error) {
+      // A host that refuses re-registration keeps the default prompt rather than leaving
+      // the model without any canvas guidance.
+      console.error('[canvas] prompt section registration failed:', error && error.message)
+    }
+  }
+
+  ctx.effect(() => registerPromptSection())
 
   ctx.effect(() =>
     ctx.webServer.register({
@@ -487,6 +504,62 @@ export function apply(ctx) {
         } catch (error) {
           return reply(500, { error: error && error.message ? error.message : String(error) })
         }
+      },
+    }),
+  )
+
+  // The client owns the switch (it lives in localStorage beside the other panel
+  // preferences) and pushes it here so the prompt can follow. The route is a single
+  // in-memory flag: nothing is persisted host-side, and the default stays "on".
+  ctx.effect(() =>
+    ctx.webServer.register({
+      path: '/dsh-canvas/prefs',
+      handler: async (request, response) => {
+        const nodeStyle = Boolean(response && typeof response.writeHead === 'function' && typeof response.end === 'function')
+        const hostHeader = (() => {
+          try {
+            if (request && request.headers && typeof request.headers.get === 'function') return request.headers.get('host') || ''
+          } catch {
+            /* ignore */
+          }
+          return ''
+        })()
+        const cors = corsFor(request, hostHeader)
+        const reply = (status, body) => {
+          const payload = JSON.stringify(body)
+          if (nodeStyle) {
+            response.writeHead(status, {
+              'content-type': 'application/json; charset=utf-8',
+              'cache-control': 'no-store',
+              ...(cors || {}),
+            })
+            response.end(payload)
+            return
+          }
+          return new Response(payload, { status, headers: { 'content-type': 'application/json; charset=utf-8', ...(cors || {}) } })
+        }
+        const method = String((request && request.method) || 'GET').toUpperCase()
+        if (method === 'OPTIONS') return reply(204, {})
+        if (!cors) return reply(403, { error: 'origin not allowed' })
+        if (method === 'GET') return reply(200, { ok: true, autoOpenNew: viewPrefs.autoOpenNew })
+        if (method !== 'POST') return reply(405, { error: 'method not allowed' })
+        let body = null
+        try {
+          // Same byte-capped reader the save route uses; a preference payload is tiny, so
+          // there is nothing to stream and nothing to keep beyond this call.
+          body = JSON.parse(String((await readCappedBody(request, nodeStyle)) || '{}'))
+        } catch {
+          return reply(400, { error: 'invalid json' })
+        }
+        if (!body || typeof body.autoOpenNew !== 'boolean') {
+          return reply(400, { error: 'autoOpenNew must be a boolean' })
+        }
+        if (viewPrefs.autoOpenNew !== body.autoOpenNew) {
+          viewPrefs.autoOpenNew = body.autoOpenNew
+          registerPromptSection()
+          console.error('[canvas] auto-open switch ->', viewPrefs.autoOpenNew ? 'on' : 'off')
+        }
+        return reply(200, { ok: true, autoOpenNew: viewPrefs.autoOpenNew })
       },
     }),
   )

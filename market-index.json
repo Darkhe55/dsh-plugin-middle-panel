@@ -17,8 +17,8 @@
         "zh": "画布面板"
       },
       "description": {
-        "en": "Turns the centre column into [canvas | conversation] with previews for html, markdown, images, SVG, PDF, docx/xlsx/pptx, csv, 3D meshes (stl/obj/ply/off/3mf/glb) and DXF, plus numbered annotations sent back to the chat.",
-        "zh": "把中栏变成 [画布 | 对话]：支持 html、markdown、图片、SVG、PDF、docx/xlsx/pptx、csv、三维网格（stl/obj/ply/off/3mf/glb）与 DXF 图纸预览，并支持按编号标注回传对话。"
+        "en": "Adds a canvas column beside the chat: review deliverables, annotate them, send the notes back as one message.",
+        "zh": "在对话旁增加画布列：查看产物、就地标注，标注一次性回填到对话。"
       },
       "icon": "icon.svg",
       "author": "Darkhe55",
