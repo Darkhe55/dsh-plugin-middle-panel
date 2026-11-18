@@ -4739,6 +4739,8 @@ function CanvasPanel(props) {      useVersion();
         }
       });
       const [helpOpen, setHelpOpen] = React.useState(false);
+    // 帮助浮层分「快捷键 / 设置」两页；记住上次打开的页面，避免每次都要再点一次。
+    const [helpTab, setHelpTab] = React.useState('keys');
       const panelRef = React.useRef(null);
       const importInputRef = React.useRef(null);
       const paneRef = React.useRef(null);
@@ -5708,7 +5710,14 @@ function CanvasPanel(props) {      useVersion();
                     '关闭',
                   ),
                 ),
-                ...[
+              h(
+                'div',
+                { className: 'dshcv-helptabs' },
+                h('button', { type: 'button', className: 'dshcv-toggle dshcv-opt', 'aria-pressed': helpTab === 'keys' ? 'true' : 'false', onClick: () => setHelpTab('keys') }, '快捷键'),
+                h('button', { type: 'button', className: 'dshcv-toggle dshcv-opt', 'aria-pressed': helpTab === 'settings' ? 'true' : 'false', onClick: () => setHelpTab('settings') }, '设置'),
+              ),
+              helpTab === 'keys'
+                ? [
                 ['Alt+S', '暂停 / 继续（单手，悬停面板即可）'],
                 ['Alt+A / Alt+D', '后退 / 前进一帧（Shift 为 100ms）'],
                 ['← →', '逐帧步进（备用，Shift 为 100ms）'],
@@ -5720,43 +5729,102 @@ function CanvasPanel(props) {      useVersion();
 ['Alt+1 / Alt+2', '在并排的两个窗格里切换焦点'],
 ['Esc', '并排时先退出并排'],
                 ['?', '显示 / 隐藏本帮助'],
-              ].map(([key, label]) => h('div', { key }, h('kbd', null, key), label)),
-              h(
-                'div',
-                { style: { marginTop: '6px', display: 'flex', gap: '8px', alignItems: 'center' } },
-                h('kbd', null, '调试'),
-                h(
-                  'button',
-                  {
-                    type: 'button',
-                    className: 'dshcv-toggle',
-                    'aria-pressed': debugRender() ? 'true' : 'false',
-                    onClick: toggleDebugRender,
-                  },
-                  debugRender() ? '渲染调试计数：开' : '渲染调试计数：关',
-                ),
-              ),
-              h(
-                'div',
-                { style: { marginTop: '6px', display: 'flex', gap: '8px', alignItems: 'center' } },
-                h('kbd', null, 'HTML'),
-                h(
-                  'button',
-                  {
-                    type: 'button',
-                    className: 'dshcv-toggle',
-                    'aria-pressed': injectScriptAllowed() ? 'true' : 'false',
-                    title: '关闭后预览不再运行插件的标注脚本，元素点选将不可用',
-                    onClick: toggleInjectScript,
-                  },
-                  injectScriptAllowed() ? '预览注入标注脚本：开' : '预览注入标注脚本：关',
-                ),
-              ),
+                  ].map(([key, label]) => h('div', { key }, h('kbd', null, key), label))
+                : null,
+              helpTab === 'settings'
+                ? h(
+                    React.Fragment,
+                    { key: 'settings' },
+                    settingRow('打开方式', '新产物自动打开', autoOpenNew(), () => setAutoOpenNew(!autoOpenNew()), '模型产出新文件时切到画布并选中它；关闭后提示词也会改为不主动打开'),
+                    settingRow('打开方式', '记住路径', pickerRemember(), toggleRemember, '文件选择器下次回到上次目录'),
+                    settingRow('标注', '发送后清空', autoClearAfterSend(), toggleAutoClear, '发送标注后清空列表'),
+                    settingRow('标注', '悬停高亮', followHoverOn(), () => setFollowHover(!followHoverOn()), '悬停标注行时高亮画布中的位置'),
+                    settingRow('预览', '注入标注脚本', injectScriptAllowed(), toggleInjectScript, 'HTML 预览内是否运行点选脚本'),
+                    settingRow('诊断', '渲染调试计数', debugRender(), toggleDebugRender, '显示三角形 / 绘制计数'),
+                    h(
+                      'div',
+                      { style: { marginTop: '10px', display: 'flex', gap: '8px' } },
+                      h(
+                        'button',
+                        { type: 'button', className: 'dshcv-btn', onClick: () => copyDiagnostics(setFlash) },
+                        '复制诊断信息',
+                      ),
+                      h(
+                        'button',
+                        { type: 'button', className: 'dshcv-btn', 'data-kind': 'quiet', onClick: () => setHelpTab('keys') },
+                        '看快捷键',
+                      ),
+                    ),
+                  )
+                : null,
               ),
             )
           : null,
       );
     }
+
+    // 设置页的一行：分组标签 + 开关 + 一句说明。标签短，解释放 title 与右侧弱化文字。
+    const settingRow = (group, label, value, onToggle, hint) =>
+      h(
+        'div',
+        { className: 'dshcv-settingrow', title: hint },
+        h('kbd', null, group),
+        h(
+          'button',
+          {
+            type: 'button',
+            className: 'dshcv-toggle',
+            'aria-pressed': value ? 'true' : 'false',
+            title: hint,
+            onClick: onToggle,
+          },
+          label,
+        ),
+        h('span', { className: 'dshcv-settinghint' }, value ? '开' : '关'),
+      );
+
+    // 「复制诊断信息」：只复制计数与预算，不含文档正文与标注内容。
+    const copyDiagnostics = (flash) => {
+      let text = '';
+      try {
+        text = JSON.stringify(resourceReport(), null, 2);
+      } catch (error) {
+        text = 'resourceReport failed: ' + (error && error.message ? error.message : String(error));
+      }
+      const files = [];
+      if (files.length >= 0) {
+        /* noop */
+      }
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(
+            () => flash('诊断信息已复制'),
+            () => fallbackCopy(text, flash),
+          );
+          return;
+        }
+      } catch {
+        /* fall through to the textarea path */
+      }
+      fallbackCopy(text, flash);
+    };
+
+    const fallbackCopy = (text, flash) => {
+      try {
+        const area = document.createElement('textarea');
+        area.value = text;
+        area.setAttribute('readonly', 'readonly');
+        area.style.position = 'fixed';
+        area.style.opacity = '0';
+        document.body.appendChild(area);
+        area.select();
+        document.execCommand('copy');
+        document.body.removeChild(area);
+        flash('诊断信息已复制');
+      } catch {
+        flash('复制失败，可在控制台执行 __dshCanvasReport()');
+      }
+    };
 
     // ---------------- registrations ----------------
     const GuardedPanel = guardPanel(CanvasPanel);

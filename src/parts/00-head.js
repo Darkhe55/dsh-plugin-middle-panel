@@ -93,6 +93,54 @@ window.__ModuleLoader__.load({
     // Long sessions must not grow this without bound: the oldest call ids are the ones a
     // remount is least likely to revisit.
     const AUTO_OPENED_LIMIT = 200;
+    // 是否在新产物出现时自动展开面板。默认开；关闭后提示词也会同步改为「不主动打开」。
+    const openPrefs = { autoOpenNew: true };
+    try {
+      const saved = localStorage.getItem('dsh.canvas.autoopen');
+      if (saved === '0' || saved === '1') openPrefs.autoOpenNew = saved === '1';
+    } catch {
+      /* storage is best effort */
+    }
+    const autoOpenNew = () => openPrefs.autoOpenNew;
+    const setAutoOpenNew = (on) => {
+      openPrefs.autoOpenNew = Boolean(on);
+      try {
+        localStorage.setItem('dsh.canvas.autoopen', openPrefs.autoOpenNew ? '1' : '0');
+      } catch {
+        /* storage is best effort */
+      }
+      // 通知宿主同步提示词：开关是「双重保险」，客户端与提示词一起切换。
+      syncHostPrefs(openPrefs.autoOpenNew);
+      notify();
+    };
+
+    // 判定：有新产物才展开，否则什么都不做。纯函数，便于单测。
+    // 把开关同步给宿主，让系统提示词与面板行为保持一致。失败只记录，不影响本地偏好。
+    const syncHostPrefs = (value) => {
+      try {
+        const url = '/dsh-canvas/prefs';
+        fetch(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ autoOpenNew: Boolean(value) }),
+          credentials: 'same-origin',
+        }).catch(() => {});
+      } catch {
+        /* older hosts simply keep the default prompt */
+      }
+    };
+
+    const decideAutoOpen = (input) => {
+      const targets = Array.isArray(input.targets) ? input.targets : [];
+      if (!input.enabled) return { action: 'skip', reason: 'off', fresh: [] };
+      if (!targets.length) return { action: 'skip', reason: 'nopath', fresh: [] };
+      if (input.seen && input.seen.has(input.callKey)) return { action: 'skip', reason: 'dup', fresh: [] };
+      const openPaths = Array.isArray(input.openPaths) ? input.openPaths : [];
+      const fresh = targets.filter((target) => !openPaths.some((open) => sameFile(open, target)));
+      if (!fresh.length) return { action: 'skip', reason: 'unchanged', fresh: [] };
+      return { action: 'open', reason: 'new', fresh };
+    };
+
     const rememberAutoOpened = (key) => {
       autoOpened.add(key);
       while (autoOpened.size > AUTO_OPENED_LIMIT) {
@@ -1974,7 +2022,12 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
       // The close affordance stays visible while the list scrolls, and the backdrop
       // closes on click so the help is escapable even when the panel does not own the keys.
       '.dshcv-helpbackdrop{position:absolute;inset:0;z-index:59;background:color-mix(in srgb,var(--dsw-alias-bg-base) 55%,transparent)}',
-      '.dshcv-helphead{position:sticky;top:-14px;display:flex;align-items:center;gap:10px;margin:-14px -18px 6px;padding:12px 18px 8px;background:var(--dsw-alias-bg-overlay);border-bottom:1px solid var(--dsw-alias-border-l1);font-weight:600}',
+      '.dshcv-helptabs{display:flex;gap:6px;margin:2px 0 8px}',
+'.dshcv-settingrow{display:flex;align-items:center;gap:8px;padding:5px 0;border-top:1px solid color-mix(in oklab, var(--dshcv-ink) 8%, transparent)}',
+'.dshcv-settingrow:first-of-type{border-top:0}',
+'.dshcv-settingrow kbd{min-width:52px;color:color-mix(in oklab, var(--dshcv-ink) 62%, transparent)}',
+'.dshcv-settinghint{margin-left:auto;font-size:11px;color:color-mix(in oklab, var(--dshcv-ink) 55%, transparent)}',
+'.dshcv-helphead{position:sticky;top:-14px;display:flex;align-items:center;gap:10px;margin:-14px -18px 6px;padding:12px 18px 8px;background:var(--dsw-alias-bg-overlay);border-bottom:1px solid var(--dsw-alias-border-l1);font-weight:600}',
       '.dshcv-helphead>span{flex:1 1 auto}',
       '.dshcv-help kbd{display:inline-block;min-width:52px;padding:0 6px;border-radius:5px;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l1);font:inherit;text-align:center;margin-right:8px}',
       '.dshcv-search{display:inline-flex;align-items:center;gap:6px}',
@@ -2393,20 +2446,27 @@ if (['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg
         // Open the panel once per call. Without this, switching back to the
         // conversation remounts this card, whose effect would immediately
         // select the canvas again and the panel could never be closed.
-        if (autoOpened.has(key)) return;
+        const decision = decideAutoOpen({
+          enabled: autoOpenNew(),
+          targets,
+          callKey: key,
+          seen: autoOpened,
+          openPaths: store.docs.map((doc) => doc.path),
+        });
         rememberAutoOpened(key);
+        devlog('auto-open', [decision.action + ':' + decision.reason, 'call=' + String(props.callId || '')]);
+        // 只在真的有新产物时展开：旧产物已经开着时，不把面板拉到前面。
+        if (decision.action !== 'open') return;
         selectPanel(PANEL_KEY);
-        if (targets.length) {
-          openDocs(
-            targets.map((item, index) => ({
-              path: item,
-              view: args && args.view,
-              // The note and the focus line belong to the deliverable named first.
-              note: index === 0 ? args && args.note : undefined,
-              line: index === 0 ? args && args.line : undefined,
-            })),
-          );
-        }
+        openDocs(
+          decision.fresh.map((item, index) => ({
+            path: item,
+            view: args && args.view,
+            // The note and the focus line belong to the deliverable named first.
+            note: index === 0 ? args && args.note : undefined,
+            line: index === 0 ? args && args.line : undefined,
+          })),
+        );
       }, [props.phase, props.callId, targets.join('|')]);
 
       const glyph = h(

@@ -60,6 +60,44 @@ const listeners = new Set();
 let version = 0;
 const autoOpened = new Set();
 const AUTO_OPENED_LIMIT = 200;
+const openPrefs = { autoOpenNew: true };
+try {
+const saved = localStorage.getItem('dsh.canvas.autoopen');
+if (saved === '0' || saved === '1') openPrefs.autoOpenNew = saved === '1';
+} catch {
+}
+const autoOpenNew = () => openPrefs.autoOpenNew;
+const setAutoOpenNew = (on) => {
+openPrefs.autoOpenNew = Boolean(on);
+try {
+localStorage.setItem('dsh.canvas.autoopen', openPrefs.autoOpenNew ? '1' : '0');
+} catch {
+}
+syncHostPrefs(openPrefs.autoOpenNew);
+notify();
+};
+const syncHostPrefs = (value) => {
+try {
+const url = '/dsh-canvas/prefs';
+fetch(url, {
+method: 'POST',
+headers: { 'content-type': 'application/json' },
+body: JSON.stringify({ autoOpenNew: Boolean(value) }),
+credentials: 'same-origin',
+}).catch(() => {});
+} catch {
+}
+};
+const decideAutoOpen = (input) => {
+const targets = Array.isArray(input.targets) ? input.targets : [];
+if (!input.enabled) return { action: 'skip', reason: 'off', fresh: [] };
+if (!targets.length) return { action: 'skip', reason: 'nopath', fresh: [] };
+if (input.seen && input.seen.has(input.callKey)) return { action: 'skip', reason: 'dup', fresh: [] };
+const openPaths = Array.isArray(input.openPaths) ? input.openPaths : [];
+const fresh = targets.filter((target) => !openPaths.some((open) => sameFile(open, target)));
+if (!fresh.length) return { action: 'skip', reason: 'unchanged', fresh: [] };
+return { action: 'open', reason: 'new', fresh };
+};
 const rememberAutoOpened = (key) => {
 autoOpened.add(key);
 while (autoOpened.size > AUTO_OPENED_LIMIT) {
@@ -1691,6 +1729,11 @@ const CSS_BASE = [
 '.dshcv-chip[data-on="0"]{opacity:.45;text-decoration:line-through}',
 '.dshcv-help{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:60;min-width:300px;max-width:min(460px,calc(100% - 32px));max-height:calc(100% - 32px);overflow:auto;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l1);border-radius:12px;padding:14px 18px;box-shadow:0 18px 48px rgba(0,0,0,.3);font-size:12px;line-height:2}',
 '.dshcv-helpbackdrop{position:absolute;inset:0;z-index:59;background:color-mix(in srgb,var(--dsw-alias-bg-base) 55%,transparent)}',
+'.dshcv-helptabs{display:flex;gap:6px;margin:2px 0 8px}',
+'.dshcv-settingrow{display:flex;align-items:center;gap:8px;padding:5px 0;border-top:1px solid color-mix(in oklab, var(--dshcv-ink) 8%, transparent)}',
+'.dshcv-settingrow:first-of-type{border-top:0}',
+'.dshcv-settingrow kbd{min-width:52px;color:color-mix(in oklab, var(--dshcv-ink) 62%, transparent)}',
+'.dshcv-settinghint{margin-left:auto;font-size:11px;color:color-mix(in oklab, var(--dshcv-ink) 55%, transparent)}',
 '.dshcv-helphead{position:sticky;top:-14px;display:flex;align-items:center;gap:10px;margin:-14px -18px 6px;padding:12px 18px 8px;background:var(--dsw-alias-bg-overlay);border-bottom:1px solid var(--dsw-alias-border-l1);font-weight:600}',
 '.dshcv-helphead>span{flex:1 1 auto}',
 '.dshcv-help kbd{display:inline-block;min-width:52px;padding:0 6px;border-radius:5px;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l1);font:inherit;text-align:center;margin-right:8px}',
@@ -2063,19 +2106,25 @@ if (props.phase === 'preparing') return;
 const key = String(props.callId || '') + '|' + targets.join('|');
 if (opened.current === key) return;
 opened.current = key;
-if (autoOpened.has(key)) return;
+const decision = decideAutoOpen({
+enabled: autoOpenNew(),
+targets,
+callKey: key,
+seen: autoOpened,
+openPaths: store.docs.map((doc) => doc.path),
+});
 rememberAutoOpened(key);
+devlog('auto-open', [decision.action + ':' + decision.reason, 'call=' + String(props.callId || '')]);
+if (decision.action !== 'open') return;
 selectPanel(PANEL_KEY);
-if (targets.length) {
 openDocs(
-targets.map((item, index) => ({
+decision.fresh.map((item, index) => ({
 path: item,
 view: args && args.view,
 note: index === 0 ? args && args.note : undefined,
 line: index === 0 ? args && args.line : undefined,
 })),
 );
-}
 }, [props.phase, props.callId, targets.join('|')]);
 const glyph = h(
 'svg',
@@ -10264,6 +10313,7 @@ return 0.52;
 }
 });
 const [helpOpen, setHelpOpen] = React.useState(false);
+const [helpTab, setHelpTab] = React.useState('keys');
 const panelRef = React.useRef(null);
 const importInputRef = React.useRef(null);
 const paneRef = React.useRef(null);
@@ -11161,7 +11211,14 @@ onClick: () => setHelpOpen(false),
 '关闭',
 ),
 ),
-...[
+h(
+'div',
+{ className: 'dshcv-helptabs' },
+h('button', { type: 'button', className: 'dshcv-toggle dshcv-opt', 'aria-pressed': helpTab === 'keys' ? 'true' : 'false', onClick: () => setHelpTab('keys') }, '快捷键'),
+h('button', { type: 'button', className: 'dshcv-toggle dshcv-opt', 'aria-pressed': helpTab === 'settings' ? 'true' : 'false', onClick: () => setHelpTab('settings') }, '设置'),
+),
+helpTab === 'keys'
+? [
 ['Alt+S', '暂停 / 继续（单手，悬停面板即可）'],
 ['Alt+A / Alt+D', '后退 / 前进一帧（Shift 为 100ms）'],
 ['← →', '逐帧步进（备用，Shift 为 100ms）'],
@@ -11173,43 +11230,95 @@ onClick: () => setHelpOpen(false),
 ['Alt+1 / Alt+2', '在并排的两个窗格里切换焦点'],
 ['Esc', '并排时先退出并排'],
 ['?', '显示 / 隐藏本帮助'],
-].map(([key, label]) => h('div', { key }, h('kbd', null, key), label)),
+].map(([key, label]) => h('div', { key }, h('kbd', null, key), label))
+: null,
+helpTab === 'settings'
+? h(
+React.Fragment,
+{ key: 'settings' },
+settingRow('打开方式', '新产物自动打开', autoOpenNew(), () => setAutoOpenNew(!autoOpenNew()), '模型产出新文件时切到画布并选中它；关闭后提示词也会改为不主动打开'),
+settingRow('打开方式', '记住路径', pickerRemember(), toggleRemember, '文件选择器下次回到上次目录'),
+settingRow('标注', '发送后清空', autoClearAfterSend(), toggleAutoClear, '发送标注后清空列表'),
+settingRow('标注', '悬停高亮', followHoverOn(), () => setFollowHover(!followHoverOn()), '悬停标注行时高亮画布中的位置'),
+settingRow('预览', '注入标注脚本', injectScriptAllowed(), toggleInjectScript, 'HTML 预览内是否运行点选脚本'),
+settingRow('诊断', '渲染调试计数', debugRender(), toggleDebugRender, '显示三角形 / 绘制计数'),
 h(
 'div',
-{ style: { marginTop: '6px', display: 'flex', gap: '8px', alignItems: 'center' } },
-h('kbd', null, '调试'),
+{ style: { marginTop: '10px', display: 'flex', gap: '8px' } },
 h(
 'button',
-{
-type: 'button',
-className: 'dshcv-toggle',
-'aria-pressed': debugRender() ? 'true' : 'false',
-onClick: toggleDebugRender,
-},
-debugRender() ? '渲染调试计数：开' : '渲染调试计数：关',
+{ type: 'button', className: 'dshcv-btn', onClick: () => copyDiagnostics(setFlash) },
+'复制诊断信息',
 ),
-),
-h(
-'div',
-{ style: { marginTop: '6px', display: 'flex', gap: '8px', alignItems: 'center' } },
-h('kbd', null, 'HTML'),
 h(
 'button',
-{
-type: 'button',
-className: 'dshcv-toggle',
-'aria-pressed': injectScriptAllowed() ? 'true' : 'false',
-title: '关闭后预览不再运行插件的标注脚本，元素点选将不可用',
-onClick: toggleInjectScript,
-},
-injectScriptAllowed() ? '预览注入标注脚本：开' : '预览注入标注脚本：关',
+{ type: 'button', className: 'dshcv-btn', 'data-kind': 'quiet', onClick: () => setHelpTab('keys') },
+'看快捷键',
 ),
 ),
+)
+: null,
 ),
 )
 : null,
 );
 }
+const settingRow = (group, label, value, onToggle, hint) =>
+h(
+'div',
+{ className: 'dshcv-settingrow', title: hint },
+h('kbd', null, group),
+h(
+'button',
+{
+type: 'button',
+className: 'dshcv-toggle',
+'aria-pressed': value ? 'true' : 'false',
+title: hint,
+onClick: onToggle,
+},
+label,
+),
+h('span', { className: 'dshcv-settinghint' }, value ? '开' : '关'),
+);
+const copyDiagnostics = (flash) => {
+let text = '';
+try {
+text = JSON.stringify(resourceReport(), null, 2);
+} catch (error) {
+text = 'resourceReport failed: ' + (error && error.message ? error.message : String(error));
+}
+const files = [];
+if (files.length >= 0) {
+}
+try {
+if (navigator.clipboard && navigator.clipboard.writeText) {
+navigator.clipboard.writeText(text).then(
+() => flash('诊断信息已复制'),
+() => fallbackCopy(text, flash),
+);
+return;
+}
+} catch {
+}
+fallbackCopy(text, flash);
+};
+const fallbackCopy = (text, flash) => {
+try {
+const area = document.createElement('textarea');
+area.value = text;
+area.setAttribute('readonly', 'readonly');
+area.style.position = 'fixed';
+area.style.opacity = '0';
+document.body.appendChild(area);
+area.select();
+document.execCommand('copy');
+document.body.removeChild(area);
+flash('诊断信息已复制');
+} catch {
+flash('复制失败，可在控制台执行 __dshCanvasReport()');
+}
+};
 const GuardedPanel = guardPanel(CanvasPanel);
 const GuardedBridge = guardPanel(Bridge);
 const GuardedToolCard = guardPanel(CanvasToolCard);
