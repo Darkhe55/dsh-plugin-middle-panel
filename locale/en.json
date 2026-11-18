@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "Canvas panel",
-    "description": "Adds a middle canvas panel that shows deliverables beside the conversation, with numbered annotations you can send to the chat.",
-    "detail": "README.en.md"
+    "description": "Adds a canvas column between the file list and the conversation. It previews HTML pages, Markdown and text, images and SVG, PDF, Word/Excel/PowerPoint, CSV, 3D models (STL, OBJ, PLY, OFF, 3MF, DAE, GLB, glTF), video and DXF. Select text, pick an element in an HTML preview, drag a region on an image or video frame, click a 3D face or drag a video time range; each annotation is numbered and «发送标注» fills the composer with all of them as one message. Open it from the «画布» button at the right of the session header, or let the model call the canvas tool. «?» opens the shortcut list and the settings page: «新产物自动打开» (on by default) switches to the canvas and focuses a file only when the model produces a new one, and turning it off also stops the model from being told to open the panel on its own; «记住路径», «发送后清空», «悬停高亮», «注入标注脚本» and «渲染调试计数» live there too. Annotations stay on this machine until you send them, previews run in a sandboxed frame without same-origin access, and saving a text edit is limited to 4 MiB inside the session workspace. Models above 192 MB are refused with the reason instead of being loaded.",
+    "detail": "docs/DETAIL.md"
   }
 }
