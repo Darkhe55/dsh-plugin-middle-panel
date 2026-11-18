@@ -321,7 +321,19 @@ export function apply(ctx) {
     }
   }
 
-  ctx.effect(() => registerPromptSection())
+  ctx.effect(() => {
+    registerPromptSection()
+    return () => {
+      if (typeof promptDispose === 'function') {
+        try {
+          promptDispose()
+        } catch {
+          /* already gone */
+        }
+      }
+      promptDispose = null
+    }
+  })
 
   ctx.effect(() =>
     ctx.webServer.register({
@@ -516,15 +528,19 @@ export function apply(ctx) {
       path: '/dsh-canvas/prefs',
       handler: async (request, response) => {
         const nodeStyle = Boolean(response && typeof response.writeHead === 'function' && typeof response.end === 'function')
-        const hostHeader = (() => {
+        const headerOf = (name) => {
           try {
-            if (request && request.headers && typeof request.headers.get === 'function') return request.headers.get('host') || ''
+            if (request && request.headers && typeof request.headers.get === 'function') return request.headers.get(name) || ''
+            if (request && request.headers) return String(request.headers[String(name).toLowerCase()] || '')
           } catch {
-            /* ignore */
+            /* fall through */
           }
           return ''
-        })()
-        const cors = corsFor(request, hostHeader)
+        }
+        // Match the save route exactly: the desktop page reports an opaque origin, and a
+        // loopback page is trusted only when it is served from this very port.
+        const hostHeader = headerOf('host')
+        const cors = corsFor({ headers: { get: (name) => headerOf(name) } }, hostHeader)
         const reply = (status, body) => {
           const payload = JSON.stringify(body)
           if (nodeStyle) {
