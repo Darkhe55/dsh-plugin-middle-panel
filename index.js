@@ -18,7 +18,9 @@ import {
   textTooLarge,
   utf8Bytes,
 } from './save-guard.js'
+import z from '@deepseek-ai/schemastery'
 import { promptFor } from './prompt-variants.js'
+
 
 const writeIsStale = (before, expectedMtime, expectedSize, force) => {
   if (!before) return false
@@ -38,6 +40,15 @@ const writeIsStale = (before, expectedMtime, expectedSize, force) => {
 export { sessionCwdOf, sessionRootFromStore, writeIsStale }
 
 const VIEWS = ['auto', 'text', 'markdown', 'html', 'image']
+
+/**
+ * The switch is real plugin configuration, so it shows up where DSH renders config for this
+ * plugin row and survives restarts. It is deliberately not volatile: changing it re-applies the
+ * plugin, which is what re-registers the prompt variant.
+ */
+export const Config = z.object({
+  autoOpenNew: z.boolean().default(true),
+})
 
 /** Current preference; the client pushes its own value through /dsh-canvas/prefs. */
 const viewPrefs = { autoOpenNew: true }
@@ -194,7 +205,10 @@ const corsFor = (request, hostHeader) => {
   }
 }
 
-export function apply(ctx) {
+export function apply(ctx, config) {
+  // Adopt the persisted value before anything is registered, so the prompt and the panel agree
+  // from the first activation.
+  if (config && typeof config.autoOpenNew === 'boolean') viewPrefs.autoOpenNew = config.autoOpenNew
   // pdf.js is served from the plugin tree so the panel can render pages itself.
   registerVendorRoute(ctx, corsFor)
   const tool = {
@@ -520,9 +534,32 @@ export function apply(ctx) {
     }),
   )
 
-  // The client owns the switch (it lives in localStorage beside the other panel
-  // preferences) and pushes it here so the prompt can follow. The route is a single
-  // in-memory flag: nothing is persisted host-side, and the default stays "on".
+  // The switch is stored in the plugin row's config; the panel reads it back through GET and
+  // writes it through POST, so a fresh page adopts the profile's value instead of a stale copy.
+  // The profile owns the stored value: the row's config in cordis.patch.yml. Editing it is the
+  // only way to make the switch survive a restart, and a profile without an editor simply keeps
+  // the in-memory value for this run.
+  const canPersistConfig = () => {
+    try {
+      return Boolean(ctx.fiber && ctx.fiber.entry && ctx.get('configEditor'))
+    } catch {
+      return false
+    }
+  }
+
+  const persistAutoOpen = (value) => {
+    if (!canPersistConfig()) return
+    const editor = ctx.get('configEditor')
+    const entry = ctx.fiber.entry
+    Promise.resolve()
+      .then(() => editor.edit(entry, (current) => ({ ...current, autoOpenNew: value })))
+      .catch((error) => {
+        // A rejected write (higher layer overrides, read-only profile) leaves the in-memory value
+        // in charge; say so instead of pretending the switch was saved.
+        console.error('[canvas] auto-open switch could not be saved:', error && error.message)
+      })
+  }
+
   ctx.effect(() =>
     ctx.webServer.register({
       path: '/dsh-canvas/prefs',
@@ -570,12 +607,18 @@ export function apply(ctx) {
         if (!body || typeof body.autoOpenNew !== 'boolean') {
           return reply(400, { error: 'autoOpenNew must be a boolean' })
         }
-        if (viewPrefs.autoOpenNew !== body.autoOpenNew) {
+        const changed = viewPrefs.autoOpenNew !== body.autoOpenNew
+        if (changed) {
           viewPrefs.autoOpenNew = body.autoOpenNew
           registerPromptSection()
           console.error('[canvas] auto-open switch ->', viewPrefs.autoOpenNew ? 'on' : 'off')
         }
-        return reply(200, { ok: true, autoOpenNew: viewPrefs.autoOpenNew })
+        // Persist through the profile's config editor when the profile provides one. The write
+        // restarts this plugin (the field is not volatile), so it is started after the reply and
+        // its failure never turns into a failed request: the value is already live in memory.
+        const persisted = canPersistConfig()
+        if (changed && persisted) persistAutoOpen(viewPrefs.autoOpenNew)
+        return reply(200, { ok: true, autoOpenNew: viewPrefs.autoOpenNew, persisted })
       },
     }),
   )

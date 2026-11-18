@@ -12,7 +12,7 @@ const check = (ok, label, detail) => {
 
 // 从 index.js 抽出 corsFor 单独执行（它只用 header 读取，不依赖 ctx）
 const start = src.indexOf('const corsFor = (request, hostHeader) => {');
-const end = src.indexOf('export function apply(ctx)');
+const end = src.indexOf('export function apply(ctx');
 if (start < 0 || end < 0) {
   console.log('无法定位 corsFor');
   process.exit(1);

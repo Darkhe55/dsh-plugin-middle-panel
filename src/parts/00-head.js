@@ -93,26 +93,77 @@ window.__ModuleLoader__.load({
     // Long sessions must not grow this without bound: the oldest call ids are the ones a
     // remount is least likely to revisit.
     const AUTO_OPENED_LIMIT = 200;
-    // 是否在新产物出现时自动展开面板。默认开；关闭后提示词也会同步改为「不主动打开」。
-    const openPrefs = { autoOpenNew: true };
+    // 是否在新产物出现时自动展开面板。宿主里的插件配置是真相，localStorage 只用于首屏立刻可读。
+    const openPrefs = { autoOpenNew: true, persisted: 'unknown' };
     try {
       const saved = localStorage.getItem('dsh.canvas.autoopen');
       if (saved === '0' || saved === '1') openPrefs.autoOpenNew = saved === '1';
     } catch {
       /* storage is best effort */
     }
+
     const autoOpenNew = () => openPrefs.autoOpenNew;
-    const setAutoOpenNew = (on) => {
-      openPrefs.autoOpenNew = Boolean(on);
+    const prefsUrl = '/dsh-canvas/prefs';
+
+    const rememberAutoOpenLocal = (on) => {
       try {
-        localStorage.setItem('dsh.canvas.autoopen', openPrefs.autoOpenNew ? '1' : '0');
+        localStorage.setItem('dsh.canvas.autoopen', on ? '1' : '0');
       } catch {
         /* storage is best effort */
       }
-      // 通知宿主同步提示词：开关是「双重保险」，客户端与提示词一起切换。
-      syncHostPrefs(openPrefs.autoOpenNew);
-      notify();
     };
+
+    // 用户点了开关：本地立刻生效，再交给宿主写进插件配置。写不进去也不回滚——本次运行仍然有效。
+    const setAutoOpenNew = (on) => {
+      const next = Boolean(on);
+      openPrefs.autoOpenNew = next;
+      rememberAutoOpenLocal(next);
+      notify();
+      try {
+        fetch(prefsUrl, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ autoOpenNew: next }),
+          credentials: 'same-origin',
+        })
+          .then((response) => (response.ok ? response.json() : null))
+          .then((body) => {
+            if (!body || !body.ok) return;
+            // persisted=false 表示宿主没有配置写入通道：值只在本次运行有效。
+            openPrefs.persisted = body.persisted ? 'yes' : 'memory';
+            notify();
+          })
+          .catch(() => {
+            openPrefs.persisted = 'offline';
+            notify();
+          });
+      } catch {
+        openPrefs.persisted = 'offline';
+        notify();
+      }
+    };
+
+    // 页面加载时向宿主对齐：配置文件里的值优先于本地缓存，避免旧缓存覆盖用户在其他机器上的选择。
+    const loadHostPrefs = () => {
+      try {
+        fetch(prefsUrl, { credentials: 'same-origin' })
+          .then((response) => (response.ok ? response.json() : null))
+          .then((body) => {
+            if (!body || typeof body.autoOpenNew !== 'boolean') return;
+            openPrefs.persisted = 'yes';
+            if (body.autoOpenNew === openPrefs.autoOpenNew) return;
+            openPrefs.autoOpenNew = body.autoOpenNew;
+            rememberAutoOpenLocal(body.autoOpenNew);
+            notify();
+          })
+          .catch(() => {
+            /* 宿主不可达时沿用本地缓存 */
+          });
+      } catch {
+        /* 老宿主没有这条路由 */
+      }
+    };
+    loadHostPrefs();
 
     // 判定：有新产物才展开，否则什么都不做。纯函数，便于单测。
     // 把开关同步给宿主，让系统提示词与面板行为保持一致。失败只记录，不影响本地偏好。

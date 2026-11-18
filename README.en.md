@@ -96,6 +96,10 @@ The **Settings** page inside `?`:
 
 With automatic opening off, the model is no longer nudged to open the canvas either: the prompt and the panel behaviour switch together.
 
+The same switch is a plugin **config** field, so it can also be changed where DSH renders this
+plugin's configuration: it writes `config.autoOpenNew` on the plugin row in `cordis.patch.yml` and
+survives a restart. The panel switch is a view of that value and writes it back.
+
 ## Troubleshooting
 
 | Symptom | What to do |

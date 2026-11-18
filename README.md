@@ -99,6 +99,10 @@ target: git+https://github.com/Darkhe55/dsh-plugin-middle-panel.git
 
 关闭「新产物自动打开」后，模型也不会再被提示主动打开画布（提示词与面板行为同步切换）。
 
+这个开关同时是插件的**配置项**，所以在插件页的配置里也能改：改的是
+`cordis.patch.yml` 中本插件行的 `config.autoOpenNew`，重启后仍然有效。
+面板里的开关是同一个值的界面，改动会写回配置。
+
 ## 常见问题
 
 | 现象 | 处理 |

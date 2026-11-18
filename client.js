@@ -60,22 +60,65 @@ const listeners = new Set();
 let version = 0;
 const autoOpened = new Set();
 const AUTO_OPENED_LIMIT = 200;
-const openPrefs = { autoOpenNew: true };
+const openPrefs = { autoOpenNew: true, persisted: 'unknown' };
 try {
 const saved = localStorage.getItem('dsh.canvas.autoopen');
 if (saved === '0' || saved === '1') openPrefs.autoOpenNew = saved === '1';
 } catch {
 }
 const autoOpenNew = () => openPrefs.autoOpenNew;
-const setAutoOpenNew = (on) => {
-openPrefs.autoOpenNew = Boolean(on);
+const prefsUrl = '/dsh-canvas/prefs';
+const rememberAutoOpenLocal = (on) => {
 try {
-localStorage.setItem('dsh.canvas.autoopen', openPrefs.autoOpenNew ? '1' : '0');
+localStorage.setItem('dsh.canvas.autoopen', on ? '1' : '0');
 } catch {
 }
-syncHostPrefs(openPrefs.autoOpenNew);
-notify();
 };
+const setAutoOpenNew = (on) => {
+const next = Boolean(on);
+openPrefs.autoOpenNew = next;
+rememberAutoOpenLocal(next);
+notify();
+try {
+fetch(prefsUrl, {
+method: 'POST',
+headers: { 'content-type': 'application/json' },
+body: JSON.stringify({ autoOpenNew: next }),
+credentials: 'same-origin',
+})
+.then((response) => (response.ok ? response.json() : null))
+.then((body) => {
+if (!body || !body.ok) return;
+openPrefs.persisted = body.persisted ? 'yes' : 'memory';
+notify();
+})
+.catch(() => {
+openPrefs.persisted = 'offline';
+notify();
+});
+} catch {
+openPrefs.persisted = 'offline';
+notify();
+}
+};
+const loadHostPrefs = () => {
+try {
+fetch(prefsUrl, { credentials: 'same-origin' })
+.then((response) => (response.ok ? response.json() : null))
+.then((body) => {
+if (!body || typeof body.autoOpenNew !== 'boolean') return;
+openPrefs.persisted = 'yes';
+if (body.autoOpenNew === openPrefs.autoOpenNew) return;
+openPrefs.autoOpenNew = body.autoOpenNew;
+rememberAutoOpenLocal(body.autoOpenNew);
+notify();
+})
+.catch(() => {
+});
+} catch {
+}
+};
+loadHostPrefs();
 const syncHostPrefs = (value) => {
 try {
 const url = '/dsh-canvas/prefs';
@@ -11236,7 +11279,15 @@ helpTab === 'settings'
 ? h(
 React.Fragment,
 { key: 'settings' },
-settingRow('打开方式', '新产物自动打开', autoOpenNew(), () => setAutoOpenNew(!autoOpenNew()), '模型产出新文件时切到画布并选中它；关闭后提示词也会改为不主动打开'),
+settingRow(
+'打开方式',
+'新产物自动打开',
+autoOpenNew(),
+() => setAutoOpenNew(!autoOpenNew()),
+'模型产出新文件时切到画布并选中它；关闭后提示词也会改为不主动打开。' +
+'同一开关也出现在插件配置里' +
+(openPrefs.persisted === 'memory' ? '（当前配置不可写，仅本次运行有效）' : ''),
+),
 settingRow('打开方式', '记住路径', pickerRemember(), toggleRemember, '文件选择器下次回到上次目录'),
 settingRow('标注', '发送后清空', autoClearAfterSend(), toggleAutoClear, '发送标注后清空列表'),
 settingRow('标注', '悬停高亮', followHoverOn(), () => setFollowHover(!followHoverOn()), '悬停标注行时高亮画布中的位置'),
