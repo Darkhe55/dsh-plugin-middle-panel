@@ -394,8 +394,11 @@ localStorage.setItem('dsh.canvas.picker.remember', pickerPrefs.remember ? '1' : 
 } catch {
 }
 };
-const togglePickerRemember = () => setPickerRemember(!pickerPrefs.remember);    const pickerPathKey = (sessionId) => 'dsh.canvas.picker.path.' + String(sessionId || '');
-const readPickerPath = (sessionId) => {
+const togglePickerRemember = () => {
+setPickerRemember(!pickerPrefs.remember);
+notify();
+};
+const pickerPathKey = (sessionId) => 'dsh.canvas.picker.path.' + String(sessionId || '');    const readPickerPath = (sessionId) => {
 try {
 return localStorage.getItem(pickerPathKey(sessionId)) || '';
 } catch {
