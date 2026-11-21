@@ -4,7 +4,7 @@ node_modules/
 .DS_Store
 Thumbs.db
 
-# 我用的临时补丁脚���（不应进仓库）
+# 我用的临时补丁脚本（不应进仓库）
 .[a-z0-9-]*.cjs
 .npmrc
 
@@ -28,8 +28,7 @@ npm-debug.log*
 *.orig
 *.rej
 
-# 内部开发资料（发布纪律、验证清单、稳定性报告、图标预览）：只在本地保留，不进公开仓库。
-# 入口：docs/internal/README.md；约定见仓库根目录 AGENTS.md。
+# 内部开发资料（发布纪律、验证清单、稳定性报告、设计稿）：只在本地保留，不进公开仓库。
 docs/internal/
 
 # 编辑器与系统
