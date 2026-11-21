@@ -62,8 +62,19 @@ for (const [label, meta] of [['en', en], ['zh', zh]]) {
   check(/192/.test(zh.description) && /192/.test(en.description), '描述说明了体积上限');
 }
 
-// 6) 打包清单包含详情文档目录与本地化资源
-check(Array.isArray(pkg.files) && pkg.files.includes('docs'), 'files 包含 docs');
+// 6) 打包清单覆盖详情文档与预览图，并包含本地化资源。
+// 详情文档要具名列出或由目录条目覆盖：只写一个 docs 目录会把 docs/internal 一起带进包。
+const shipped = (relative) =>
+  (Array.isArray(pkg.files) ? pkg.files : []).some((entry) => {
+    const clean = entry.replace(/^\.\//, '');
+    if (clean === relative) return true;
+    return clean.endsWith('/') && relative.startsWith(clean);
+  });
+for (const [label, meta] of [['en', en], ['zh', zh]]) {
+  const detail = String(meta.detail || '').replace(/^\.\//, '');
+  check(shipped(detail), label + '：详情文档随包发布', detail);
+}
+check(shipped('docs/preview.svg'), '预览图随包发布');
 check(pkg.files.some((item) => item.startsWith('locale/')), 'files 包含 locale');
 check(pkg.exports['./locale/*.json'] === './locale/*.json', '导出 locale');
 check(pkg.exports['./icon'] === './icon.svg', '导出 icon');

@@ -60,6 +60,33 @@ for (const entry of files) {
   check(fs.existsSync(path.join(root, entry)), '白名单文件存在：' + entry);
 }
 
+// A directory entry publishes everything inside it, including material that is only meant
+// for the repository: `docs` once put docs/internal/ - the design drafts - into the tarball.
+const INTERNAL = ['docs/internal', 'test', 'node_modules', 'src', 'scripts'];
+let internalHits = 0;
+const inspect = (directory, relative) => {
+  for (const child of fs.readdirSync(directory, { withFileTypes: true })) {
+    const childRelative = relative + '/' + child.name;
+    if (INTERNAL.some((prefix) => childRelative === prefix || childRelative.startsWith(prefix + '/'))) {
+      internalHits += 1;
+      continue;
+    }
+    if (child.isDirectory()) inspect(path.join(directory, child.name), childRelative);
+  }
+};
+for (const entry of files) {
+  const clean = entry.replace(/^\.\//, '').replace(/\/$/, '');
+  const full = path.join(root, clean);
+  if (entry.endsWith('/') && fs.existsSync(full)) inspect(full, clean);
+}
+check(internalHits === 0, '白名单目录里没有仓库内部资料', String(internalHits) + ' 个');
+
+// The plugin detail page depends on these three paths, so they are listed by name rather
+// than through the whole docs directory.
+for (const required of ['docs/DETAIL.md', 'docs/DETAIL.zh.md', 'docs/preview.svg', 'icon.svg']) {
+  check(covered(required), '发布物包含：' + required);
+}
+
 if (failures) {
   console.log('失败 ' + failures + ' 项');
   process.exit(1);

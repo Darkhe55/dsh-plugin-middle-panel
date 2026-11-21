@@ -111,7 +111,7 @@
 - 图标为内联 SVG，不引入图标库、不增加网络请求；带 `aria-hidden`，读屏不受影响。
 - 「暂不支持」的标记由斜线改为问号：它的语义是「不知道 / 打不开」，不是「禁止」。
 - **类型配色**：文档外框统一保持主题中性色，只有中间的标记按格式上色，沿用各格式已有的习惯色——PDF 红、HTML 橙、Markdown 与 Office 蓝、表格绿、图片紫、视频品红、3D 模型青、CAD 琥珀、设计稿洋红、文件夹琥珀、纯文本中性灰。取中间调，浅色与深色主题下都能读。
-- 预览页 `docs/internal/icons-preview.html` 由 `npm run icons:preview`（`scripts/preview-icons.cjs`）从源码生成，改了图形重新跑一次即可，避免快照与实现漂移。
+- 图标预览页由 `npm run icons:preview`（`scripts/preview-icons.cjs`）从源码生成到本地忽略目录，改了图形重新跑一次即可，避免快照与实现漂移（该页是维护工具，不随包发布）。
 
 #### 测试
 
@@ -134,6 +134,7 @@
 - 版本升到 **0.6.0**：0.5.6 之后的改动都还没发布，变更记录里先前的 0.5.7 / 0.5.8 / 0.5.9 三段草稿一并并入本节——这三个版本从未发布到 npm，registry 上不存在，留在版本号里等于承诺一个装不到的版本。
 - 已发布版本（0.5.1–0.5.6）的标题不再带「未发布」标记。
 - `test/market-index.test.cjs` 的断言从「清单首条必须等于 package.json 版本」放宽为「清单不高于 package.json、且版本严格降序」：发布前版本先升、清单要等 registry 确认才写，两者之间本来就有一个发布窗口。清单不能广告未发布版本这一点仍由 `release.cjs --index-only` 的 registry 查询兜底。
+- 发布白名单里的 `docs` 改成三个具名文件（`DETAIL.md` / `DETAIL.zh.md` / `preview.svg`）：目录条目会把 `docs/internal/` 的设计稿一起打进 tarball（实测已发生）。`test/package-files.test.cjs` 现在会遍历白名单目录，发现 `docs/internal` / `test` / `src` / `scripts` 这类内部路径就失败。
 
 ## 0.5.6
 

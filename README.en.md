@@ -27,7 +27,7 @@ target: git+https://github.com/Darkhe55/dsh-plugin-middle-panel.git
 
 Restart DSH afterwards; if the UI looks unchanged, hard-reload once with `Ctrl+Shift+R`.
 
-Requires DSH `>=0.2.2-rc.1 <0.3.0` and Node `>=24.9.0`. No runtime dependencies.
+Requires DSH `>=0.2.2-rc.1 <0.3.0` and Node `>=24.9.0`. The only runtime dependency is `@deepseek-ai/schemastery`, the schema library DSH itself ships, used to declare the plugin config.
 
 ## Quick start
 
@@ -53,7 +53,7 @@ You can also open the panel from the **画布** button at the right of the sessi
 |---|---|---|
 | Web page | `.html` `.htm` | hover highlight, pick element (selector + text), pause and step frames |
 | Text | `.md` `.txt` | line range, editable and saveable |
-| Image | `.png` `.jpg` `.webp` `.gif` `.bmp` `.svg` | region marquee, colour pick, ruler; SVG layers are pickable |
+| Image | `.png` `.jpg` `.webp` `.gif` `.bmp` `.svg` | region marquee, colour pick, ruler, `Ctrl` / `Cmd` + wheel zoom; SVG layers are pickable |
 | PDF | `.pdf` | text selection, region; encrypted files can be unlocked in place |
 | Office | `.docx` `.xlsx` `.pptx` | paragraphs, cells, paged text |
 | Sheets | `.csv` `.tsv` | cells |
@@ -68,7 +68,7 @@ Oversized models are refused with the reason (192 MB preview ceiling) rather tha
 
 | Key | Action |
 |---|---|
-| `?` | shortcuts and settings |
+| `?` | help overlay: shortcuts / settings, `←` `→` to switch pages |
 | `Ctrl+Tab` | switch tab (`Shift` reverses) |
 | `Alt+W` | close the current tab |
 | `Alt+\` | side-by-side, press again to leave |
@@ -116,7 +116,7 @@ node scripts/build.cjs    # generate client.js from src/parts/
 npm test                  # full suite
 ```
 
-Client changes need a page reload; host changes (`index.js`) need a DSH restart.
+Client changes need a page reload; host changes (`index.js`) need a DSH restart. See [CHANGELOG.md](CHANGELOG.md) for the implementation history; maintainer rules live in `AGENTS.md` at the repository root.
 
 ## Links
 

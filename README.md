@@ -27,7 +27,7 @@ target: git+https://github.com/Darkhe55/dsh-plugin-middle-panel.git
 
 装完重启 DSH；界面没变化时按一次 `Ctrl+Shift+R` 硬刷新。
 
-要求：DSH `>=0.2.2-rc.1 <0.3.0`，Node `>=24.9.0`，无运行时依赖。
+要求：DSH `>=0.2.2-rc.1 <0.3.0`，Node `>=24.9.0`。运行时依赖只有 `@deepseek-ai/schemastery`——DSH 自带的那套 schema 库，用来声明本插件的配置项。
 
 ## 快速开始
 
@@ -56,7 +56,7 @@ target: git+https://github.com/Darkhe55/dsh-plugin-middle-panel.git
 |---|---|---|
 | 网页 | `.html` `.htm` | 悬停高亮、点选元素（选择器 + 文本）、暂停并逐帧 |
 | 文本 | `.md` `.txt` | 划选行区间，可编辑保存 |
-| 图片 | `.png` `.jpg` `.webp` `.gif` `.bmp` `.svg` | 框选区域、取色、标尺；SVG 可点选图层 |
+| 图片 | `.png` `.jpg` `.webp` `.gif` `.bmp` `.svg` | 框选区域、取色、标尺；`Ctrl` / `Cmd` + 滚轮缩放；SVG 可点选图层 |
 | PDF | `.pdf` | 文字划选、框选区域；加密 PDF 可在面板内解锁 |
 | Office | `.docx` `.xlsx` `.pptx` | 段落 / 单元格 / 分页文本 |
 | 表格 | `.csv` `.tsv` | 单元格 |
@@ -71,7 +71,7 @@ target: git+https://github.com/Darkhe55/dsh-plugin-middle-panel.git
 
 | 操作 | 说明 |
 |---|---|
-| `?` | 快捷键与设置 |
+| `?` | 帮助浮层：快捷键 / 设置两页，`←` `→` 换页 |
 | `Ctrl+Tab` | 切换标签（加 `Shift` 反向） |
 | `Alt+W` | 关闭当前标签 |
 | `Alt+\` | 并排对比，再按一次收起 |
@@ -119,7 +119,7 @@ node scripts/build.cjs    # 由 src/parts/ 生成 client.js
 npm test                  # 全部测试
 ```
 
-客户端改动刷新页面即可；宿主 `index.js` 改动需要重启 DSH。目录与实现说明见 [CHANGELOG.md](CHANGELOG.md) 与仓库内 `docs/internal/`（维护者资料，不在发布包里）。
+客户端改动刷新页面即可；宿主 `index.js` 改动需要重启 DSH。实现与版本历史见 [CHANGELOG.md](CHANGELOG.md)，维护者约定见仓库根目录的 `AGENTS.md`。
 
 ## 链接
 
