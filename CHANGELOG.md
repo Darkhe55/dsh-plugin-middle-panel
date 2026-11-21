@@ -64,6 +64,7 @@
 - 帮助面板改为 `role="dialog"`，标题栏在内容滚动时固定可见，内容超高时内部滚动而不是溢出容器。
 - 帮助浮层改成真正的页签：`role="tablist"` / `role="tab"` + `aria-selected`，当前页用 2px 主色下划线标出；`←` / `→` 循环、`Home` / `End` 到头尾，换页后焦点跟着走。此前两个页签借用开关样式（`aria-pressed`、红/绿径向、开态更圆），读起来是「设置没被启用」，两个页签还能同时点绿。
 - 标题栏与 `aria-label` 跟随当前页（`帮助 · 快捷键` / `帮助 · 设置`），不再恒为「快捷键」。
+- 修复「设置」页打不开：那一页引用了文件选择器里的局部 helper（`toggleRemember`），点开就抛 `ReferenceError`，整块画布被隔离。现在偏好开关有自己的模块级 `togglePickerRemember`，并新增 `test/help-settings-render.test.cjs`（强制打开设置页并遍历渲染树）——把 helper 换回局部名字，这个测试会红。
 
 ### 诊断
 

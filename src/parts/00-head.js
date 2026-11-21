@@ -489,7 +489,10 @@ window.__ModuleLoader__.load({
         /* storage is best effort */
       }
     };
-    const pickerPathKey = (sessionId) => 'dsh.canvas.picker.path.' + String(sessionId || '');
+    // The help page needs the same global preference without the picker's local state,
+    // so it gets its own module-scope toggle. (The picker keeps its own: turning the
+    // switch on there also records the folder currently on screen.)
+    const togglePickerRemember = () => setPickerRemember(!pickerPrefs.remember);    const pickerPathKey = (sessionId) => 'dsh.canvas.picker.path.' + String(sessionId || '');
     const readPickerPath = (sessionId) => {
       try {
         return localStorage.getItem(pickerPathKey(sessionId)) || '';

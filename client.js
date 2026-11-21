@@ -394,7 +394,7 @@ localStorage.setItem('dsh.canvas.picker.remember', pickerPrefs.remember ? '1' : 
 } catch {
 }
 };
-const pickerPathKey = (sessionId) => 'dsh.canvas.picker.path.' + String(sessionId || '');
+const togglePickerRemember = () => setPickerRemember(!pickerPrefs.remember);    const pickerPathKey = (sessionId) => 'dsh.canvas.picker.path.' + String(sessionId || '');
 const readPickerPath = (sessionId) => {
 try {
 return localStorage.getItem(pickerPathKey(sessionId)) || '';
@@ -11375,7 +11375,7 @@ autoOpenNew(),
 '同一开关也出现在插件配置里' +
 (openPrefs.persisted === 'memory' ? '（当前配置不可写，仅本次运行有效）' : ''),
 ),
-settingRow('打开方式', '记住路径', pickerRemember(), toggleRemember, '文件选择器下次回到上次目录'),
+settingRow('打开方式', '记住路径', pickerRemember(), togglePickerRemember, '文件选择器下次回到上次目录'),
 settingRow('标注', '发送后清空', autoClearAfterSend(), toggleAutoClear, '发送标注后清空列表'),
 settingRow('标注', '悬停高亮', followHoverOn(), () => setFollowHover(!followHoverOn()), '悬停标注行时高亮画布中的位置'),
 settingRow('预览', '注入标注脚本', injectScriptAllowed(), toggleInjectScript, 'HTML 预览内是否运行点选脚本'),
