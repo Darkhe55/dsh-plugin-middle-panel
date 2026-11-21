@@ -2,7 +2,7 @@
 
 本项目的版本按 `主.次.修订` 递增；`npm` 上已发布的版本不可撤回，修正一律走新版本。
 
-## 未发布（0.6.0 草案，尚未发布到 npm）
+## 0.6.0（未发布）
 
 ### 开关成为插件配置
 
@@ -86,9 +86,7 @@
 - `test/viewer-cleanup.test.cjs`：视频 pause/清空 src/load()、PDF renderTask 取消与 page.cleanup、HTML iframe 卸载与 message 监听移除。
 - `test/pdf-canvas.test.cjs`、`test/pdf-multipage.test.cjs`、`test/pdf-zoom-stability.test.cjs` 同步到新的 renderTask 写法。
 
-## 0.5.9（未发布）
-
-### 新增
+### 文件选择器记住上次路径
 
 - **文件选择器记住上次路径**：工具栏右侧新增「记住路径」开关。打开后，文件选择器下次打开会直接回到上次所在的目录，而不是每次都从工作区根目录开始；关闭时保持原来的行为。
 - 开关状态是全局偏好（`dsh.canvas.picker.remember`），记录的位置按会话分开（`dsh.canvas.picker.path.<sessionId>`），避免把 A 工作区的目录带进 B 工作区。
@@ -96,13 +94,11 @@
 - 为工具栏让出空间：面包屑占据剩余宽度并可横向滚动，开关固定在右侧。
 - 开关沿用面板已有的红绿切换样式（`.dshcv-toggle`，与 3D 视图的「面 / 边」一致）：关闭为红、打开为绿，文字固定不跳动，状态由颜色表达。
 
-### 测试
+#### 测试
 
 - 新增 `test/picker-path.test.cjs`（18 项）：默认不记忆、仅在开关打开时恢复、成功加载后写回、失效路径回落、开关的无障碍与可见状态、工具栏布局约束。
 
-## 0.5.8（未发布）
-
-### 新增
+### 文件列表类型图标
 
 - **文件列表类型图标**：面板的目录浏览列表每行前加了一个 14px 的 SVG 图标——文件夹用文件夹形状，文件按类型区分（markdown / html / pdf / 图片 / 视频 / 3D 模型 / CAD / 设计稿 / Office / 表格 / 文本 / 暂不支持）。颜色取 `currentColor`，跟随主题；行高、文件名截断与悬停行为不变。
 - 图标为内联 SVG，不引入图标库、不增加网络请求；带 `aria-hidden`，读屏不受影响。
@@ -110,38 +106,42 @@
 - **类型配色**：文档外框统一保持主题中性色，只有中间的标记按格式上色，沿用各格式已有的习惯色——PDF 红、HTML 橙、Markdown 与 Office 蓝、表格绿、图片紫、视频品红、3D 模型青、CAD 琥珀、设计稿洋红、文件夹琥珀、纯文本中性灰。取中间调，浅色与深色主题下都能读。
 - 预览页 `docs/internal/icons-preview.html` 由 `npm run icons:preview`（`scripts/preview-icons.cjs`）从源码生成，改了图形重新跑一次即可，避免快照与实现漂移。
 
-### 测试
+#### 测试
 
 - 新增 `test/file-icons.test.cjs`（28 项）：每个 `fileKind` 都有对应图形、目录优先用文件夹图标、行渲染真的插入了图标、样式约束 14px 且不参与伸缩、不使用 emoji。
 
-## 0.5.7（未发布）
-
-### 修复
+### 保存接口的超限处理
 
 - **超限请求体现在真的返回 413**：`readCappedBody` 在越过 6 MiB 时先调用 `request.destroy()` 再抛 `BodyTooLarge`，socket 已被销毁，外层写的 `413` 根本发不出去，客户端只看到 `ECONNRESET`。现在改成：一旦超限**立即停止累积**（多出的块计数后丢弃，不拼接、不保留），把剩余请求体读空丢弃（字节与时间双上限），再由 `replyBodyTooLarge()` 写出 `413` + `Connection: close`；全程不在响应之前销毁 socket。
 - 新增真实 HTTP 集成测试 `test/save-route-real.test.mjs`：用 `apply()` 注册出来的**真实保存路由**跑在真实 `http.createServer` 上，覆盖正常保存、超限 413、`Connection: close`、分块上传超限、超限后再保存；另有 `test/save-route-http.test.mjs` 覆盖边界值与分块场景。把实现换回「超限即 destroy」时这两个测试都会红。
 - `test/save-guard.test.mjs` 改用真实的请求替身（`on`/`once`/`removeListener`/`pause`/`destroy`），断言超限时连接未被销毁、不保留超限字节。
 
-### 连接关闭策略
+#### 连接关闭策略
 
 - 不完整消费的请求体不能复用连接：413 响应带 `Connection: close`，由 Node 在响应写完后关闭。
 - 抽干阶段有 32 MiB / 5 s 上限，对端持续灌数据时会中止读取，避免连接被长期占用。
 - 抽干期间挂上 `error` 监听，关闭时的 socket 错误不会变成未处理的 rejection。
 
-## 0.5.6（未发布）
+### 工程
+
+- 版本升到 **0.6.0**：0.5.6 之后的改动都还没发布，变更记录里先前的 0.5.7 / 0.5.8 / 0.5.9 三段草稿一并并入本节——这三个版本从未发布到 npm，registry 上不存在，留在版本号里等于承诺一个装不到的版本。
+- 已发布版本（0.5.1–0.5.6）的标题不再带「未发布」标记。
+- `test/market-index.test.cjs` 的断言从「清单首条必须等于 package.json 版本」放宽为「清单不高于 package.json、且版本严格降序」：发布前版本先升、清单要等 registry 确认才写，两者之间本来就有一个发布窗口。清单不能广告未发布版本这一点仍由 `release.cjs --index-only` 的 registry 查询兜底。
+
+## 0.5.6
 
 ### 工程
 
 - 新增 `.gitattributes`：仓库内统一 LF，二进制类型标记为 binary。之前的每次提交都会刷一堆 `LF will be replaced by CRLF` 警告，现在没有了。
 - `package.json` 补 `engines.node: ">=24.9.0"`，与 DSH 自身的要求一致。
-- 新增 `test/market-index.test.cjs`：市场清单的第一条必须等于 `package.json` 的版本，且带上 `engines.dsh`；按标签发布后清单不会再悄悄落后。
+- 新增 `test/market-index.test.cjs`：市场清单的第一条必须等于 `package.json` 的版本，且带上 `engines.dsh`；按标签发布后清单不会再悄悄落后。（0.6.0 起放宽为「不高于」，见上方）
 - `market-index.json` 同步到 0.5.6。
 
 ### 发布
 
 - 首次通过 **GitHub Actions + npm 可信发布（OIDC）**发布：`git push origin v0.5.6` 触发，不再依赖本地 token。
 
-## 0.5.5（未发布）
+## 0.5.5
 
 ### CI 与发布流程
 
@@ -162,7 +162,7 @@
 - 提交建议不再给 `git add -A`：改为列出当前工作树、只把发布相关文件（`package.json`、`client.js`、`CHANGELOG.md`、`market-index.json`）写进建议命令；若工作树里出现 `.npmrc`、`*.env*`、`*.pem`、`*token*.txt`、`*.tgz`、`dsh-smoke-*` 这类路径，直接拒绝给提交命令并提示先处理。
 - `.gitignore` 补充：`*.tgz`、`.env*`、`*.pem`/`*.key`/`*.p12`/`*.pfx`、`*token*.txt`、`.npmrc.*`、`dsh-smoke-*`、`*.bak`/`*.orig`/`*.rej`、`.vscode/`、`.idea/`。新增 `test/git-hygiene.test.cjs` 断言这些规则存在、对示例路径生效、且仓库里没有已跟踪的凭据文件。
 
-## 0.5.4（未发布）
+## 0.5.4
 
 ### 安全
 
@@ -181,22 +181,21 @@
 - **冒烟脚本** `scripts/smoke-save.cjs`（`npm run smoke:save`）：对运行中的实例验证正常保存、4 MiB 边界值、UTF-8 字节上限、6 MiB 请求体在中途中断、409 冲突、junction 越界，并清理自己创建的文件。
 - 已对本地实例实测通过 10 项。
 
-## 0.5.3（未发布）
+## 0.5.3
 
 ### 修复
 
-- **画布被隔离（React #31）**：搜索提示条与加密解锁表单被插到了 h() 的 props 位置，真正的 props 对象变成子节点，导致整个画布报「Objects are not valid as a React child」并被隔离。已调整到正确的兄弟位置，并新增结构断言 	est/render-children.test.cjs（对 0.5.2 构建会报错）。
+- **画布被隔离（React #31）**：搜索提示条与加密解锁表单被插到了 h() 的 props 位置，真正的 props 对象变成子节点，导致整个画布报「Objects are not valid as a React child」并被隔离。已调整到正确的兄弟位置，并新增结构断言 test/render-children.test.cjs（对 0.5.2 构建会报错）。
 
-## 0.5.2（未发布）
+## 0.5.2
 
 ### 安全与隐私
 
-- vendor 路由对不透明来源只回 \
-ull\，不再返回通配符 \*\。
-- pdf.js \getDocument\ 关闭 \isEvalSupported\，解析不可信文档时不再走 eval 路径。
-- 发布改用 \iles\ 白名单：不再打包 \	est/\ 与 \scripts/\。
+- vendor 路由对不透明来源只回 `null`，不再返回通配符 `*`。
+- pdf.js `getDocument` 关闭 `isEvalSupported`，解析不可信文档时不再走 eval 路径。
+- 发布改用 `files` 白名单：不再打包 `test/` 与 `scripts/`。
 
-## 0.5.1（未发布）
+## 0.5.1
 
 > 0.5.0 在 registry 上缺少 tarball（发布后被误删），因此以 0.5.1 重新发布，内容与 0.5.0 相同。
 
@@ -206,7 +205,7 @@ ull\，不再返回通配符 \*\。
 
 #### 并排对比
 
-- 画布面板可拆成两个窗格：标签栏的 `⧉` 开关（或 `Alt+\\`）进入并排，第二个窗格填入另一个已打开的交付物。
+- 画布面板可拆成两个窗格：标签栏的 `⧉` 开关（或 `Alt+\`）进入并排，第二个窗格填入另一个已打开的交付物。
 - 分隔条 1px 视觉 + 9px 命中区，拖动调整比例，松手吸附到 30/40/50/60/70，双击复位 50/50，方向键微调。
 - 激活窗格用 1px 蓝色内描边标出，非激活窗格退到 90% 不透明度；点击窗格任意位置切换焦点。
 - 标签栏联动：点击未激活的标签**替换非激活窗格**，不会越开越多；第二窗格的标签带细描边。
@@ -214,7 +213,7 @@ ull\，不再返回通配符 \*\。
 - **防形变**：HTML 按 1280、PDF 按 900 逻辑宽度整体等比缩放（`ResizeObserver` 跟随），页面版式不重排；图片维持固有比例；三维每帧按当前宽高比重算投影。
 - **断点降级**：宽度 < 860px 自动改为上下排列，< 600px 或高度 < 500px 放弃并排回单栏；标签栏另有 `↔ / ↕` 手动切换排列方向。
 - **标注语义**：标注仍属于文件而非窗格；标注栏「只看当前」跟随聚焦窗格；工具栏提示「另有 N 条在另一侧」，发送时两侧一起聚合。
-- 键盘：`Alt+\\` 开关、`Alt+1` / `Alt+2` 切焦点、`Esc` 退出并排。
+- 键盘：`Alt+\` 开关、`Alt+1` / `Alt+2` 切焦点、`Esc` 退出并排。
 
 #### 视频标注
 

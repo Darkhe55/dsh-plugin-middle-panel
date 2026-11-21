@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-middle-panel",
-  "version": "0.5.6",
+  "version": "0.6.0",
   "description": "Adds a canvas column beside the chat: review deliverables, annotate them, send the notes back as one message.",
   "keywords": [
     "dsh",
