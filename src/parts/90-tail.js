@@ -4742,6 +4742,8 @@ function CanvasPanel(props) {      useVersion();
     // 帮助浮层分「快捷键 / 设置」两页；记住上次打开的页面，避免每次都要再点一次。
     const [helpTab, setHelpTab] = React.useState('keys');
       const panelRef = React.useRef(null);
+      // 只在激活标签真的换了时滚一次，不然每次重渲染都会把用户的横向滚动拽回去。
+      const scrolledTabRef = React.useRef('');
       const importInputRef = React.useRef(null);
       const paneRef = React.useRef(null);
       // Height of the annotation rail. 0 means "use the default max-height".
@@ -5456,33 +5458,57 @@ function CanvasPanel(props) {      useVersion();
               ? h(
                   'div',
                   { className: 'dshcv-docs' },
-                  store.docs.map((doc) =>
-                    h(
-                      'span',
-                      { key: doc.id, style: { display: 'inline-flex', alignItems: 'center', gap: 2 } },
+                  h('span', { className: 'dshcv-doccount', title: '已打开 ' + store.docs.length + ' 个交付物', 'aria-hidden': 'true' }, String(store.docs.length)),
+                  h(
+                    'div',
+                    { className: 'dshcv-doctabs', role: 'tablist', 'aria-label': '已打开的交付物' },
+                    store.docs.map((doc) =>
                       h(
-                        'button',
+                        'div',
                         {
-                          type: 'button',
-                          className: 'dshcv-chip',
+                          key: doc.id,
+                          className: 'dshcv-dtab',
                           'data-active': doc.id === (active && active.id) ? '1' : '0',
                           'data-second': splitState().on && doc.id === splitState().secondId ? '1' : '0',
-                          title: doc.path,
-                          onClick: () => focusDoc(doc),
                         },
-                        basename(doc.path),
-                      ),
-                      h(
-                        'button',
-                        {
-                          type: 'button',
-                          className: 'dshcv-btn',
-                          'data-kind': 'quiet',
-                          style: { padding: '0 5px', lineHeight: '16px' },
-                          title: '关闭该交付物',
-                          onClick: () => closeDoc(doc.id),
-                        },
-                        '×',
+                        h(
+                          'button',
+                          {
+                            type: 'button',
+                            className: 'dshcv-dtab-label',
+                            role: 'tab',
+                            'aria-selected': doc.id === (active && active.id) ? 'true' : 'false',
+                            title: doc.path,
+                            onClick: () => focusDoc(doc),
+                            // 激活的标签始终滚进可视区，别让新开的文件落在溢出区里看不见。
+                            ref: (node) => {
+                              if (!node || typeof node.scrollIntoView !== 'function') return;
+                              if (doc.id !== (active && active.id)) return;
+                              if (scrolledTabRef.current === doc.id) return;
+                              scrolledTabRef.current = doc.id;
+                              try {
+                                node.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+                              } catch {
+                                node.scrollIntoView(false);
+                              }
+                            },
+                          },
+                          basename(doc.path),
+                        ),
+                        splitState().on && doc.id === splitState().secondId
+                          ? h('span', { className: 'dshcv-dtab-badge', title: '在第二窗格' }, '2')
+                          : null,
+                        h(
+                          'button',
+                          {
+                            type: 'button',
+                            className: 'dshcv-dtab-x',
+                            title: '关闭该交付物',
+                            'aria-label': '关闭 ' + basename(doc.path),
+                            onClick: () => closeDoc(doc.id),
+                          },
+                          '×',
+                        ),
                       ),
                     ),
                   ),
@@ -5690,13 +5716,13 @@ function CanvasPanel(props) {      useVersion();
                   className: 'dshcv-help',
                   key: 'help',
                   role: 'dialog',
-                  'aria-label': '快捷键帮助',
+                  'aria-label': helpTab === 'settings' ? '帮助：设置' : '帮助：快捷键',
                   'aria-modal': 'true',
                 },
                 h(
                   'div',
                   { className: 'dshcv-helphead' },
-                  h('span', null, '快捷键'),
+                  h('span', null, helpTab === 'settings' ? '帮助 · 设置' : '帮助 · 快捷键'),
                   h(
                     'button',
                     {
@@ -5710,14 +5736,51 @@ function CanvasPanel(props) {      useVersion();
                     '关闭',
                   ),
                 ),
-              h(
-                'div',
-                { className: 'dshcv-helptabs' },
-                h('button', { type: 'button', className: 'dshcv-toggle dshcv-opt', 'aria-pressed': helpTab === 'keys' ? 'true' : 'false', onClick: () => setHelpTab('keys') }, '快捷键'),
-                h('button', { type: 'button', className: 'dshcv-toggle dshcv-opt', 'aria-pressed': helpTab === 'settings' ? 'true' : 'false', onClick: () => setHelpTab('settings') }, '设置'),
-              ),
-              helpTab === 'keys'
-                ? [
+                // 页签表达「内容区停在哪一页」：aria-selected + 下划线，与开关的 aria-pressed 分开。
+                h(
+                  'div',
+                  { className: 'dshcv-tabs', role: 'tablist', 'aria-label': '帮助内容' },
+                  h(
+                    'button',
+                    {
+                      type: 'button',
+                      className: 'dshcv-tab',
+                      role: 'tab',
+                      id: 'dshcv-help-tab-keys',
+                      'aria-selected': helpTab === 'keys' ? 'true' : 'false',
+                      'aria-controls': 'dshcv-help-panel-keys',
+                      tabIndex: helpTab === 'keys' ? 0 : -1,
+                      onClick: () => setHelpTab('keys'),
+                      onKeyDown: (event) => moveHelpTab(event, helpTab, setHelpTab),
+                    },
+                    '快捷键',
+                  ),
+                  h(
+                    'button',
+                    {
+                      type: 'button',
+                      className: 'dshcv-tab',
+                      role: 'tab',
+                      id: 'dshcv-help-tab-settings',
+                      'aria-selected': helpTab === 'settings' ? 'true' : 'false',
+                      'aria-controls': 'dshcv-help-panel-settings',
+                      tabIndex: helpTab === 'settings' ? 0 : -1,
+                      onClick: () => setHelpTab('settings'),
+                      onKeyDown: (event) => moveHelpTab(event, helpTab, setHelpTab),
+                    },
+                    '设置',
+                  ),
+                ),
+                h(
+                  'div',
+                  {
+                    className: 'dshcv-helppanel',
+                    role: 'tabpanel',
+                    id: 'dshcv-help-panel-keys',
+                    'aria-labelledby': 'dshcv-help-tab-keys',
+                    hidden: helpTab !== 'keys',
+                  },
+                  [
                 ['Alt+S', '暂停 / 继续（单手，悬停面板即可）'],
                 ['Alt+A / Alt+D', '后退 / 前进一帧（Shift 为 100ms）'],
                 ['← →', '逐帧步进（备用，Shift 为 100ms）'],
@@ -5729,47 +5792,71 @@ function CanvasPanel(props) {      useVersion();
 ['Alt+1 / Alt+2', '在并排的两个窗格里切换焦点'],
 ['Esc', '并排时先退出并排'],
                 ['?', '显示 / 隐藏本帮助'],
-                  ].map(([key, label]) => h('div', { key }, h('kbd', null, key), label))
-                : null,
-              helpTab === 'settings'
-                ? h(
-                    React.Fragment,
-                    { key: 'settings' },
-                    settingRow(
-                      '打开方式',
-                      '新产物自动打开',
-                      autoOpenNew(),
-                      () => setAutoOpenNew(!autoOpenNew()),
-                      '模型产出新文件时切到画布并选中它；关闭后提示词也会改为不主动打开。' +
-                        '同一开关也出现在插件配置里' +
-                        (openPrefs.persisted === 'memory' ? '（当前配置不可写，仅本次运行有效）' : ''),
-                    ),
-                    settingRow('打开方式', '记住路径', pickerRemember(), toggleRemember, '文件选择器下次回到上次目录'),
-                    settingRow('标注', '发送后清空', autoClearAfterSend(), toggleAutoClear, '发送标注后清空列表'),
-                    settingRow('标注', '悬停高亮', followHoverOn(), () => setFollowHover(!followHoverOn()), '悬停标注行时高亮画布中的位置'),
-                    settingRow('预览', '注入标注脚本', injectScriptAllowed(), toggleInjectScript, 'HTML 预览内是否运行点选脚本'),
-                    settingRow('诊断', '渲染调试计数', debugRender(), toggleDebugRender, '显示三角形 / 绘制计数'),
+                  ].map(([key, label]) => h('div', { key }, h('kbd', null, key), label)),
+                ),
+                h(
+                  'div',
+                  {
+                    className: 'dshcv-helppanel',
+                    role: 'tabpanel',
+                    id: 'dshcv-help-panel-settings',
+                    'aria-labelledby': 'dshcv-help-tab-settings',
+                    hidden: helpTab !== 'settings',
+                  },
+                  settingRow(
+                    '打开方式',
+                    '新产物自动打开',
+                    autoOpenNew(),
+                    () => setAutoOpenNew(!autoOpenNew()),
+                    '模型产出新文件时切到画布并选中它；关闭后提示词也会改为不主动打开。' +
+                      '同一开关也出现在插件配置里' +
+                      (openPrefs.persisted === 'memory' ? '（当前配置不可写，仅本次运行有效）' : ''),
+                  ),
+                  settingRow('打开方式', '记住路径', pickerRemember(), toggleRemember, '文件选择器下次回到上次目录'),
+                  settingRow('标注', '发送后清空', autoClearAfterSend(), toggleAutoClear, '发送标注后清空列表'),
+                  settingRow('标注', '悬停高亮', followHoverOn(), () => setFollowHover(!followHoverOn()), '悬停标注行时高亮画布中的位置'),
+                  settingRow('预览', '注入标注脚本', injectScriptAllowed(), toggleInjectScript, 'HTML 预览内是否运行点选脚本'),
+                  settingRow('诊断', '渲染调试计数', debugRender(), toggleDebugRender, '显示三角形 / 绘制计数'),
+                  h(
+                    'div',
+                    { style: { marginTop: '10px', display: 'flex', gap: '8px' } },
                     h(
-                      'div',
-                      { style: { marginTop: '10px', display: 'flex', gap: '8px' } },
-                      h(
-                        'button',
-                        { type: 'button', className: 'dshcv-btn', onClick: () => copyDiagnostics(setFlash) },
-                        '复制诊断信息',
-                      ),
-                      h(
-                        'button',
-                        { type: 'button', className: 'dshcv-btn', 'data-kind': 'quiet', onClick: () => setHelpTab('keys') },
-                        '看快捷键',
-                      ),
+                      'button',
+                      { type: 'button', className: 'dshcv-btn', onClick: () => copyDiagnostics(setFlash) },
+                      '复制诊断信息',
                     ),
-                  )
-                : null,
+                    h(
+                      'button',
+                      { type: 'button', className: 'dshcv-btn', 'data-kind': 'quiet', onClick: () => setHelpTab('keys') },
+                      '看快捷键',
+                    ),
+                  ),
+                ),
               ),
             )
           : null,
       );
     }
+
+    // 页签的键盘行为：← → 循环、Home / End 到头尾；换页后把焦点交给新的当前页，
+    // 读屏才会跟着念出「设置，标签页，已选中」。
+    const moveHelpTab = (event, current, select) => {
+      const order = ['keys', 'settings'];
+      const at = order.indexOf(current);
+      let next = null;
+      if (event.key === 'ArrowRight') next = order[(at + 1) % order.length];
+      else if (event.key === 'ArrowLeft') next = order[(at - 1 + order.length) % order.length];
+      else if (event.key === 'Home') next = order[0];
+      else if (event.key === 'End') next = order[order.length - 1];
+      if (!next || next === current) return;
+      event.preventDefault();
+      select(next);
+      const node =
+        typeof document !== 'undefined' && document.getElementById
+          ? document.getElementById('dshcv-help-tab-' + next)
+          : null;
+      if (node && typeof node.focus === 'function') node.focus();
+    };
 
     // 设置页的一行：分组标签 + 开关 + 一句说明。标签短，解释放 title 与右侧弱化文字。
     const settingRow = (group, label, value, onToggle, hint) =>

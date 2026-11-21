@@ -1767,12 +1767,19 @@ const CSS_BASE = [
 '.dshcv-btn[disabled]:hover{background:transparent;border-color:var(--dshcv-line);color:var(--dshcv-ink-2)}',
 '.dshcv-chip{display:inline-flex;align-items:center;height:24px;padding:0 9px;border:0;border-radius:7px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:1;cursor:pointer;white-space:nowrap;transition:background-color .12s ease,color .12s ease}',
 '.dshcv-chip:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}',
-'.dshcv-chip[data-active="1"]{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}',
 '.dshcv-layers{display:inline-flex;gap:4px;flex-wrap:wrap;align-items:center;max-width:100%}',
 '.dshcv-chip[data-on="0"]{opacity:.45;text-decoration:line-through}',
 '.dshcv-help{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:60;min-width:300px;max-width:min(460px,calc(100% - 32px));max-height:calc(100% - 32px);overflow:auto;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l1);border-radius:12px;padding:14px 18px;box-shadow:0 18px 48px rgba(0,0,0,.3);font-size:12px;line-height:2}',
 '.dshcv-helpbackdrop{position:absolute;inset:0;z-index:59;background:color-mix(in srgb,var(--dsw-alias-bg-base) 55%,transparent)}',
-'.dshcv-helptabs{display:flex;gap:6px;margin:2px 0 8px}',
+'.dshcv-tabs{display:flex;gap:18px;margin:2px 0 8px;border-bottom:1px solid var(--dsw-alias-border-l1)}',
+'.dshcv-tab{position:relative;height:30px;padding:0 1px;border:0;background:transparent;color:color-mix(in srgb,var(--dshcv-ink) 62%,transparent);font:inherit;font-size:12.5px;font-weight:500;line-height:30px;cursor:pointer}',
+'.dshcv-tab:hover{color:color-mix(in srgb,var(--dshcv-ink) 80%,transparent)}',
+'.dshcv-tab[aria-selected="true"]{color:var(--dshcv-ink);font-weight:600}',
+'.dshcv-tab::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;border-radius:1px;background:transparent;transition:background-color .14s cubic-bezier(.2,.8,.2,1)}',
+'.dshcv-tab[aria-selected="true"]::after{background:var(--dsw-alias-brand-primary)}',
+'.dshcv-tab:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px;border-radius:4px}',
+'@media (prefers-reduced-motion: reduce){.dshcv-tab::after{transition:none}}',
+'.dshcv-helppanel{min-height:96px}',
 '.dshcv-settingrow{display:flex;align-items:center;gap:8px;padding:5px 0;border-top:1px solid color-mix(in oklab, var(--dshcv-ink) 8%, transparent)}',
 '.dshcv-settingrow:first-of-type{border-top:0}',
 '.dshcv-settingrow kbd{min-width:52px;color:color-mix(in oklab, var(--dshcv-ink) 62%, transparent)}',
@@ -1954,7 +1961,22 @@ const CSS_PANEL = [
 '.dshcv-closing{animation:dshcv-hide .15s cubic-bezier(.4,0,1,1) both;pointer-events:none}',
 '.dshcv-animating{transition:flex-basis .2s cubic-bezier(.2,0,0,1)}',
 '@media (prefers-reduced-motion: reduce){.dshcv-reveal,.dshcv-closing{animation:none}.dshcv-animating{transition:none}}',
-'.dshcv-docs{display:flex;align-items:center;gap:2px;padding:6px 10px;border-bottom:1px solid var(--dsw-alias-border-l1);overflow-x:auto}',
+'.dshcv-docs{display:flex;align-items:center;gap:2px;padding:6px 10px 0;border-bottom:1px solid var(--dsw-alias-border-l1)}',
+'.dshcv-doccount{flex:0 0 auto;margin-right:6px;padding:0 6px;border:1px solid var(--dsw-alias-border-l1);border-radius:999px;color:var(--dsw-alias-label-secondary);font-size:10.5px;line-height:16px}',
+'.dshcv-doctabs{display:flex;gap:2px;min-width:0;overflow-x:auto;scrollbar-width:none}',
+'.dshcv-doctabs::-webkit-scrollbar{display:none}',
+'.dshcv-dtab{position:relative;display:inline-flex;align-items:center;gap:2px;height:30px;padding:0 6px 0 4px;border-radius:7px 7px 0 0;color:color-mix(in srgb,var(--dshcv-ink) 62%,transparent)}',
+'.dshcv-dtab:hover{background:var(--dsw-alias-bg-layer-2);color:color-mix(in srgb,var(--dshcv-ink) 82%,transparent)}',
+'.dshcv-dtab[data-active="1"]{background:var(--dsw-alias-bg-layer-2);color:var(--dshcv-ink);font-weight:600}',
+'.dshcv-dtab[data-active="1"]::after{content:"";position:absolute;left:8px;right:8px;bottom:0;height:2px;border-radius:1px;background:var(--dsw-alias-brand-primary)}',
+'.dshcv-dtab[data-second="1"]{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--dsw-alias-brand-primary) 55%,transparent)}',
+'.dshcv-dtab-label{min-width:0;max-width:168px;height:30px;padding:0 4px 0 6px;border:0;background:transparent;color:inherit;font:inherit;font-size:12px;line-height:1;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+'.dshcv-dtab-label:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px;border-radius:5px}',
+'.dshcv-dtab-badge{padding:0 3px;border:1px solid color-mix(in srgb,var(--dsw-alias-brand-primary) 55%,transparent);border-radius:4px;color:var(--dsw-alias-brand-primary);font-size:9.5px;font-weight:700;line-height:13px}',
+'.dshcv-dtab-x{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border:0;border-radius:5px;background:transparent;color:color-mix(in srgb,var(--dshcv-ink) 45%,transparent);font:inherit;font-size:12px;line-height:1;cursor:pointer}',
+'.dshcv-dtab:hover .dshcv-dtab-x,.dshcv-dtab[data-active="1"] .dshcv-dtab-x{color:color-mix(in srgb,var(--dshcv-ink) 85%,transparent)}',
+'.dshcv-dtab-x:hover{background:color-mix(in srgb,var(--dshcv-ink) 12%,transparent)}',
+'@media (prefers-reduced-motion: reduce){.dshcv-dtab{transition:none}}',
 '.dshcv-crumbs{display:flex;align-items:center;gap:2px;min-width:0;flex:1 1 auto;overflow-x:auto}',
 '.dshcv-tools>.dshcv-toggle{flex:0 0 auto;margin-left:auto}',
 '.dshcv-row{display:flex;align-items:center;gap:8px;width:100%;height:28px;padding:0 10px;border:0;border-radius:7px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;text-align:left;cursor:pointer}',
@@ -10358,6 +10380,7 @@ return 0.52;
 const [helpOpen, setHelpOpen] = React.useState(false);
 const [helpTab, setHelpTab] = React.useState('keys');
 const panelRef = React.useRef(null);
+const scrolledTabRef = React.useRef('');
 const importInputRef = React.useRef(null);
 const paneRef = React.useRef(null);
 const [railHeight, setRailHeight] = React.useState(() => {
@@ -11003,33 +11026,56 @@ store.docs.length
 ? h(
 'div',
 { className: 'dshcv-docs' },
+h('span', { className: 'dshcv-doccount', title: '已打开 ' + store.docs.length + ' 个交付物', 'aria-hidden': 'true' }, String(store.docs.length)),
+h(
+'div',
+{ className: 'dshcv-doctabs', role: 'tablist', 'aria-label': '已打开的交付物' },
 store.docs.map((doc) =>
 h(
-'span',
-{ key: doc.id, style: { display: 'inline-flex', alignItems: 'center', gap: 2 } },
+'div',
+{
+key: doc.id,
+className: 'dshcv-dtab',
+'data-active': doc.id === (active && active.id) ? '1' : '0',
+'data-second': splitState().on && doc.id === splitState().secondId ? '1' : '0',
+},
 h(
 'button',
 {
 type: 'button',
-className: 'dshcv-chip',
-'data-active': doc.id === (active && active.id) ? '1' : '0',
-'data-second': splitState().on && doc.id === splitState().secondId ? '1' : '0',
+className: 'dshcv-dtab-label',
+role: 'tab',
+'aria-selected': doc.id === (active && active.id) ? 'true' : 'false',
 title: doc.path,
 onClick: () => focusDoc(doc),
+ref: (node) => {
+if (!node || typeof node.scrollIntoView !== 'function') return;
+if (doc.id !== (active && active.id)) return;
+if (scrolledTabRef.current === doc.id) return;
+scrolledTabRef.current = doc.id;
+try {
+node.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+} catch {
+node.scrollIntoView(false);
+}
+},
 },
 basename(doc.path),
 ),
+splitState().on && doc.id === splitState().secondId
+? h('span', { className: 'dshcv-dtab-badge', title: '在第二窗格' }, '2')
+: null,
 h(
 'button',
 {
 type: 'button',
-className: 'dshcv-btn',
-'data-kind': 'quiet',
-style: { padding: '0 5px', lineHeight: '16px' },
+className: 'dshcv-dtab-x',
 title: '关闭该交付物',
+'aria-label': '关闭 ' + basename(doc.path),
 onClick: () => closeDoc(doc.id),
 },
 '×',
+),
 ),
 ),
 ),
@@ -11234,13 +11280,13 @@ h(
 className: 'dshcv-help',
 key: 'help',
 role: 'dialog',
-'aria-label': '快捷键帮助',
+'aria-label': helpTab === 'settings' ? '帮助：设置' : '帮助：快捷键',
 'aria-modal': 'true',
 },
 h(
 'div',
 { className: 'dshcv-helphead' },
-h('span', null, '快捷键'),
+h('span', null, helpTab === 'settings' ? '帮助 · 设置' : '帮助 · 快捷键'),
 h(
 'button',
 {
@@ -11256,12 +11302,48 @@ onClick: () => setHelpOpen(false),
 ),
 h(
 'div',
-{ className: 'dshcv-helptabs' },
-h('button', { type: 'button', className: 'dshcv-toggle dshcv-opt', 'aria-pressed': helpTab === 'keys' ? 'true' : 'false', onClick: () => setHelpTab('keys') }, '快捷键'),
-h('button', { type: 'button', className: 'dshcv-toggle dshcv-opt', 'aria-pressed': helpTab === 'settings' ? 'true' : 'false', onClick: () => setHelpTab('settings') }, '设置'),
+{ className: 'dshcv-tabs', role: 'tablist', 'aria-label': '帮助内容' },
+h(
+'button',
+{
+type: 'button',
+className: 'dshcv-tab',
+role: 'tab',
+id: 'dshcv-help-tab-keys',
+'aria-selected': helpTab === 'keys' ? 'true' : 'false',
+'aria-controls': 'dshcv-help-panel-keys',
+tabIndex: helpTab === 'keys' ? 0 : -1,
+onClick: () => setHelpTab('keys'),
+onKeyDown: (event) => moveHelpTab(event, helpTab, setHelpTab),
+},
+'快捷键',
 ),
-helpTab === 'keys'
-? [
+h(
+'button',
+{
+type: 'button',
+className: 'dshcv-tab',
+role: 'tab',
+id: 'dshcv-help-tab-settings',
+'aria-selected': helpTab === 'settings' ? 'true' : 'false',
+'aria-controls': 'dshcv-help-panel-settings',
+tabIndex: helpTab === 'settings' ? 0 : -1,
+onClick: () => setHelpTab('settings'),
+onKeyDown: (event) => moveHelpTab(event, helpTab, setHelpTab),
+},
+'设置',
+),
+),
+h(
+'div',
+{
+className: 'dshcv-helppanel',
+role: 'tabpanel',
+id: 'dshcv-help-panel-keys',
+'aria-labelledby': 'dshcv-help-tab-keys',
+hidden: helpTab !== 'keys',
+},
+[
 ['Alt+S', '暂停 / 继续（单手，悬停面板即可）'],
 ['Alt+A / Alt+D', '后退 / 前进一帧（Shift 为 100ms）'],
 ['← →', '逐帧步进（备用，Shift 为 100ms）'],
@@ -11273,12 +11355,17 @@ helpTab === 'keys'
 ['Alt+1 / Alt+2', '在并排的两个窗格里切换焦点'],
 ['Esc', '并排时先退出并排'],
 ['?', '显示 / 隐藏本帮助'],
-].map(([key, label]) => h('div', { key }, h('kbd', null, key), label))
-: null,
-helpTab === 'settings'
-? h(
-React.Fragment,
-{ key: 'settings' },
+].map(([key, label]) => h('div', { key }, h('kbd', null, key), label)),
+),
+h(
+'div',
+{
+className: 'dshcv-helppanel',
+role: 'tabpanel',
+id: 'dshcv-help-panel-settings',
+'aria-labelledby': 'dshcv-help-tab-settings',
+hidden: helpTab !== 'settings',
+},
 settingRow(
 '打开方式',
 '新产物自动打开',
@@ -11307,13 +11394,29 @@ h(
 '看快捷键',
 ),
 ),
-)
-: null,
+),
 ),
 )
 : null,
 );
 }
+const moveHelpTab = (event, current, select) => {
+const order = ['keys', 'settings'];
+const at = order.indexOf(current);
+let next = null;
+if (event.key === 'ArrowRight') next = order[(at + 1) % order.length];
+else if (event.key === 'ArrowLeft') next = order[(at - 1 + order.length) % order.length];
+else if (event.key === 'Home') next = order[0];
+else if (event.key === 'End') next = order[order.length - 1];
+if (!next || next === current) return;
+event.preventDefault();
+select(next);
+const node =
+typeof document !== 'undefined' && document.getElementById
+? document.getElementById('dshcv-help-tab-' + next)
+: null;
+if (node && typeof node.focus === 'function') node.focus();
+};
 const settingRow = (group, label, value, onToggle, hint) =>
 h(
 'div',

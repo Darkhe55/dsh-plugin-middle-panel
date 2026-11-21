@@ -18,7 +18,7 @@ const block = src.slice(start - 700, start + 2200);
 
 check(/className: 'dshcv-help'/.test(block), '帮助面板仍然渲染');
 check(/role: 'dialog'/.test(block), '带 dialog 语义');
-check(/'aria-label': '快捷键帮助'/.test(block), '带无障碍标签');
+check(/'aria-label': helpTab === 'settings' \?/.test(block), '无障碍标签跟随当前页');
 
 // 关闭按钮
 check(/'aria-label': '关闭帮助'/.test(block), '关闭按钮有无障碍标签');

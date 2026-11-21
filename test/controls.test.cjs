@@ -54,6 +54,25 @@ check(quiet.length >= 8, '次要按钮数量合理', String(quiet.length));
 const noPressed = toggles.filter((block) => !block.includes("'aria-pressed'"));
 check(noPressed.length === 0, '每个开关都声明 aria-pressed', noPressed[0] ? noPressed[0].slice(0, 90) : '');
 
+// 页签是「换页」，不是「开关」：必须 role=tab + aria-selected，不能借用开关的样式与状态。
+const tabs = blocks.filter((block) => block.includes("role: 'tab'"));
+check(tabs.length >= 2, '存在页签按钮', String(tabs.length));
+const tabsAsToggle = tabs.filter((block) => block.includes('dshcv-toggle'));
+check(tabsAsToggle.length === 0, '页签不使用开关样式', tabsAsToggle[0] ? tabsAsToggle[0].slice(0, 90) : '');
+const tabsPressed = tabs.filter((block) => block.includes("'aria-pressed'"));
+check(tabsPressed.length === 0, '页签不使用 aria-pressed', tabsPressed[0] ? tabsPressed[0].slice(0, 90) : '');
+const tabsUnselected = tabs.filter((block) => !block.includes("'aria-selected'"));
+check(tabsUnselected.length === 0, '每个页签都声明 aria-selected', tabsUnselected[0] ? tabsUnselected[0].slice(0, 90) : '');
+const tabsConstSelected = tabs.filter((block) => /'aria-selected': (?![\s\S]*\?)/.test(block));
+check(tabsConstSelected.length === 0, 'aria-selected 由状态表达式驱动', tabsConstSelected[0] ? tabsConstSelected[0].slice(0, 90) : '');
+const tablists = (src.match(/role: 'tablist'/g) || []).length;
+check(tablists >= 2, '帮助与交付物标签栏都是 tablist', String(tablists));
+check(!/dshcv-helptabs/.test(src), '帮助页签不再使用旧的开关容器');
+// 防止回潮：页签容器里出现开关，就说明又把「换页」画成了「开关」。
+const stripAt = src.indexOf("className: 'dshcv-tabs'");
+const stripBlock = stripAt >= 0 ? src.slice(stripAt, stripAt + 2600) : '';
+check(stripAt >= 0 && !stripBlock.includes('dshcv-toggle'), '帮助页签容器里没有开关');
+
 const wrongPressed = toggles.filter((block) => /'aria-pressed': (?![\s\S]*\?)/.test(block));
 check(wrongPressed.length === 0, 'aria-pressed 由状态表达式驱动，而不是常量', wrongPressed[0] ? wrongPressed[0].slice(0, 90) : '');
 
