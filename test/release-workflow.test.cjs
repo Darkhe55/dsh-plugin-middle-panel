@@ -41,6 +41,9 @@ check(!/branches:\s*\n\s*- main/.test(workflow), '分支推送不触发发布');
 check(workflow.includes('id-token: write'), '声明 OIDC 权限');
 check(workflow.includes('--provenance'), '发布带 provenance');
 check(workflow.includes('version-guard.cjs'), '发布前跑版本守卫');
+// The host half imports @deepseek-ai/schemastery, so the release job has to install the
+// lockfile before it can run the suite; without it the tag push fails at the test step.
+check(/npm ci/.test(workflow), '发布前按锁文件安装依赖');
 check(/skip=true/.test(workflow), '已发布版本会跳过而不是失败');
 
 // CI 仍只做测试，不碰 registry

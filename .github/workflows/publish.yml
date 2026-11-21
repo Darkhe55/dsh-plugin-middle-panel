@@ -73,6 +73,10 @@ jobs:
           fi
           echo "skip=false" >> "$GITHUB_OUTPUT"
 
+      - name: Install dependencies
+        if: steps.guard.outputs.skip != 'true'
+        run: npm ci --no-audit --no-fund
+
       - name: Test
         if: steps.guard.outputs.skip != 'true'
         run: npm test

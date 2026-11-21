@@ -135,6 +135,7 @@
 - 已发布版本（0.5.1–0.5.6）的标题不再带「未发布」标记。
 - `test/market-index.test.cjs` 的断言从「清单首条必须等于 package.json 版本」放宽为「清单不高于 package.json、且版本严格降序」：发布前版本先升、清单要等 registry 确认才写，两者之间本来就有一个发布窗口。清单不能广告未发布版本这一点仍由 `release.cjs --index-only` 的 registry 查询兜底。
 - 发布白名单里的 `docs` 改成三个具名文件（`DETAIL.md` / `DETAIL.zh.md` / `preview.svg`）：目录条目会把 `docs/internal/` 的设计稿一起打进 tarball（实测已发生）。`test/package-files.test.cjs` 现在会遍历白名单目录，发现 `docs/internal` / `test` / `src` / `scripts` 这类内部路径就失败。
+- 发布工作流补上 `npm ci`：宿主半依赖 `@deepseek-ai/schemastery` 之后，没有依赖的 runner 会在 `npm test` 阶段就失败；`test/release-workflow.test.cjs` 现在断言发布流程按锁文件安装依赖。
 
 ## 0.5.6
 
